@@ -69,7 +69,7 @@ jobs:
             curl -fL --retry 3 --retry-delay 5 -o "$sums" "$sums_url"
             verify_checksum "$src" "$sums" "$algo"
 
-            LIBGUESTFS_BACKEND=direct virt-customize -a "$src" --mkdir /curtin
+            sudo LIBGUESTFS_BACKEND=direct virt-customize --no-network -a "$src" --mkdir /curtin
             qemu-img convert -O raw "$src" "$raw"
             zstd -T0 -19 -f "$raw" -o "$zst"
             rm -f "$raw"
