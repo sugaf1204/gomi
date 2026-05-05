@@ -573,7 +573,7 @@ func (r *Runtime) reconcilePXE(ctx context.Context) {
 	boot := pxe.BootConfig{
 		BIOSBootFile:      r.Config.PXEBootFileBIOS,
 		UEFIBootFile:      r.Config.PXEBootFileUEFI,
-		UEFILocalBootFile: "grubnetx64.efi",
+		UEFILocalBootFile: "ipxe.efi",
 		IPXEScript:        strings.TrimRight(pxeHTTPBaseURL, "/") + "/boot.ipxe",
 	}
 

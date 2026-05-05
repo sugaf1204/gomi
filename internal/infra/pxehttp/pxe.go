@@ -878,17 +878,11 @@ func RenderNoCloudLineConfig(base string, installType vm.InstallConfigType, mac 
 	})
 }
 
-func renderPXELocalBootScript(base string) string {
-	base = strings.TrimRight(strings.TrimSpace(base), "/")
-	if base == "" {
-		base = "http://127.0.0.1:8080/pxe"
-	}
-	return fmt.Sprintf(`#!ipxe
-iseq ${platform} efi && chain --autofree tftp://${next-server}/grubnetx64.efi ||
-iseq ${platform} efi && chain --autofree %s/files/grubnetx64.efi ||
+func renderPXELocalBootScript(_ string) string {
+	return `#!ipxe
 iseq ${platform} efi && exit 1 ||
 sanboot --no-describe --drive 0x80 || exit
-`, base)
+`
 }
 
 func (h *Handler) resolvePXETarget(ctx context.Context, rawMAC string) (pxeTarget, bool, error) {

@@ -149,11 +149,8 @@ func TestPXEBootScript_LocalBootWhenVMNotProvisioning(t *testing.T) {
 	if !strings.Contains(body, "iseq ${platform} efi && exit 1 ||") {
 		t.Fatalf("expected UEFI local boot to return to firmware, got: %s", body)
 	}
-	if !strings.Contains(body, "chain --autofree tftp://${next-server}/grubnetx64.efi") {
-		t.Fatalf("expected UEFI local boot to chain network GRUB over TFTP, got: %s", body)
-	}
-	if !strings.Contains(body, "chain --autofree http://192.168.2.254:8080/pxe/files/grubnetx64.efi") {
-		t.Fatalf("expected UEFI local boot to chain network GRUB over HTTP fallback, got: %s", body)
+	if strings.Contains(body, "grubnetx64.efi") {
+		t.Fatalf("UEFI local boot must not chain network GRUB, got: %s", body)
 	}
 	if !strings.Contains(body, "sanboot --no-describe --drive 0x80") {
 		t.Fatalf("expected local disk sanboot command, got: %s", body)
@@ -181,11 +178,8 @@ func TestPXEBootScript_LocalBootWhenNoProvisioningTarget(t *testing.T) {
 	if !strings.Contains(body, "iseq ${platform} efi && exit 1 ||") {
 		t.Fatalf("expected UEFI local boot to return to firmware, got: %s", body)
 	}
-	if !strings.Contains(body, "chain --autofree tftp://${next-server}/grubnetx64.efi") {
-		t.Fatalf("expected UEFI local boot to chain network GRUB over TFTP, got: %s", body)
-	}
-	if !strings.Contains(body, "chain --autofree http://192.168.2.254:8080/pxe/files/grubnetx64.efi") {
-		t.Fatalf("expected UEFI local boot to chain network GRUB over HTTP fallback, got: %s", body)
+	if strings.Contains(body, "grubnetx64.efi") {
+		t.Fatalf("UEFI local boot must not chain network GRUB, got: %s", body)
 	}
 	if !strings.Contains(body, "sanboot --no-describe --drive 0x80") {
 		t.Fatalf("expected local boot script for non-provisioning MAC, got: %s", body)
@@ -290,8 +284,11 @@ func TestPXEBootScript_CurtinForUbuntuVMUsesLocalBootScript(t *testing.T) {
 	}
 
 	body := rec.Body.String()
-	if !strings.Contains(body, "chain --autofree tftp://${next-server}/grubnetx64.efi") {
-		t.Fatalf("expected local boot to chain network GRUB for curtin, got: %s", body)
+	if !strings.Contains(body, "iseq ${platform} efi && exit 1 ||") {
+		t.Fatalf("expected UEFI local boot to return to firmware for curtin, got: %s", body)
+	}
+	if strings.Contains(body, "grubnetx64.efi") {
+		t.Fatalf("UEFI local boot must not chain network GRUB for curtin, got: %s", body)
 	}
 	if strings.Contains(body, "iso-url=") {
 		t.Fatalf("did not expect installer kernel args in curtin boot script, got: %s", body)
@@ -1806,8 +1803,11 @@ func TestPXEDeployEvents_ImageAppliedLocalBootsAndConfiguresBIOSBootOrder(t *tes
 		t.Fatalf("unexpected boot status: %d body=%s", bootRec.Code, bootRec.Body.String())
 	}
 	body := bootRec.Body.String()
-	if !strings.Contains(body, "chain --autofree tftp://${next-server}/grubnetx64.efi") {
+	if !strings.Contains(body, "iseq ${platform} efi && exit 1 ||") {
 		t.Fatalf("expected local boot script after image_applied, got: %s", body)
+	}
+	if strings.Contains(body, "grubnetx64.efi") {
+		t.Fatalf("UEFI local boot must not chain network GRUB after image_applied, got: %s", body)
 	}
 	if strings.Contains(body, "curtin-initrd") {
 		t.Fatalf("did not expect redeploy script after image_applied, got: %s", body)

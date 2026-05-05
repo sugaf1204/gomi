@@ -12,7 +12,7 @@ func TestSelectBootFile(t *testing.T) {
 	boot := BootConfig{
 		BIOSBootFile:      "undionly.kpxe",
 		UEFIBootFile:      "ipxe.efi",
-		UEFILocalBootFile: "grubnetx64.efi",
+		UEFILocalBootFile: "ipxe.efi",
 		IPXEScript:        "http://192.168.2.254:8080/pxe/boot.ipxe",
 	}
 
@@ -35,7 +35,7 @@ func TestSelectBootFile(t *testing.T) {
 	if got := selectBootFile(uefiReq, clientArch(uefiReq), boot, false); got != "ipxe.efi" {
 		t.Fatalf("uefi bootfile mismatch: got %q", got)
 	}
-	if got := selectBootFile(uefiReq, clientArch(uefiReq), boot, true); got != "grubnetx64.efi" {
+	if got := selectBootFile(uefiReq, clientArch(uefiReq), boot, true); got != "ipxe.efi" {
 		t.Fatalf("uefi local bootfile mismatch: got %q", got)
 	}
 
@@ -84,7 +84,7 @@ func TestNormalizeBootConfig(t *testing.T) {
 	if got.UEFIBootFile != "ipxe.efi" {
 		t.Fatalf("unexpected default UEFI bootfile: %q", got.UEFIBootFile)
 	}
-	if got.UEFILocalBootFile != "grubnetx64.efi" {
+	if got.UEFILocalBootFile != "ipxe.efi" {
 		t.Fatalf("unexpected default UEFI local bootfile: %q", got.UEFILocalBootFile)
 	}
 }
