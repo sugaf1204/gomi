@@ -22,8 +22,7 @@ jobs:
       - name: Install image build tools
         run: |
           sudo apt-get update
-          sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y libguestfs-tools qemu-utils zstd
-          sudo chmod 0644 /boot/vmlinuz-* || true
+          sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y qemu-utils zstd cloud-guest-utils e2fsprogs
 
       - name: Build raw zstd OS image artifacts
         shell: bash
@@ -39,9 +38,9 @@ jobs:
           # after curtin writes the image to disk.
           images=(
             "ubuntu-22.04-amd64-cloud|cloud|https://cloud-images.ubuntu.com/jammy/current/jammy-server-cloudimg-amd64.img|https://cloud-images.ubuntu.com/jammy/current/SHA256SUMS|sha256|"
-            "ubuntu-22.04-amd64-baremetal|baremetal|https://cloud-images.ubuntu.com/jammy/current/jammy-server-cloudimg-amd64.img|https://cloud-images.ubuntu.com/jammy/current/SHA256SUMS|sha256|linux-generic,linux-firmware"
+            "ubuntu-22.04-amd64-baremetal|baremetal|https://cloud-images.ubuntu.com/jammy/current/jammy-server-cloudimg-amd64.img|https://cloud-images.ubuntu.com/jammy/current/SHA256SUMS|sha256|linux-image-generic,linux-modules-extra-generic,linux-firmware"
             "ubuntu-24.04-amd64-cloud|cloud|https://cloud-images.ubuntu.com/noble/current/noble-server-cloudimg-amd64.img|https://cloud-images.ubuntu.com/noble/current/SHA256SUMS|sha256|"
-            "ubuntu-24.04-amd64-baremetal|baremetal|https://cloud-images.ubuntu.com/noble/current/noble-server-cloudimg-amd64.img|https://cloud-images.ubuntu.com/noble/current/SHA256SUMS|sha256|linux-generic,linux-firmware"
+            "ubuntu-24.04-amd64-baremetal|baremetal|https://cloud-images.ubuntu.com/noble/current/noble-server-cloudimg-amd64.img|https://cloud-images.ubuntu.com/noble/current/SHA256SUMS|sha256|linux-image-generic,linux-modules-extra-generic,linux-firmware"
             "debian-13-amd64-cloud|cloud|https://cloud.debian.org/images/cloud/trixie/latest/debian-13-generic-amd64.qcow2|https://cloud.debian.org/images/cloud/trixie/latest/SHA512SUMS|sha512|"
             "debian-13-amd64-baremetal|baremetal|https://cloud.debian.org/images/cloud/trixie/latest/debian-13-generic-amd64.qcow2|https://cloud.debian.org/images/cloud/trixie/latest/SHA512SUMS|sha512|linux-image-amd64,firmware-linux-free"
           )
@@ -67,6 +66,67 @@ jobs:
             fi
           }
 
+          cleanup_raw_mount() {
+            local mount_dir="${1:-}" loopdev="${2:-}"
+            set +e
+            if [[ -n "$mount_dir" ]]; then
+              for path in run sys proc dev; do
+                sudo umount -R "${mount_dir}/${path}" 2>/dev/null || true
+              done
+              sudo umount "$mount_dir" 2>/dev/null || true
+              sudo rm -rf "$mount_dir"
+            fi
+            if [[ -n "$loopdev" ]]; then
+              sudo losetup -d "$loopdev" 2>/dev/null || true
+            fi
+            set -e
+          }
+
+          customize_raw_image() {
+            local raw="$1" guest_packages="$2"
+            local loopdev="" mount_dir="" root_part="" root_part_num="" root_fstype=""
+            mount_dir="$(mktemp -d)"
+            trap 'cleanup_raw_mount "$mount_dir" "$loopdev"; trap - RETURN' RETURN
+
+            if [[ -n "$guest_packages" ]]; then
+              qemu-img resize "$raw" 8G
+            fi
+
+            loopdev="$(sudo losetup --find --partscan --show "$raw")"
+            root_part="$(lsblk -lnpo NAME,FSTYPE "$loopdev" | awk '$2 ~ /^(ext[234])$/ {print $1; exit}')"
+            if [[ -z "$root_part" ]]; then
+              echo "ERROR: no ext root partition found in ${raw}" >&2
+              return 1
+            fi
+
+            if [[ -n "$guest_packages" ]]; then
+              root_part_num="$(lsblk -lnpo NAME,PARTN "$loopdev" | awk -v p="$root_part" '$1 == p {print $2; exit}')"
+              if [[ -z "$root_part_num" ]]; then
+                echo "ERROR: partition number not found for ${root_part}" >&2
+                return 1
+              fi
+              sudo growpart "$loopdev" "$root_part_num"
+              sudo partprobe "$loopdev" || true
+              sudo e2fsck -fy "$root_part"
+              sudo resize2fs "$root_part"
+            fi
+
+            root_fstype="$(lsblk -lnpo NAME,FSTYPE "$loopdev" | awk -v p="$root_part" '$1 == p {print $2; exit}')"
+            sudo mount -t "$root_fstype" "$root_part" "$mount_dir"
+            sudo mkdir -p "$mount_dir/curtin"
+
+            if [[ -n "$guest_packages" ]]; then
+              sudo rm -f "$mount_dir/etc/resolv.conf"
+              sudo cp /etc/resolv.conf "$mount_dir/etc/resolv.conf"
+              for path in dev proc sys run; do
+                sudo mount --bind "/${path}" "${mount_dir}/${path}"
+              done
+              sudo chroot "$mount_dir" env DEBIAN_FRONTEND=noninteractive apt-get update
+              sudo chroot "$mount_dir" env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ${guest_packages//,/ }
+              sudo chroot "$mount_dir" apt-get clean
+            fi
+          }
+
           : > dist/os-images/checksums-os-images.txt
           printf '[\n' > dist/os-images/manifest-os-images.json
           first_manifest=1
@@ -74,7 +134,6 @@ jobs:
             IFS='|' read -r name variant image_url sums_url algo guest_packages <<< "$entry"
             src="downloads/os-images/$(basename "$image_url")"
             sums="downloads/os-images/${name}.${algo}sums"
-            work="downloads/os-images/${name}.$(basename "$image_url")"
             raw="dist/os-images/${name}.raw"
             zst="${raw}.zst"
 
@@ -82,18 +141,10 @@ jobs:
             curl -fL --retry 3 --retry-delay 5 -o "$sums" "$sums_url"
             verify_checksum "$src" "$sums" "$algo"
 
-            cp --reflink=auto "$src" "$work" 2>/dev/null || cp "$src" "$work"
-            customize_args=(--mkdir /curtin)
-            if [[ -n "$guest_packages" ]]; then
-              customize_args+=(--install "$guest_packages")
-              LIBGUESTFS_BACKEND=direct virt-customize --network -a "$work" "${customize_args[@]}"
-            else
-              LIBGUESTFS_BACKEND=direct virt-customize --no-network -a "$work" "${customize_args[@]}"
-            fi
-            qemu-img convert -O raw "$work" "$raw"
+            qemu-img convert -O raw "$src" "$raw"
+            customize_raw_image "$raw" "$guest_packages"
             zstd -T0 -19 -f "$raw" -o "$zst"
             rm -f "$raw"
-            rm -f "$work"
             sha256="$(cd dist/os-images && sha256sum "$(basename "$zst")" | awk '{print $1}')"
             size="$(stat -c%s "$zst")"
             printf '%s  %s\n' "$sha256" "$(basename "$zst")" >> dist/os-images/checksums-os-images.txt
