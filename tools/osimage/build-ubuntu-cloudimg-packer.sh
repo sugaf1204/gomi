@@ -5,9 +5,12 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 template_dir="${repo_root}/tools/osimage/packer/ubuntu-cloudimg"
 
 image_name="${IMAGE_NAME:-ubuntu-22.04-amd64-baremetal}"
-ubuntu_series="${UBUNTU_SERIES:-jammy}"
+os_family="${OS_FAMILY:-ubuntu}"
+os_version="${OS_VERSION:-22.04}"
 architecture="${ARCHITECTURE:-amd64}"
-kernel_package="${KERNEL_PACKAGE:-linux-image-generic}"
+variant="${VARIANT:-baremetal}"
+kernel_package="${KERNEL_PACKAGE-}"
+kernel_package_resolve="${KERNEL_PACKAGE_RESOLVE:-}"
 out_dir="${OUT_DIR:-${repo_root}/dist/os-images}"
 work_dir="${WORK_DIR:-${repo_root}/tmp/osimage-packer/${image_name}}"
 timeout="${PACKER_TIMEOUT:-30m}"
@@ -47,6 +50,58 @@ find_ovmf_vars() {
   echo "ERROR: OVMF_VARS fd not found" >&2
   return 1
 }
+
+ubuntu_series_for_version() {
+  case "$1" in
+    22.04) printf '%s\n' jammy ;;
+    24.04) printf '%s\n' noble ;;
+    *)
+      echo "ERROR: unsupported Ubuntu version: $1" >&2
+      return 1
+      ;;
+  esac
+}
+
+source_url="${SOURCE_URL:-}"
+source_checksum="${SOURCE_CHECKSUM:-}"
+source_format="${SOURCE_FORMAT:-qcow2}"
+
+if [[ -z "${KERNEL_PACKAGE+x}" && "$variant" == "baremetal" ]]; then
+  case "$os_family" in
+    ubuntu) kernel_package="linux-image-generic" ;;
+    debian) kernel_package="linux-image-amd64" ;;
+  esac
+fi
+
+if [[ -z "$source_url" ]]; then
+  case "$os_family" in
+    ubuntu)
+      ubuntu_series="${UBUNTU_SERIES:-$(ubuntu_series_for_version "$os_version")}"
+      source_url="https://cloud-images.ubuntu.com/${ubuntu_series}/current/${ubuntu_series}-server-cloudimg-${architecture}.img"
+      source_checksum="file:https://cloud-images.ubuntu.com/${ubuntu_series}/current/SHA256SUMS"
+      source_format="qcow2"
+      ;;
+    debian)
+      debian_series="${DEBIAN_SERIES:-trixie}"
+      debian_flavor="${DEBIAN_FLAVOR:-genericcloud}"
+      if [[ "$variant" == "baremetal" ]]; then
+        debian_flavor="${DEBIAN_FLAVOR:-generic}"
+      fi
+      source_url="https://cloud.debian.org/images/cloud/${debian_series}/latest/debian-${os_version}-${debian_flavor}-${architecture}.qcow2"
+      source_checksum="file:https://cloud.debian.org/images/cloud/${debian_series}/latest/SHA512SUMS"
+      source_format="qcow2"
+      ;;
+    *)
+      echo "ERROR: unsupported OS family: ${os_family}" >&2
+      exit 1
+      ;;
+  esac
+fi
+
+if [[ -z "$source_checksum" ]]; then
+  echo "ERROR: SOURCE_CHECKSUM is required when SOURCE_URL is set" >&2
+  exit 1
+fi
 
 require_command cloud-localds
 require_command packer
@@ -98,13 +153,16 @@ echo "==> Building ${image_name} with Packer"
 PACKER_CACHE_DIR="$cache_dir" packer init "$packer_work"
 PACKER_CACHE_DIR="$cache_dir" packer build \
   -var "image_name=${image_name}" \
-  -var "ubuntu_series=${ubuntu_series}" \
   -var "architecture=${architecture}" \
   -var "kernel_package=${kernel_package}" \
+  -var "kernel_package_resolve=${kernel_package_resolve}" \
   -var "output_directory=${output_dir}" \
   -var "ovmf_code=${ovmf_code}" \
   -var "ovmf_vars=${ovmf_vars}" \
   -var "seed_iso=${seed_iso}" \
+  -var "source_url=${source_url}" \
+  -var "source_checksum=${source_checksum}" \
+  -var "source_format=${source_format}" \
   -var "ssh_username=root" \
   -var "ssh_password=packer" \
   -var "timeout=${timeout}" \

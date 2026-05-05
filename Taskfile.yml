@@ -430,7 +430,22 @@ tasks:
   os-image:build-ubuntu-22.04-baremetal:
     desc: Build the Ubuntu 22.04 bare-metal target OS image with Packer
     cmds:
+      - IMAGE_NAME=ubuntu-22.04-amd64-baremetal OS_FAMILY=ubuntu OS_VERSION=22.04 ARCHITECTURE=amd64 VARIANT=baremetal KERNEL_PACKAGE=linux-image-generic ./tools/osimage/build-ubuntu-cloudimg-packer.sh
+
+  os-image:build-cloudimg:
+    desc: Build one target OS image variant with Packer using IMAGE_NAME/OS_FAMILY/OS_VERSION/VARIANT
+    cmds:
       - ./tools/osimage/build-ubuntu-cloudimg-packer.sh
+
+  os-image:build-all:
+    desc: Build all release target OS image variants with Packer
+    cmds:
+      - IMAGE_NAME=ubuntu-22.04-amd64-cloud OS_FAMILY=ubuntu OS_VERSION=22.04 ARCHITECTURE=amd64 VARIANT=cloud KERNEL_PACKAGE= ./tools/osimage/build-ubuntu-cloudimg-packer.sh
+      - IMAGE_NAME=ubuntu-22.04-amd64-baremetal OS_FAMILY=ubuntu OS_VERSION=22.04 ARCHITECTURE=amd64 VARIANT=baremetal KERNEL_PACKAGE=linux-image-generic ./tools/osimage/build-ubuntu-cloudimg-packer.sh
+      - IMAGE_NAME=ubuntu-24.04-amd64-cloud OS_FAMILY=ubuntu OS_VERSION=24.04 ARCHITECTURE=amd64 VARIANT=cloud KERNEL_PACKAGE= ./tools/osimage/build-ubuntu-cloudimg-packer.sh
+      - IMAGE_NAME=ubuntu-24.04-amd64-baremetal OS_FAMILY=ubuntu OS_VERSION=24.04 ARCHITECTURE=amd64 VARIANT=baremetal KERNEL_PACKAGE=linux-image-generic KERNEL_PACKAGE_RESOLVE=ubuntu-generic-modules ./tools/osimage/build-ubuntu-cloudimg-packer.sh
+      - IMAGE_NAME=debian-13-amd64-cloud OS_FAMILY=debian OS_VERSION=13 ARCHITECTURE=amd64 VARIANT=cloud KERNEL_PACKAGE= ./tools/osimage/build-ubuntu-cloudimg-packer.sh
+      - IMAGE_NAME=debian-13-amd64-baremetal OS_FAMILY=debian OS_VERSION=13 ARCHITECTURE=amd64 VARIANT=baremetal KERNEL_PACKAGE=linux-image-amd64 ./tools/osimage/build-ubuntu-cloudimg-packer.sh
 
   bootenv:validate:
     desc: Validate the GOMI boot environment spec

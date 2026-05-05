@@ -31,6 +31,11 @@ variable "kernel_package" {
   default = ""
 }
 
+variable "kernel_package_resolve" {
+  type    = string
+  default = ""
+}
+
 variable "output_directory" {
   type = string
 }
@@ -57,14 +62,22 @@ variable "ssh_username" {
   default = "packer"
 }
 
+variable "source_checksum" {
+  type = string
+}
+
+variable "source_format" {
+  type    = string
+  default = "qcow2"
+}
+
+variable "source_url" {
+  type = string
+}
+
 variable "timeout" {
   type    = string
   default = "30m"
-}
-
-variable "ubuntu_series" {
-  type    = string
-  default = "jammy"
 }
 
 locals {
@@ -89,8 +102,8 @@ source "qemu" "cloudimg" {
   disk_size              = var.disk_size
   format                 = "qcow2"
   headless               = var.headless
-  iso_checksum           = "file:https://cloud-images.ubuntu.com/${var.ubuntu_series}/current/SHA256SUMS"
-  iso_url                = "https://cloud-images.ubuntu.com/${var.ubuntu_series}/current/${var.ubuntu_series}-server-cloudimg-${var.architecture}.img"
+  iso_checksum           = var.source_checksum
+  iso_url                = var.source_url
   memory                 = 2048
   output_directory       = var.output_directory
   qemu_binary            = "qemu-system-${lookup(local.qemu_arch, var.architecture, "")}"
@@ -105,7 +118,7 @@ source "qemu" "cloudimg" {
   vnc_bind_address       = "127.0.0.1"
 
   qemu_img_args {
-    create = ["-F", "qcow2"]
+    create = ["-F", var.source_format]
   }
 
   qemuargs = [
@@ -126,6 +139,7 @@ build {
     environment_vars = [
       "DEBIAN_FRONTEND=noninteractive",
       "GOMI_KERNEL_PACKAGE=${var.kernel_package}",
+      "GOMI_KERNEL_PACKAGE_RESOLVE=${var.kernel_package_resolve}",
     ]
     scripts = ["${path.root}/scripts/provision.sh"]
   }

@@ -15,24 +15,33 @@ storage and ensures the referenced boot environment exists. Release assets are
 distributed as `.raw.zst` by default and expanded to local `.raw` files during
 catalog install. Catalog entries are variant-qualified, for example
 `ubuntu-22.04-amd64-cloud` and `ubuntu-22.04-amd64-baremetal`. The `cloud`
-variant preserves the upstream cloud image package set. The `baremetal` variant
-is still built offline with Packer, but preinstalls the distro generic kernel
-image package needed by physical target machines before publishing the release
-asset. Ubuntu uses `linux-image-generic`, following the same package boundary as
-packer-maas' cloud-image kernel customization flow: install the chosen kernel
-package and record it under `/curtin/CUSTOM_KERNEL`. GOMI does not copy the MAAS
-curtin hook stack. `linux-image-generic` pulls `linux-modules-extra-*` and
-`linux-firmware` as package dependencies on Ubuntu 22.04, so the GOMI builder
-does not list `linux-firmware` separately and installs without recommended
-packages to keep the release asset below GitHub's per-asset size limit.
+variant preserves the upstream cloud image package set. Every release image is
+built offline with Packer so cleanup, curtin marker creation, and release
+formatting stay in one path. The `baremetal` variant additionally preinstalls
+the distro generic kernel image package needed by physical target machines
+before publishing the release asset. Ubuntu uses `linux-image-generic`; Debian
+uses `linux-image-amd64` and the official `generic` cloud image as its source.
+This follows the same package boundary as packer-maas' cloud-image kernel
+customization flow: install the chosen kernel package and record it under
+`/curtin/CUSTOM_KERNEL`. GOMI does not copy the MAAS curtin hook stack.
+On Ubuntu 22.04, `linux-image-generic` pulls `linux-modules-extra-*` and
+`linux-firmware` as package dependencies and still fits below GitHub's
+per-asset size limit. On Ubuntu 24.04, the same meta package makes the raw zstd
+asset exceed the limit because Noble's `linux-firmware` package is much larger,
+so the builder resolves `linux-image-generic` to the current exact kernel image,
+`linux-modules-*`, and `linux-modules-extra-*` packages. That keeps the wired
+NIC drivers required for bare-metal deployment without forcing the full
+firmware package into the release asset. GOMI does not list `linux-firmware`
+separately and installs without recommended packages.
 
 GOMI does not convert qcow2 images, mount raw disks, install packages into the
 target OS, or otherwise mutate target OS images from the API process. Catalog
 sources are raw artifacts only; image conversion, curtin-specific image
 preparation, and variant-specific package installation belong in an
-offline/release build path. The release image workflow injects an empty
-`/curtin` directory before publishing each raw artifact so curtin can recognize
-the dd-installed target root filesystem during the extract stage.
+offline/release build path. The release image workflow injects `/curtin` before
+publishing each raw artifact so curtin can recognize the dd-installed target
+root filesystem during the extract stage; bare-metal variants also include
+`/curtin/CUSTOM_KERNEL`.
 
 For OS image catalog artifacts, override the release asset base URL with:
 
