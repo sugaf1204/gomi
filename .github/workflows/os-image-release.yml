@@ -14,186 +14,55 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  build:
+  ubuntu-22-04:
+    name: Build Ubuntu 22.04 target OS image
     runs-on: ubuntu-latest
+    env:
+      IMAGE_NAME: ubuntu-22.04-amd64-baremetal
+      UBUNTU_SERIES: jammy
+      ARCHITECTURE: amd64
+      KERNEL_PACKAGE: linux-image-generic
     steps:
       - uses: actions/checkout@v6
+
+      - name: Set up Task
+        uses: go-task/setup-task@v1
+
+      - name: Set up Packer
+        uses: hashicorp/setup-packer@v3
 
       - name: Install image build tools
         run: |
           sudo apt-get update
-          sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y qemu-utils zstd cloud-guest-utils e2fsprogs
+          sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y cloud-image-utils ovmf qemu-system-x86 qemu-utils zstd
+          if [ -e /dev/kvm ]; then
+            sudo chmod 666 /dev/kvm
+          fi
 
-      - name: Build raw zstd OS image artifacts
+      - name: Build raw zstd OS image artifact
+        run: task os-image:build-ubuntu-22.04-baremetal
+
+      - name: Write OS image manifest
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p dist/os-images downloads/os-images
-          # Format:
-          #   name|variant|image_url|sums_url|checksum_algo|guest_packages
-          #
-          # The cloud variants preserve the upstream cloud image package set.
-          # The baremetal variants add distro kernel image packages so the
-          # installed target OS can drive physical NICs and storage directly
-          # after curtin writes the image to disk. Ubuntu linux-image-generic
-          # depends on linux-modules-extra-* without pulling kernel headers.
-          images=(
-            "ubuntu-22.04-amd64-cloud|cloud|https://cloud-images.ubuntu.com/jammy/current/jammy-server-cloudimg-amd64.img|https://cloud-images.ubuntu.com/jammy/current/SHA256SUMS|sha256|"
-            "ubuntu-22.04-amd64-baremetal|baremetal|https://cloud-images.ubuntu.com/jammy/current/jammy-server-cloudimg-amd64.img|https://cloud-images.ubuntu.com/jammy/current/SHA256SUMS|sha256|linux-image-generic"
-            "ubuntu-24.04-amd64-cloud|cloud|https://cloud-images.ubuntu.com/noble/current/noble-server-cloudimg-amd64.img|https://cloud-images.ubuntu.com/noble/current/SHA256SUMS|sha256|"
-            "ubuntu-24.04-amd64-baremetal|baremetal|https://cloud-images.ubuntu.com/noble/current/noble-server-cloudimg-amd64.img|https://cloud-images.ubuntu.com/noble/current/SHA256SUMS|sha256|linux-image-generic"
-            "debian-13-amd64-cloud|cloud|https://cloud.debian.org/images/cloud/trixie/latest/debian-13-generic-amd64.qcow2|https://cloud.debian.org/images/cloud/trixie/latest/SHA512SUMS|sha512|"
-            "debian-13-amd64-baremetal|baremetal|https://cloud.debian.org/images/cloud/trixie/latest/debian-13-generic-amd64.qcow2|https://cloud.debian.org/images/cloud/trixie/latest/SHA512SUMS|sha512|linux-image-amd64,firmware-linux-free"
-          )
-          max_release_asset_size=2147483647
-
-          verify_checksum() {
-            local file="$1" sums_file="$2" algo="$3" filename expected actual
-            filename="$(basename "$file")"
-            expected="$(awk -v f="$filename" '{name=$2; sub(/^\*/, "", name); if (name == f) {print $1; exit}}' "$sums_file")"
-            if [[ -z "$expected" ]]; then
-              echo "ERROR: ${filename} not found in ${sums_file}" >&2
-              return 1
-            fi
-            case "$algo" in
-              sha256) actual="$(sha256sum "$file" | awk '{print $1}')" ;;
-              sha512) actual="$(sha512sum "$file" | awk '{print $1}')" ;;
-              *) echo "ERROR: unsupported checksum algorithm: ${algo}" >&2; return 1 ;;
-            esac
-            if [[ "$actual" != "$expected" ]]; then
-              echo "ERROR: checksum mismatch for ${filename}" >&2
-              echo "  expected: ${expected}" >&2
-              echo "  actual:   ${actual}" >&2
-              return 1
-            fi
-          }
-
-          cleanup_raw_mount() {
-            local mount_dir="${1:-}" loopdev="${2:-}"
-            set +e
-            if [[ -n "$mount_dir" ]]; then
-              for path in run sys proc dev; do
-                sudo umount -R "${mount_dir}/${path}" 2>/dev/null || true
-              done
-              sudo umount "$mount_dir" 2>/dev/null || true
-              sudo rm -rf "$mount_dir"
-            fi
-            if [[ -n "$loopdev" ]]; then
-              sudo losetup -d "$loopdev" 2>/dev/null || true
-            fi
-            set -e
-          }
-
-          customize_raw_image() {
-            local raw="$1" guest_packages="$2"
-            local loopdev="" mount_dir="" root_part="" root_part_num="" root_fstype=""
-            mount_dir="$(mktemp -d)"
-            trap 'cleanup_raw_mount "$mount_dir" "$loopdev"; trap - RETURN' RETURN
-
-            if [[ -n "$guest_packages" ]]; then
-              qemu-img resize "$raw" 8G
-            fi
-
-            loopdev="$(sudo losetup --find --partscan --show "$raw")"
-            sudo partprobe "$loopdev" || true
-            sudo udevadm settle
-            root_part="$(
-              sudo blkid -o device | grep -E "^${loopdev}p[0-9]+$" | while read -r part; do
-                fstype="$(sudo blkid -s TYPE -o value "$part" || true)"
-                case "$fstype" in
-                  ext2|ext3|ext4)
-                    echo "$part"
-                    break
-                    ;;
-                esac
-              done
-            )"
-            if [[ -z "$root_part" ]]; then
-              echo "ERROR: no ext root partition found in ${raw}" >&2
-              sudo lsblk -fp "$loopdev" >&2 || true
-              sudo blkid "${loopdev}"p* >&2 || true
-              return 1
-            fi
-
-            if [[ -n "$guest_packages" ]]; then
-              root_part_num="${root_part#${loopdev}p}"
-              if [[ -z "$root_part_num" ]]; then
-                echo "ERROR: partition number not found for ${root_part}" >&2
-                return 1
-              fi
-              sudo growpart "$loopdev" "$root_part_num"
-              sudo partprobe "$loopdev" || true
-              sudo e2fsck -fy "$root_part"
-              sudo resize2fs "$root_part"
-            fi
-
-            root_fstype="$(sudo blkid -s TYPE -o value "$root_part")"
-            sudo mount -t "$root_fstype" "$root_part" "$mount_dir"
-            sudo mkdir -p "$mount_dir/curtin"
-
-            if [[ -n "$guest_packages" ]]; then
-              sudo rm -f "$mount_dir/etc/resolv.conf"
-              sudo cp /etc/resolv.conf "$mount_dir/etc/resolv.conf"
-              for path in dev proc sys run; do
-                sudo mount --bind "/${path}" "${mount_dir}/${path}"
-              done
-              sudo chroot "$mount_dir" env DEBIAN_FRONTEND=noninteractive apt-get update
-              sudo chroot "$mount_dir" env DEBIAN_FRONTEND=noninteractive apt-get install -y ${guest_packages//,/ }
-              sudo chroot "$mount_dir" apt-get clean
-            fi
-          }
-
-          : > dist/os-images/checksums-os-images.txt
-          printf '[\n' > dist/os-images/manifest-os-images.json
-          first_manifest=1
-          for entry in "${images[@]}"; do
-            IFS='|' read -r name variant image_url sums_url algo guest_packages <<< "$entry"
-            src="downloads/os-images/$(basename "$image_url")"
-            sums="downloads/os-images/${name}.${algo}sums"
-            raw="dist/os-images/${name}.raw"
-            zst="${raw}.zst"
-
-            echo "::group::Build ${name}"
-            echo "download ${image_url}"
-            curl -fL --retry 3 --retry-delay 5 -o "$src" "$image_url"
-            curl -fL --retry 3 --retry-delay 5 -o "$sums" "$sums_url"
-            verify_checksum "$src" "$sums" "$algo"
-
-            echo "convert ${name} to raw"
-            qemu-img convert -O raw "$src" "$raw"
-            echo "customize ${name}"
-            customize_raw_image "$raw" "$guest_packages"
-            echo "compress ${name}"
-            zstd -T0 -19 -f "$raw" -o "$zst"
-            rm -f "$raw"
-            sha256="$(cd dist/os-images && sha256sum "$(basename "$zst")" | awk '{print $1}')"
-            size="$(stat -c%s "$zst")"
-            du -h "$zst"
-            if (( size > max_release_asset_size )); then
-              echo "ERROR: $(basename "$zst") is ${size} bytes; GitHub release assets must be <= ${max_release_asset_size} bytes" >&2
-              exit 1
-            fi
-            printf '%s  %s\n' "$sha256" "$(basename "$zst")" >> dist/os-images/checksums-os-images.txt
-            if [[ "$first_manifest" -eq 0 ]]; then
-              printf ',\n' >> dist/os-images/manifest-os-images.json
-            fi
-            first_manifest=0
-            NAME="$name" VARIANT="$variant" ARTIFACT="$(basename "$zst")" SHA256="$sha256" SIZE="$size" PACKAGES="$guest_packages" python3 - <<'PY' >> dist/os-images/manifest-os-images.json
+          zst="dist/os-images/${IMAGE_NAME}.raw.zst"
+          sha256="$(sha256sum "$zst" | awk '{print $1}')"
+          size="$(stat -c%s "$zst")"
+          printf '%s  %s\n' "$sha256" "$(basename "$zst")" > dist/os-images/checksums-os-images.txt
+          NAME="$IMAGE_NAME" ARTIFACT="$(basename "$zst")" SHA256="$sha256" SIZE="$size" KERNEL_PACKAGE="$KERNEL_PACKAGE" python3 - <<'PY' > dist/os-images/manifest-os-images.json
           import json
           import os
 
-          print(json.dumps({
+          print(json.dumps([{
               "name": os.environ["NAME"],
-              "variant": os.environ["VARIANT"],
+              "variant": "baremetal",
               "artifact": os.environ["ARTIFACT"],
               "sha256": os.environ["SHA256"],
               "sizeBytes": int(os.environ["SIZE"]),
-              "packages": [p for p in os.environ["PACKAGES"].split(",") if p],
-          }, sort_keys=True), end="")
+              "packages": [os.environ["KERNEL_PACKAGE"]],
+          }], indent=2, sort_keys=True))
           PY
-            echo "::endgroup::"
-          done
-          printf '\n]\n' >> dist/os-images/manifest-os-images.json
 
       - name: Publish release assets
         if: startsWith(github.ref, 'refs/tags/')

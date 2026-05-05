@@ -427,6 +427,11 @@ tasks:
     cmds:
       - ./tools/upload-os-images.sh "$GOMI_URL" "$GOMI_OS_IMAGE_SOURCE_URL"
 
+  os-image:build-ubuntu-22.04-baremetal:
+    desc: Build the Ubuntu 22.04 bare-metal target OS image with Packer
+    cmds:
+      - ./tools/osimage/build-ubuntu-cloudimg-packer.sh
+
   bootenv:validate:
     desc: Validate the GOMI boot environment spec
     dir: bootenv

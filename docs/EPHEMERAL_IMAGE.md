@@ -16,12 +16,15 @@ distributed as `.raw.zst` by default and expanded to local `.raw` files during
 catalog install. Catalog entries are variant-qualified, for example
 `ubuntu-22.04-amd64-cloud` and `ubuntu-22.04-amd64-baremetal`. The `cloud`
 variant preserves the upstream cloud image package set. The `baremetal` variant
-is still built offline, but preinstalls the distro generic kernel image package
-needed by physical target machines before publishing the release asset. Ubuntu
-uses `linux-image-generic`, which depends on the versioned
-`linux-modules-extra-*` package that carries drivers such as `igc` and `r8169`,
-without pulling kernel headers or the full `linux-firmware` package into every
-release asset.
+is still built offline with Packer, but preinstalls the distro generic kernel
+image package needed by physical target machines before publishing the release
+asset. Ubuntu uses `linux-image-generic`, following the same package boundary as
+packer-maas' cloud-image kernel customization flow: install the chosen kernel
+package and record it under `/curtin/CUSTOM_KERNEL`. GOMI does not copy the MAAS
+curtin hook stack. `linux-image-generic` pulls `linux-modules-extra-*` and
+`linux-firmware` as package dependencies on Ubuntu 22.04, so the GOMI builder
+does not list `linux-firmware` separately and installs without recommended
+packages to keep the release asset below GitHub's per-asset size limit.
 
 GOMI does not convert qcow2 images, mount raw disks, install packages into the
 target OS, or otherwise mutate target OS images from the API process. Catalog
