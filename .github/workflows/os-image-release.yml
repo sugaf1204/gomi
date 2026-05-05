@@ -38,9 +38,9 @@ jobs:
           # after curtin writes the image to disk.
           images=(
             "ubuntu-22.04-amd64-cloud|cloud|https://cloud-images.ubuntu.com/jammy/current/jammy-server-cloudimg-amd64.img|https://cloud-images.ubuntu.com/jammy/current/SHA256SUMS|sha256|"
-            "ubuntu-22.04-amd64-baremetal|baremetal|https://cloud-images.ubuntu.com/jammy/current/jammy-server-cloudimg-amd64.img|https://cloud-images.ubuntu.com/jammy/current/SHA256SUMS|sha256|linux-image-generic,linux-modules-extra-generic,linux-firmware"
+            "ubuntu-22.04-amd64-baremetal|baremetal|https://cloud-images.ubuntu.com/jammy/current/jammy-server-cloudimg-amd64.img|https://cloud-images.ubuntu.com/jammy/current/SHA256SUMS|sha256|linux-generic,linux-firmware"
             "ubuntu-24.04-amd64-cloud|cloud|https://cloud-images.ubuntu.com/noble/current/noble-server-cloudimg-amd64.img|https://cloud-images.ubuntu.com/noble/current/SHA256SUMS|sha256|"
-            "ubuntu-24.04-amd64-baremetal|baremetal|https://cloud-images.ubuntu.com/noble/current/noble-server-cloudimg-amd64.img|https://cloud-images.ubuntu.com/noble/current/SHA256SUMS|sha256|linux-image-generic,linux-modules-extra-generic,linux-firmware"
+            "ubuntu-24.04-amd64-baremetal|baremetal|https://cloud-images.ubuntu.com/noble/current/noble-server-cloudimg-amd64.img|https://cloud-images.ubuntu.com/noble/current/SHA256SUMS|sha256|linux-generic,linux-firmware"
             "debian-13-amd64-cloud|cloud|https://cloud.debian.org/images/cloud/trixie/latest/debian-13-generic-amd64.qcow2|https://cloud.debian.org/images/cloud/trixie/latest/SHA512SUMS|sha512|"
             "debian-13-amd64-baremetal|baremetal|https://cloud.debian.org/images/cloud/trixie/latest/debian-13-generic-amd64.qcow2|https://cloud.debian.org/images/cloud/trixie/latest/SHA512SUMS|sha512|linux-image-amd64,firmware-linux-free"
           )
@@ -136,7 +136,7 @@ jobs:
                 sudo mount --bind "/${path}" "${mount_dir}/${path}"
               done
               sudo chroot "$mount_dir" env DEBIAN_FRONTEND=noninteractive apt-get update
-              sudo chroot "$mount_dir" env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ${guest_packages//,/ }
+              sudo chroot "$mount_dir" env DEBIAN_FRONTEND=noninteractive apt-get install -y ${guest_packages//,/ }
               sudo chroot "$mount_dir" apt-get clean
             fi
           }
