@@ -1,8 +1,11 @@
 package pxe
 
 import (
+	"context"
 	"net"
+	"sync"
 	"testing"
+	"time"
 )
 
 func TestLeasePool_Allocate(t *testing.T) {
@@ -63,4 +66,79 @@ func TestLeasePool_Release(t *testing.T) {
 	if ip2.String() != "10.0.0.10" {
 		t.Fatalf("expected 10.0.0.10 after release, got %s", ip2)
 	}
+}
+
+func TestLeasePool_RestoreSkipsLeasesOutsideRange(t *testing.T) {
+	store := &testLeaseStore{
+		leases: map[string]DHCPLease{
+			"aa:bb:cc:dd:ee:01": {
+				MAC:      "aa:bb:cc:dd:ee:01",
+				IP:       "10.0.0.10",
+				LeasedAt: time.Now(),
+			},
+			"aa:bb:cc:dd:ee:02": {
+				MAC:      "aa:bb:cc:dd:ee:02",
+				IP:       "10.0.0.99",
+				LeasedAt: time.Now(),
+			},
+		},
+	}
+
+	p := newLeasePool("10.0.0.10", "10.0.0.10", store)
+
+	mac1, _ := net.ParseMAC("aa:bb:cc:dd:ee:01")
+	if ip := p.Allocate(mac1, "", false); ip == nil || ip.String() != "10.0.0.10" {
+		t.Fatalf("expected restored in-range lease, got %v", ip)
+	}
+
+	mac2, _ := net.ParseMAC("aa:bb:cc:dd:ee:02")
+	if ip := p.Allocate(mac2, "", false); ip != nil {
+		t.Fatalf("expected stale out-of-range lease to be skipped and pool exhausted, got %s", ip)
+	}
+	if !store.wasDeleted("aa:bb:cc:dd:ee:02") {
+		t.Fatal("expected stale lease to be deleted")
+	}
+}
+
+type testLeaseStore struct {
+	mu      sync.Mutex
+	leases  map[string]DHCPLease
+	deleted map[string]bool
+}
+
+func (s *testLeaseStore) Upsert(_ context.Context, lease DHCPLease) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.leases == nil {
+		s.leases = map[string]DHCPLease{}
+	}
+	s.leases[lease.MAC] = lease
+	return nil
+}
+
+func (s *testLeaseStore) List(_ context.Context) ([]DHCPLease, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]DHCPLease, 0, len(s.leases))
+	for _, lease := range s.leases {
+		out = append(out, lease)
+	}
+	return out, nil
+}
+
+func (s *testLeaseStore) Delete(_ context.Context, mac string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.deleted == nil {
+		s.deleted = map[string]bool{}
+	}
+	s.deleted[mac] = true
+	delete(s.leases, mac)
+	return nil
+}
+
+func (s *testLeaseStore) wasDeleted(mac string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.deleted[mac]
 }

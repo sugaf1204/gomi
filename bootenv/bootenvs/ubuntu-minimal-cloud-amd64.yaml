@@ -24,6 +24,7 @@ spec:
     packages:
       - ca-certificates
       - curl
+      - wget
       - dhcpcd5
       - curtin
     files:

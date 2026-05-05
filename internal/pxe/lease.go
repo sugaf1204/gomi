@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"log"
 	"net"
+	"strings"
 	"sync"
 	"time"
 )
@@ -44,14 +45,25 @@ func (p *leasePool) restore() {
 		log.Printf("dhcp: failed to restore leases: %v", err)
 		return
 	}
+	restored := 0
+	skipped := 0
 	for _, l := range leases {
+		key := strings.ToLower(strings.TrimSpace(l.MAC))
 		ip := net.ParseIP(l.IP).To4()
-		if ip != nil {
-			p.leases[l.MAC] = ip
+		if key == "" || ip == nil || !p.inRange(ip) {
+			skipped++
+			if key != "" {
+				if err := p.store.Delete(ctx, key); err != nil {
+					log.Printf("dhcp: failed to delete stale lease %s: %v", key, err)
+				}
+			}
+			continue
 		}
+		p.leases[key] = ip
+		restored++
 	}
-	if len(leases) > 0 {
-		log.Printf("dhcp: restored %d leases from store", len(leases))
+	if restored > 0 || skipped > 0 {
+		log.Printf("dhcp: restored %d leases from store, skipped %d stale leases", restored, skipped)
 	}
 }
 
@@ -79,8 +91,12 @@ func (p *leasePool) Allocate(mac net.HardwareAddr, hostname string, pxeClient bo
 	}
 
 	if ip, ok := p.leases[key]; ok {
-		p.persistAsync(key, ip, hostname, pxeClient)
-		return ip
+		if p.inRange(ip) {
+			p.persistAsync(key, ip, hostname, pxeClient)
+			return ip
+		}
+		delete(p.leases, key)
+		p.deleteLeaseAsync(key)
 	}
 
 	startN := binary.BigEndian.Uint32(p.start)
@@ -130,6 +146,28 @@ func (p *leasePool) persistAsync(mac string, ip net.IP, hostname string, pxeClie
 	}()
 }
 
+func (p *leasePool) deleteLeaseAsync(mac string) {
+	if p.store == nil {
+		return
+	}
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+		if err := p.store.Delete(ctx, mac); err != nil {
+			log.Printf("dhcp: failed to delete lease %s: %v", mac, err)
+		}
+	}()
+}
+
+func (p *leasePool) inRange(ip net.IP) bool {
+	ip = ip.To4()
+	if ip == nil || p.start == nil || p.end == nil {
+		return false
+	}
+	n := binary.BigEndian.Uint32(ip)
+	return n >= binary.BigEndian.Uint32(p.start) && n <= binary.BigEndian.Uint32(p.end)
+}
+
 // Release frees the lease for the given MAC address.
 func (p *leasePool) Release(mac net.HardwareAddr) {
 	p.mu.Lock()
@@ -137,13 +175,5 @@ func (p *leasePool) Release(mac net.HardwareAddr) {
 	key := mac.String()
 	delete(p.leases, key)
 
-	if p.store != nil {
-		go func() {
-			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-			defer cancel()
-			if err := p.store.Delete(ctx, key); err != nil {
-				log.Printf("dhcp: failed to delete lease %s: %v", key, err)
-			}
-		}()
-	}
+	p.deleteLeaseAsync(key)
 }

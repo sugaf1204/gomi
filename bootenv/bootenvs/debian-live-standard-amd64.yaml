@@ -21,6 +21,7 @@ spec:
     packages:
       - ca-certificates
       - curl
+      - wget
       - dhcpcd-base
       - curtin
       - qemu-utils

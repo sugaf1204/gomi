@@ -20,7 +20,8 @@ import (
 )
 
 const (
-	eventImageApplied = "image_applied"
+	eventImageApplied  = "image_applied"
+	maxEventLogTailLen = 32 * 1024
 )
 
 type Runner struct {
@@ -95,7 +96,7 @@ func (r *Runner) Run() error {
 	}
 	r.postEvent(response.EventsURL, "progress", "running curtin install")
 	if err := r.command().Run("curtin", "-c", curtinCfg, "install"); err != nil {
-		r.postEvent(response.EventsURL, "failed", "curtin install failed")
+		r.postFailureEvent(response.EventsURL, "curtin install failed", err)
 		return fmt.Errorf("curtin install failed: %w", err)
 	}
 	r.postEvent(response.EventsURL, eventImageApplied, "curtin install completed")
@@ -341,18 +342,53 @@ func (r *Runner) log(message string) {
 }
 
 func (r *Runner) postEvent(eventsURL, typ, message string) {
+	r.postEventForm(eventsURL, typ, message, "", "")
+}
+
+func (r *Runner) postFailureEvent(eventsURL, message string, err error) {
+	reason := message
+	if err != nil {
+		reason = fmt.Sprintf("%s: %v", message, err)
+	}
+	r.postEventForm(eventsURL, "failed", message, reason, r.curtinLogTail())
+}
+
+func (r *Runner) postEventForm(eventsURL, typ, message, reason, logTail string) {
 	if strings.TrimSpace(eventsURL) == "" {
 		return
 	}
 	form := url.Values{}
 	form.Set("type", typ)
 	form.Set("message", message)
+	if strings.TrimSpace(reason) != "" {
+		form.Set("reason", reason)
+	}
+	if strings.TrimSpace(logTail) != "" {
+		form.Set("logTail", logTail)
+	}
 	resp, err := r.client().PostForm(eventsURL, form)
 	if err != nil {
 		return
 	}
 	_, _ = io.Copy(io.Discard, resp.Body)
 	_ = resp.Body.Close()
+}
+
+func (r *Runner) curtinLogTail() string {
+	for _, path := range []string{
+		"/tmp/curtin-install.log",
+		"/var/log/curtin/install.log",
+	} {
+		data, err := os.ReadFile(path)
+		if err != nil || len(data) == 0 {
+			continue
+		}
+		if len(data) > maxEventLogTailLen {
+			data = data[len(data)-maxEventLogTailLen:]
+		}
+		return string(data)
+	}
+	return ""
 }
 
 func (r *Runner) postInventory(cfg RuntimeConfig) (InventoryResponse, error) {

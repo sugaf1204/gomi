@@ -1755,6 +1755,56 @@ func TestPXEDeployEvents_ImageAppliedLocalBootsAndConfiguresBIOSBootOrder(t *tes
 	}
 }
 
+func TestPXEDeployEventsStoresFailureLogTail(t *testing.T) {
+	backend := memory.New()
+	machineSvc := machine.NewService(backend.Machines())
+	now := time.Now().UTC()
+	target := machine.Machine{
+		Name:     "bm-failed-log",
+		Hostname: "bm-failed-log",
+		MAC:      "52:54:00:44:55:77",
+		Arch:     "amd64",
+		Firmware: machine.FirmwareUEFI,
+		Phase:    machine.PhaseProvisioning,
+		Provision: &machine.ProvisionProgress{
+			Active:          true,
+			AttemptID:       "attempt-failed-log",
+			CompletionToken: "token-failed-log",
+		},
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	if err := backend.Machines().Upsert(context.Background(), target); err != nil {
+		t.Fatalf("upsert machine: %v", err)
+	}
+
+	e := echo.New()
+	form := "type=failed&message=curtin+install+failed&reason=exit+status+1&logTail=missing+wget"
+	req := httptest.NewRequest(http.MethodPost, "/pxe/deploy-events?token=token-failed-log&attempt_id=attempt-failed-log", strings.NewReader(form))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+
+	h := &Handler{machines: machineSvc}
+	if err := h.PXEDeployEvents(c); err != nil {
+		t.Fatalf("PXEDeployEvents: %v", err)
+	}
+	if rec.Code != http.StatusOK {
+		t.Fatalf("unexpected status: %d body=%s", rec.Code, rec.Body.String())
+	}
+
+	stored, err := backend.Machines().Get(context.Background(), target.Name)
+	if err != nil {
+		t.Fatalf("get machine: %v", err)
+	}
+	if stored.Phase != machine.PhaseError || stored.LastError != "exit status 1" {
+		t.Fatalf("unexpected failure state: phase=%s error=%q", stored.Phase, stored.LastError)
+	}
+	if got := stored.Provision.Artifacts[provisionArtifactFailureLogTail]; got != "missing wget" {
+		t.Fatalf("expected failure log tail, got %q", got)
+	}
+}
+
 func TestPXEProvisionEndpointsRejectInactiveOrMismatchedAttempt(t *testing.T) {
 	backend := memory.New()
 	machineSvc := machine.NewService(backend.Machines())

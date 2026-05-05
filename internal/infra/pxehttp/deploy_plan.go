@@ -26,6 +26,8 @@ import (
 const deployEventImageApplied = "image_applied"
 const provisionArtifactImageApplied = "imageApplied"
 const provisionArtifactImageAppliedAt = "imageAppliedAt"
+const provisionArtifactFailureLogTail = "failureLogTail"
+const maxProvisionFailureLogTailLen = 32 * 1024
 
 type deployEventRequest struct {
 	AttemptID string          `json:"attemptId,omitempty"`
@@ -176,6 +178,7 @@ func (h *Handler) PXEDeployEvents(c echo.Context) error {
 		req.Type = c.FormValue("type")
 		req.Message = c.FormValue("message")
 		req.Reason = c.FormValue("reason")
+		req.LogTail = c.FormValue("logTail")
 		req.AttemptID = c.FormValue("attemptId")
 	} else if err := c.Bind(&req); err != nil {
 		return c.JSON(gohttp.StatusBadRequest, map[string]string{"error": "invalid body"})
@@ -207,6 +210,12 @@ func (h *Handler) PXEDeployEvents(c echo.Context) error {
 			m.Provision.Active = false
 			m.Provision.FinishedAt = &now
 			m.Provision.FailureReason = m.LastError
+			if logTail := trimLogTail(req.LogTail, maxProvisionFailureLogTailLen); logTail != "" {
+				if m.Provision.Artifacts == nil {
+					m.Provision.Artifacts = map[string]string{}
+				}
+				m.Provision.Artifacts[provisionArtifactFailureLogTail] = logTail
+			}
 		} else if eventType == deployEventImageApplied {
 			if m.Provision.Artifacts == nil {
 				m.Provision.Artifacts = map[string]string{}
@@ -219,6 +228,17 @@ func (h *Handler) PXEDeployEvents(c echo.Context) error {
 		return c.JSON(gohttp.StatusInternalServerError, map[string]string{"error": err.Error()})
 	}
 	return c.JSON(gohttp.StatusOK, map[string]string{"status": "ok"})
+}
+
+func trimLogTail(value string, maxLen int) string {
+	value = strings.TrimSpace(value)
+	if value == "" || maxLen <= 0 {
+		return ""
+	}
+	if len(value) <= maxLen {
+		return value
+	}
+	return value[len(value)-maxLen:]
 }
 
 func parseTextInventory(body string) hwinfo.HardwareInfo {
