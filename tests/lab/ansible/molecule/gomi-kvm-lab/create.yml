@@ -1,0 +1,9 @@
+---
+- name: Molecule delegated create
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: Record delegated scenario context
+      ansible.builtin.debug:
+        msg: "Using the existing gomi_kvm_lab inventory; no instance is created by Molecule."

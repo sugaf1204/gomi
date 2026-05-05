@@ -1,0 +1,80 @@
+ansible_user: "{{ lookup('env', 'GOMI_LAB_SSH_USER') | default('gomi', true) }}"
+ansible_password: "{{ lookup('env', 'GOMI_LAB_SSH_PASSWORD') | default('', true) }}"
+ansible_become: true
+ansible_become_method: sudo
+ansible_become_password: "{{ lookup('env', 'GOMI_LAB_SUDO_PASSWORD') | default(lookup('env', 'GOMI_LAB_SSH_PASSWORD'), true) }}"
+ansible_ssh_common_args: "-o ControlMaster=no -o ControlPath=none -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
+
+gomi_kvm_lab_remote_root: /var/tmp/gomi-kvm-lab
+gomi_kvm_lab_remote_bootenv_repo: /home/gomi/github/sugaf1204/gomi/bootenv
+gomi_kvm_lab_host_packages:
+  - bridge-utils
+  - cloud-image-utils
+  - curl
+  - iproute2
+  - jq
+  - openssh-client
+  - ovmf
+  - python3
+  - qemu-system-x86
+  - qemu-utils
+  - sshpass
+
+gomi_kvm_lab_bridge_name: br-gomi-lab
+gomi_kvm_lab_helper_port: 19999
+gomi_kvm_lab_domain: lab.local
+gomi_kvm_lab_cleanup_on_success: false
+
+gomi_kvm_lab_subnet_name: default
+gomi_kvm_lab_subnet:
+  cidr: 10.77.0.0/24
+  pxeInterface: pxe0
+  pxeAddressRange:
+    start: 10.77.0.100
+    end: 10.77.0.150
+  defaultGateway: 10.77.0.1
+  dnsServers:
+    - 8.8.8.8
+    - 1.1.1.1
+  domainName: lab.local
+  leaseTime: 600
+
+gomi_kvm_lab_gomi_vm:
+  base_image_url: https://cloud-images.ubuntu.com/releases/24.04/release/ubuntu-24.04-server-cloudimg-amd64.img
+  ssh_port: 10022
+  api_port: 18080
+  mgmt_mac: "52:54:00:aa:10:01"
+  pxe_mac: "52:54:00:aa:10:02"
+  pxe_address: 10.77.0.1/24
+  memory_mb: 4096
+  cpus: 4
+  disk_gb: 40
+
+gomi_kvm_lab_ubuntu_images:
+  - image_ref: ubuntu-22.04-amd64
+    os_version: "22.04"
+  - image_ref: ubuntu-24.04-amd64
+    os_version: "24.04"
+    firmware: uefi
+
+gomi_kvm_lab_target_defaults:
+  arch: amd64
+  firmware: bios
+  memory_mb: 4096
+  cpus: 2
+  disk_gb: 32
+
+gomi_kvm_lab_target_nics:
+  - name: igc
+    qemu_model: igc
+    expected_driver: igc
+    exact: true
+  - name: e1000e
+    qemu_model: e1000e
+    expected_driver: e1000e
+    exact: true
+  - name: r8169
+    qemu_model: rtl8139
+    expected_driver: ""
+    exact: false
+    note: "QEMU does not expose an exact r8169 model; the default lab uses rtl8139 as the closest built-in Realtek path."

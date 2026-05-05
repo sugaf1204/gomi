@@ -1,0 +1,15 @@
+{
+  "work_dir": {{ gomi_kvm_lab_remote_root | to_json }},
+  "bridge_name": {{ gomi_kvm_lab_bridge_name | to_json }},
+  "helper_port": {{ gomi_kvm_lab_helper_port }},
+  "cleanup_on_success": {{ gomi_kvm_lab_cleanup_on_success | to_json }},
+  "domain": {{ gomi_kvm_lab_domain | to_json }},
+  "subnet_name": {{ gomi_kvm_lab_subnet_name | to_json }},
+  "subnet": {{ gomi_kvm_lab_subnet | to_json }},
+  "gomi_deb_path": {{ gomi_kvm_lab_remote_deb | to_json }},
+  "bootenv_source_path": {{ gomi_kvm_lab_remote_bootenv_source | to_json }},
+  "gomi_vm": {{ gomi_kvm_lab_gomi_vm | to_json }},
+  "ubuntu_images": {{ gomi_kvm_lab_ubuntu_images | to_json }},
+  "target_defaults": {{ gomi_kvm_lab_target_defaults | to_json }},
+  "target_nics": {{ gomi_kvm_lab_target_nics | to_json }}
+}

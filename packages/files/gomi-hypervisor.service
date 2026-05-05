@@ -1,0 +1,14 @@
+[Unit]
+Description=GOMI Hypervisor Agent
+After=network-online.target libvirtd.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile=-/etc/gomi/gomi-hypervisor.conf
+ExecStart=/usr/bin/gomi-hypervisor
+Restart=on-failure
+RestartSec=30
+
+[Install]
+WantedBy=multi-user.target

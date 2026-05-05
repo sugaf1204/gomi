@@ -1,0 +1,40 @@
+---
+dependency:
+  name: galaxy
+  enabled: false
+
+driver:
+  name: molecule-qemu-kvm
+  options:
+    managed: true
+
+platforms:
+  - name: gomi_lab_host
+
+provisioner:
+  name: ansible
+  inventory:
+    links:
+      hosts: ../../inventory/hosts.yml
+      group_vars: ../../group_vars
+  playbooks:
+    create: create.yml
+    converge: converge.yml
+    verify: verify.yml
+    cleanup: cleanup.yml
+    destroy: destroy.yml
+
+verifier:
+  name: ansible
+
+scenario:
+  test_sequence:
+    - dependency
+    - cleanup
+    - destroy
+    - syntax
+    - create
+    - converge
+    - verify
+    - cleanup
+    - destroy

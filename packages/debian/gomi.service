@@ -1,0 +1,17 @@
+[Unit]
+Description=GOMI - Go Machine Installer
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=gomi
+Group=gomi
+ExecStart=/usr/bin/gomi --config=/etc/gomi/gomi.yaml
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+Restart=on-failure
+RestartSec=5
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target

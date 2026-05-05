@@ -1,0 +1,3 @@
+var/lib/gomi
+var/lib/gomi/data
+var/lib/gomi/data/files

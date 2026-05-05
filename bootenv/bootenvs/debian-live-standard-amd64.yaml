@@ -1,0 +1,59 @@
+apiVersion: gomi.sugaf1204.github.io/ephemeral/v1alpha1
+kind: BootEnvironment
+metadata:
+  name: debian-live-standard-amd64
+spec:
+  architecture: amd64
+  kernel:
+    package: linux-image-amd64
+  initramfs:
+    backend: initramfs-tools
+    packages:
+      - live-boot
+    cmdline:
+      - boot=live
+      - components
+  rootfs:
+    type: squashfs
+    source:
+      type: debian-live-iso
+      url: https://cdimage.debian.org/debian-cd/current-live/amd64/iso-hybrid/
+    packages:
+      - ca-certificates
+      - curl
+      - dhcpcd-base
+      - curtin
+      - qemu-utils
+      - zstd
+    files:
+      - path: /etc/gomi/agent.env
+        mode: "0644"
+        contents: |
+          GOMI_METADATA_URL=http://gomi.local/metadata
+          GOMI_WORKFLOW_URL=http://gomi.local/workflows
+    services:
+      - name: gomi-deploy-runner
+        enable: true
+        command:
+          - /usr/local/sbin/gomi-deploy-runner
+    build:
+      compression: zstd
+      blockSize: 1M
+      output: rootfs.squashfs
+  cmdline:
+    - console=tty0
+    - console=ttyS0
+    - panic=10
+  network:
+    dhcp:
+      enabled: true
+      image: systemd-networkd
+  controlPlane:
+    metadataURL: http://gomi.local/metadata
+    workflowURL: http://gomi.local/workflows
+  pxe:
+    baseURL: http://gomi.local/files/linux
+    scriptName: boot.ipxe
+    kernelPath: boot-kernel
+    initrdPath: boot-initrd
+    rootfsPath: rootfs.squashfs

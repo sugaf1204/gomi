@@ -1,0 +1,8 @@
+Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
+Upstream-Name: gomi
+Source: https://github.com/sugaf1204/gomi
+
+Files: *
+Copyright: 2026 sugaf1204
+License: all-rights-reserved
+ This repository does not currently declare an open-source license.

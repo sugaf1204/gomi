@@ -1,0 +1,33 @@
+---
+- name: Cleanup the Molecule QEMU/KVM PXE smoke lab
+  hosts: gomi_kvm_lab
+  gather_facts: false
+  vars_files:
+    - vars.yml
+  vars:
+    gomi_kvm_lab_repo_root: "{{ playbook_dir }}/../../../../.."
+    gomi_kvm_lab_remote_config: "{{ gomi_kvm_lab_remote_root }}/lab-config.json"
+    gomi_kvm_lab_remote_runner: "{{ gomi_kvm_lab_remote_root }}/gomi_kvm_lab_runner.py"
+    gomi_kvm_lab_remote_binary: "{{ gomi_kvm_lab_remote_root }}/gomi"
+  tasks:
+    - name: Ensure remote workspace exists
+      ansible.builtin.file:
+        path: "{{ gomi_kvm_lab_remote_root }}"
+        state: directory
+        mode: "0755"
+
+    - name: Upload remote lab runner
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/../../files/gomi_kvm_lab_runner.py"
+        dest: "{{ gomi_kvm_lab_remote_runner }}"
+        mode: "0755"
+
+    - name: Render remote lab config
+      ansible.builtin.template:
+        src: "{{ playbook_dir }}/../../templates/lab-config.json.j2"
+        dest: "{{ gomi_kvm_lab_remote_config }}"
+        mode: "0644"
+
+    - name: Cleanup lab runtime
+      ansible.builtin.command:
+        cmd: python3 "{{ gomi_kvm_lab_remote_runner }}" --config "{{ gomi_kvm_lab_remote_config }}" --cleanup

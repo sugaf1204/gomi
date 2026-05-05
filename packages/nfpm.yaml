@@ -1,0 +1,70 @@
+# yaml-language-server: $schema=https://nfpm.goreleaser.com/schema.json
+name: gomi
+arch: ${ARCH}
+platform: linux
+version: ${VERSION}
+version_schema: none
+section: admin
+priority: optional
+maintainer: sugaf1204 <sugaf1204@example.invalid>
+homepage: https://github.com/sugaf1204/gomi
+license: unknown
+description: |-
+  GOMI - Go Machine Installer
+   Bare-metal server management system for provisioning,
+   power control, and lifecycle management.
+depends:
+  - adduser
+  - ca-certificates
+  - grub-efi-amd64-bin
+  - ipxe
+  - systemd
+contents:
+  - src: packages/debian/build/gomi
+    dst: /usr/bin/gomi
+    file_info:
+      mode: 0755
+  - src: packages/files/gomi-hypervisor.service
+    dst: /var/lib/gomi/data/files/gomi-hypervisor.service
+    file_info:
+      mode: 0644
+  - src: packages/debian/build/gomi-hypervisor-linux-amd64
+    dst: /var/lib/gomi/data/files/gomi-hypervisor-linux-amd64
+    file_info:
+      mode: 0755
+  - src: packages/debian/build/gomi-hypervisor-linux-arm64
+    dst: /var/lib/gomi/data/files/gomi-hypervisor-linux-arm64
+    file_info:
+      mode: 0755
+  - src: packages/debian/build/gomi-wol-daemon-linux-amd64
+    dst: /var/lib/gomi/data/files/gomi-wol-daemon-linux-amd64
+    file_info:
+      mode: 0755
+  - src: packages/debian/build/gomi-wol-daemon-linux-arm64
+    dst: /var/lib/gomi/data/files/gomi-wol-daemon-linux-arm64
+    file_info:
+      mode: 0755
+  - src: packages/debian/gomi.yaml
+    dst: /etc/gomi/gomi.yaml
+    type: config|noreplace
+    file_info:
+      mode: 0644
+  - src: packages/debian/gomi.service
+    dst: /lib/systemd/system/gomi.service
+    file_info:
+      mode: 0644
+  - dst: /var/lib/gomi
+    type: dir
+    file_info:
+      mode: 0750
+  - dst: /var/lib/gomi/data
+    type: dir
+    file_info:
+      mode: 0750
+  - dst: /var/lib/gomi/data/files
+    type: dir
+    file_info:
+      mode: 0750
+scripts:
+  postinstall: packages/debian/gomi.postinst
+  preremove: packages/debian/gomi.prerm

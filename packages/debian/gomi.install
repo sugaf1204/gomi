@@ -1,0 +1,7 @@
+debian/build/gomi usr/bin/
+packages/files/gomi-hypervisor.service var/lib/gomi/data/files/
+debian/build/gomi-hypervisor-linux-amd64 var/lib/gomi/data/files/
+debian/build/gomi-hypervisor-linux-arm64 var/lib/gomi/data/files/
+debian/build/gomi-wol-daemon-linux-amd64 var/lib/gomi/data/files/
+debian/build/gomi-wol-daemon-linux-arm64 var/lib/gomi/data/files/
+debian/gomi.yaml etc/gomi/

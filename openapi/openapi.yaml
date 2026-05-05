@@ -1,0 +1,411 @@
+openapi: 3.0.3
+info:
+  title: gomi API
+  version: 1.0.0
+servers:
+  - url: /api/v1
+paths:
+  /setup/status:
+    get:
+      summary: Get first-run setup status
+      tags: [setup]
+      responses:
+        '200':
+          description: success
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [required]
+                properties:
+                  required:
+                    type: boolean
+  /setup/admin:
+    post:
+      summary: Disabled HTTP first-admin bootstrap
+      description: First admin creation must be performed on the server with `gomi setup admin`.
+      tags: [setup]
+      responses:
+        '403':
+          description: HTTP first-admin bootstrap is disabled
+  /auth/login:
+    post:
+      summary: Login
+      tags: [auth]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [username, password]
+              properties:
+                username:
+                  type: string
+                password:
+                  type: string
+      responses:
+        '200':
+          description: success
+  /auth/logout:
+    post:
+      summary: Logout
+      tags: [auth]
+      security:
+        - cookieAuth: []
+      responses:
+        '200':
+          description: success
+  /me:
+    get:
+      summary: Get current user
+      tags: [auth]
+      security:
+        - cookieAuth: []
+      responses:
+        '200':
+          description: success
+  /machines:
+    get:
+      summary: List machines
+      tags: [machines]
+      security:
+        - cookieAuth: []
+      parameters:
+        - in: query
+          name: namespace
+          schema:
+            type: string
+      responses:
+        '200':
+          description: success
+    post:
+      summary: Create machine
+      tags: [machines]
+      security:
+        - cookieAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateMachineRequest'
+      responses:
+        '201':
+          description: created
+  /machines/{name}:
+    get:
+      summary: Get machine
+      tags: [machines]
+      security:
+        - cookieAuth: []
+      parameters:
+        - in: path
+          name: name
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: success
+    delete:
+      summary: Delete machine
+      tags: [machines]
+      security:
+        - cookieAuth: []
+      parameters:
+        - in: path
+          name: name
+          required: true
+          schema:
+            type: string
+      responses:
+        '204':
+          description: deleted
+  /machines/{name}/actions/reinstall:
+    post:
+      summary: Reinstall machine
+      tags: [machines]
+      security:
+        - cookieAuth: []
+      parameters:
+        - in: path
+          name: name
+          required: true
+          schema:
+            type: string
+      responses:
+        '202':
+          description: accepted
+  /machines/{name}/actions/power-on:
+    post:
+      summary: Power on machine
+      tags: [machines]
+      security:
+        - cookieAuth: []
+      parameters:
+        - in: path
+          name: name
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: success
+  /machines/{name}/actions/power-off:
+    post:
+      summary: Power off machine
+      tags: [machines]
+      security:
+        - cookieAuth: []
+      parameters:
+        - in: path
+          name: name
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: success
+  /machines/{name}/settings:
+    patch:
+      summary: Update machine settings
+      tags: [machines]
+      security:
+        - cookieAuth: []
+      parameters:
+        - in: path
+          name: name
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: success
+  /machines/discover:
+    post:
+      summary: Discover machines
+      tags: [machines]
+      security:
+        - cookieAuth: []
+      responses:
+        '200':
+          description: success
+  /audit-events:
+    get:
+      summary: List audit events
+      tags: [audit]
+      security:
+        - cookieAuth: []
+      responses:
+        '200':
+          description: success
+  /power-policies:
+    get:
+      summary: List power policies
+      tags: [power-policies]
+      security:
+        - cookieAuth: []
+      responses:
+        '200':
+          description: success
+    post:
+      summary: Create power policy
+      tags: [power-policies]
+      security:
+        - cookieAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '201':
+          description: created
+  /power-policies/{name}:
+    get:
+      summary: Get power policy
+      tags: [power-policies]
+      security:
+        - cookieAuth: []
+      parameters:
+        - in: path
+          name: name
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: success
+    delete:
+      summary: Delete power policy
+      tags: [power-policies]
+      security:
+        - cookieAuth: []
+      parameters:
+        - in: path
+          name: name
+          required: true
+          schema:
+            type: string
+      responses:
+        '204':
+          description: deleted
+  /subnets:
+    get:
+      summary: List subnets
+      tags: [subnets]
+      security:
+        - cookieAuth: []
+      responses:
+        '200':
+          description: success
+    post:
+      summary: Create subnet
+      tags: [subnets]
+      security:
+        - cookieAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '201':
+          description: created
+  /subnets/{name}:
+    get:
+      summary: Get subnet
+      tags: [subnets]
+      security:
+        - cookieAuth: []
+      parameters:
+        - in: path
+          name: name
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: success
+    put:
+      summary: Update subnet
+      tags: [subnets]
+      security:
+        - cookieAuth: []
+      parameters:
+        - in: path
+          name: name
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: success
+    delete:
+      summary: Delete subnet
+      tags: [subnets]
+      security:
+        - cookieAuth: []
+      parameters:
+        - in: path
+          name: name
+          required: true
+          schema:
+            type: string
+      responses:
+        '204':
+          description: deleted
+  /users:
+    post:
+      summary: Create user
+      tags: [users]
+      security:
+        - cookieAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [username, password, role]
+              properties:
+                username:
+                  type: string
+                password:
+                  type: string
+                role:
+                  type: string
+                  enum: [admin, operator, viewer]
+      responses:
+        '201':
+          description: created
+components:
+  securitySchemes:
+    cookieAuth:
+      type: apiKey
+      in: cookie
+      name: session
+  schemas:
+    CreateMachineRequest:
+      type: object
+      required: [hostname, mac, arch, firmware, powerPolicyRef, osPreset]
+      properties:
+        hostname:
+          type: string
+        mac:
+          type: string
+        ip:
+          type: string
+        arch:
+          type: string
+        firmware:
+          type: string
+          enum: [uefi, bios]
+        powerPolicyRef:
+          type: string
+        network:
+          type: object
+          properties:
+            domain:
+              type: string
+            nameServers:
+              type: array
+              items:
+                type: string
+            gateway:
+              type: string
+        ipAssignment:
+          type: string
+          enum: [dhcp, static]
+        subnetRef:
+          type: string
+        osPreset:
+          type: object
+          required: [family, version, imageRef]
+          properties:
+            family:
+              type: string
+              enum: [ubuntu, debian]
+            version:
+              type: string
+            imageRef:
+              type: string
+            installConfig:
+              type: object
+              additionalProperties:
+                type: string

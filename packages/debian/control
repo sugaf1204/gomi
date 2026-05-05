@@ -1,0 +1,25 @@
+Source: gomi
+Section: admin
+Priority: optional
+Maintainer: sugaf1204 <sugaf1204@example.invalid>
+Build-Depends:
+ debhelper-compat (= 13),
+ golang-any | golang-go,
+ nodejs (>= 20.19),
+ npm | nodejs (>= 20.19)
+Standards-Version: 4.7.0
+Rules-Requires-Root: no
+Homepage: https://github.com/sugaf1204/gomi
+
+Package: gomi
+Architecture: any
+Depends:
+ adduser,
+ ca-certificates,
+ grub-efi-amd64-bin,
+ ipxe,
+ systemd,
+ ${misc:Depends}
+Description: GOMI - Go Machine Installer
+ Bare-metal server management system for provisioning,
+ power control, and lifecycle management.

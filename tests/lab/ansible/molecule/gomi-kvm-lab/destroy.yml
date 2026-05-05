@@ -1,0 +1,3 @@
+---
+- name: Destroy delegated GOMI KVM PXE lab resources
+  ansible.builtin.import_playbook: cleanup.yml

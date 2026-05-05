@@ -1,0 +1,6 @@
+build/
+artifacts/
+files/__pycache__/
+molecule_plugins/**/__pycache__/
+molecule_plugins/**/*.egg-info/
+.venv/

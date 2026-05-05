@@ -1,0 +1,46 @@
+#!/usr/bin/make -f
+
+export CGO_ENABLED=0
+
+DEB_HOST_ARCH ?= $(shell dpkg-architecture -qDEB_HOST_ARCH)
+GOMI_VERSION ?= $(shell dpkg-parsechangelog -S Version | sed 's/-[^-]*$$//')
+GO_HOST_ARCH := $(if $(filter amd64,$(DEB_HOST_ARCH)),amd64,$(if $(filter arm64,$(DEB_HOST_ARCH)),arm64,$(DEB_HOST_ARCH)))
+GO_LDFLAGS := -s -w -X main.version=$(GOMI_VERSION)
+FOREIGN_GO_ARCHES := $(filter-out $(GO_HOST_ARCH),amd64 arm64)
+DH_STRIP_EXCLUDES := $(foreach arch,$(FOREIGN_GO_ARCHES),-X-linux-$(arch))
+
+%:
+	dh $@
+
+override_dh_auto_build:
+	@if [ -x debian/prebuilt/gomi ]; then \
+		echo "Using prebuilt package artifacts"; \
+		mkdir -p debian/build; \
+		cp -a debian/prebuilt/. debian/build/; \
+	else \
+		echo "Building package artifacts from source"; \
+		cd web && npm ci && npm run build; \
+		mkdir -p debian/build; \
+		GOOS=linux GOARCH=$(GO_HOST_ARCH) go build -trimpath -ldflags "$(GO_LDFLAGS)" -o debian/build/gomi ./cmd/gomi; \
+		GOOS=linux GOARCH=amd64 go build -trimpath -ldflags "-s -w" -o debian/build/gomi-hypervisor-linux-amd64 ./cmd/gomi-hypervisor; \
+		GOOS=linux GOARCH=arm64 go build -trimpath -ldflags "-s -w" -o debian/build/gomi-hypervisor-linux-arm64 ./cmd/gomi-hypervisor; \
+		GOOS=linux GOARCH=amd64 go build -trimpath -ldflags "-s -w" -o debian/build/gomi-wol-daemon-linux-amd64 ./cmd/wol-daemon; \
+		GOOS=linux GOARCH=arm64 go build -trimpath -ldflags "-s -w" -o debian/build/gomi-wol-daemon-linux-arm64 ./cmd/wol-daemon; \
+	fi
+
+override_dh_auto_test:
+	@if [ -d debian/prebuilt ]; then \
+		echo "Skipping Go tests for prebuilt package artifacts"; \
+	else \
+		case " $(DEB_BUILD_OPTIONS) " in \
+			*" nocheck "*) ;; \
+			*) go test ./... ;; \
+		esac; \
+	fi
+
+override_dh_auto_clean:
+	rm -rf debian/build web/dist
+	dh_auto_clean
+
+override_dh_strip:
+	dh_strip $(DH_STRIP_EXCLUDES)

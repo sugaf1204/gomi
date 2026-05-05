@@ -1,0 +1,64 @@
+apiVersion: gomi.sugaf1204.github.io/ephemeral/v1alpha1
+kind: BootEnvironment
+metadata:
+  name: ubuntu-minimal-cloud-amd64
+spec:
+  architecture: amd64
+  kernel:
+    package: linux-image-generic
+  initramfs:
+    backend: initramfs-tools
+    packages:
+      - cloud-initramfs-rooturl
+      - cloud-initramfs-copymods
+      - overlayroot
+    cmdline:
+      - ip=dhcp
+      - overlayroot=tmpfs:recurse=0
+      - rw
+  rootfs:
+    type: squashfs
+    source:
+      type: ubuntu-cloud-squashfs
+      url: https://cloud-images.ubuntu.com/minimal/releases/jammy/release/
+    packages:
+      - ca-certificates
+      - curl
+      - dhcpcd5
+      - curtin
+    files:
+      - path: /etc/initramfs-tools/conf.d/gomi-netboot
+        mode: "0644"
+        contents: |
+          MODULES=netboot
+      - path: /etc/gomi/agent.env
+        mode: "0644"
+        contents: |
+          GOMI_METADATA_URL=http://gomi.local/metadata
+          GOMI_WORKFLOW_URL=http://gomi.local/workflows
+    services:
+      - name: gomi-deploy-runner
+        enable: true
+        command:
+          - /usr/local/sbin/gomi-deploy-runner
+    build:
+      compression: zstd
+      blockSize: 1M
+      output: rootfs.squashfs
+  cmdline:
+    - console=tty0
+    - console=ttyS0
+    - panic=10
+  network:
+    dhcp:
+      enabled: true
+      image: systemd-networkd
+  controlPlane:
+    metadataURL: http://gomi.local/metadata
+    workflowURL: http://gomi.local/workflows
+  pxe:
+    baseURL: http://gomi.local/files/linux
+    scriptName: boot.ipxe
+    kernelPath: boot-kernel
+    initrdPath: boot-initrd
+    rootfsPath: rootfs.squashfs

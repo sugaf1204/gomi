@@ -1,0 +1,16 @@
+[project]
+name = "gomi-ansible-lab"
+version = "0.1.0"
+description = "Ansible and Molecule environment for the GOMI QEMU/KVM PXE lab"
+requires-python = ">=3.11"
+dependencies = [
+  "ansible-core>=2.16",
+  "molecule>=25.0.0",
+  "molecule-qemu-kvm",
+]
+
+[tool.uv]
+package = false
+
+[tool.uv.sources]
+molecule-qemu-kvm = { path = "molecule_plugins/qemu_kvm", editable = true }

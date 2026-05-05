@@ -1,0 +1,491 @@
+version: '3'
+
+method: checksum
+
+vars:
+  ENV: '{{ .ENV | default "dev" }}'
+
+dotenv:
+  - .env
+  - .env.{{.ENV}}
+
+tasks:
+  default:
+    desc: List available tasks
+    cmds:
+      - task --list
+    silent: true
+
+  test:
+    desc: Run Go tests
+    cmds:
+      - go test ./...
+
+  vet:
+    desc: Run Go vet
+    cmds:
+      - go vet ./...
+
+  check:
+    desc: Run backend checks
+    deps:
+      - test
+      - vet
+
+  run:
+    desc: Run GOMI locally with background sync
+    cmds:
+      - go run ./cmd/gomi --listen=:8080 --background-sync-enabled=true
+
+  operator:
+    desc: Run GOMI locally without background sync
+    cmds:
+      - go run ./cmd/gomi --listen=:8080
+
+  web:install:
+    desc: Install web dependencies
+    dir: web
+    sources:
+      - package.json
+      - package-lock.json
+    generates:
+      - node_modules/.package-lock.json
+    cmds:
+      - npm install
+
+  web:dev:
+    desc: Run web dev server
+    dir: web
+    cmds:
+      - npm run dev
+
+  web:build:
+    desc: Build web UI
+    dir: web
+    deps:
+      - web:install
+    sources:
+      - package.json
+      - package-lock.json
+      - index.html
+      - tsconfig*.json
+      - vite.config.ts
+      - public/**
+      - src/**
+    generates:
+      - dist/index.html
+    cmds:
+      - npm run build
+
+  web:test:
+    desc: Run web tests
+    dir: web
+    cmds:
+      - npm run test
+
+  build:hypervisor-agent:
+    desc: Build hypervisor agent binaries for Linux amd64/arm64
+    sources:
+      - go.mod
+      - go.sum
+      - cmd/gomi-hypervisor/**/*.go
+      - internal/**/*.go
+    generates:
+      - bin/gomi-hypervisor-linux-amd64
+      - bin/gomi-hypervisor-linux-arm64
+    cmds:
+      - mkdir -p bin
+      - CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o bin/gomi-hypervisor-linux-amd64 ./cmd/gomi-hypervisor
+      - CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -o bin/gomi-hypervisor-linux-arm64 ./cmd/gomi-hypervisor
+
+  build:deb-gomi:
+    desc: Build GOMI server binary for the Debian package
+    internal: true
+    label: build:deb-gomi-{{.ARCH}}
+    deps:
+      - web:build
+    vars:
+      ARCH:
+        sh: printf '%s' "${ARCH:-amd64}"
+      GO_VERSION:
+        sh: |
+          version="$(sed -n '1s/^gomi (\([^)]*\)).*/\1/p' packages/debian/changelog)"
+          test -n "$version"
+          go_version="${version%-*}"
+          printf '%s' "${go_version#*:}"
+    sources:
+      - go.mod
+      - go.sum
+      - api/**/*.go
+      - cmd/gomi/**/*.go
+      - internal/**/*.go
+      - web/embed.go
+      - web/dist/**
+      - packages/debian/changelog
+    generates:
+      - packages/debian/build/gomi-linux-{{.ARCH}}
+    cmds:
+      - mkdir -p packages/debian/build
+      - CGO_ENABLED=0 GOOS=linux GOARCH="{{.ARCH}}" go build -trimpath -ldflags "-s -w -X main.version={{.GO_VERSION}}" -o packages/debian/build/gomi-linux-{{.ARCH}} ./cmd/gomi
+
+  build:deb-stage-gomi:
+    desc: Stage target-architecture GOMI server binary for the Debian package
+    internal: true
+    deps:
+      - build:deb-gomi
+    vars:
+      ARCH:
+        sh: printf '%s' "${ARCH:-amd64}"
+    sources:
+      - packages/debian/build/gomi-linux-{{.ARCH}}
+    generates:
+      - packages/debian/build/gomi
+    status:
+      - test -f packages/debian/build/gomi
+      - cmp -s packages/debian/build/gomi-linux-{{.ARCH}} packages/debian/build/gomi
+    cmds:
+      - cp packages/debian/build/gomi-linux-{{.ARCH}} packages/debian/build/gomi
+
+  build:deb-hypervisor-agent:
+    desc: Build hypervisor agent binaries for the Debian package
+    internal: true
+    sources:
+      - go.mod
+      - go.sum
+      - api/**/*.go
+      - cmd/gomi-hypervisor/**/*.go
+      - internal/**/*.go
+    generates:
+      - packages/debian/build/gomi-hypervisor-linux-amd64
+      - packages/debian/build/gomi-hypervisor-linux-arm64
+    cmds:
+      - mkdir -p packages/debian/build
+      - CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags "-s -w" -o packages/debian/build/gomi-hypervisor-linux-amd64 ./cmd/gomi-hypervisor
+      - CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -ldflags "-s -w" -o packages/debian/build/gomi-hypervisor-linux-arm64 ./cmd/gomi-hypervisor
+
+  build:deb-wol-daemon:
+    desc: Build WOL daemon binaries for the Debian package
+    internal: true
+    sources:
+      - go.mod
+      - go.sum
+      - api/**/*.go
+      - cmd/wol-daemon/**/*.go
+      - internal/**/*.go
+    generates:
+      - packages/debian/build/gomi-wol-daemon-linux-amd64
+      - packages/debian/build/gomi-wol-daemon-linux-arm64
+    cmds:
+      - mkdir -p packages/debian/build
+      - CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags "-s -w" -o packages/debian/build/gomi-wol-daemon-linux-amd64 ./cmd/wol-daemon
+      - CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -ldflags "-s -w" -o packages/debian/build/gomi-wol-daemon-linux-arm64 ./cmd/wol-daemon
+
+  build:deb-artifacts:
+    desc: Build local artifacts used by the Debian package build
+    deps:
+      - build:deb-stage-gomi
+      - build:deb-hypervisor-agent
+      - build:deb-wol-daemon
+
+  build:deb:
+    desc: Build local artifacts, then assemble .deb for the current OS
+    vars:
+      ARCH:
+        sh: printf '%s' "${ARCH:-amd64}"
+      PACKAGE_VERSION:
+        sh: sed -n '1s/^gomi (\([^)]*\)).*/\1/p' packages/debian/changelog
+    deps:
+      - build:deb-artifacts
+    sources:
+      - packages/debian/build/gomi
+      - packages/debian/build/gomi-hypervisor-linux-amd64
+      - packages/debian/build/gomi-hypervisor-linux-arm64
+      - packages/debian/build/gomi-wol-daemon-linux-amd64
+      - packages/debian/build/gomi-wol-daemon-linux-arm64
+      - packages/debian/changelog
+      - packages/debian/control
+      - packages/debian/copyright
+      - packages/debian/gomi.dirs
+      - packages/debian/gomi.install
+      - packages/debian/gomi.postinst
+      - packages/debian/gomi.prerm
+      - packages/debian/gomi.service
+      - packages/debian/gomi.yaml
+      - packages/debian/rules
+      - packages/files/gomi-hypervisor.service
+      - packages/nfpm.yaml
+    generates:
+      - packages/deb/gomi_{{.PACKAGE_VERSION}}_{{.ARCH}}.deb
+    cmds:
+      - |
+        set -eu
+        arch="{{.ARCH}}"
+        version="{{.PACKAGE_VERSION}}"
+        test -n "$version" || { echo "ERROR: unable to read package version from packages/debian/changelog" >&2; exit 1; }
+        deb="packages/deb/gomi_${version}_${arch}.deb"
+        mkdir -p packages/deb
+
+        case "{{OS}}" in
+          linux)
+            remote="${DEB_BUILD_HOST:-}"
+            if [ -n "$remote" ]; then
+              remote_root="${REMOTE_DEB_WORK:-/tmp/gomi-deb-build-${version}-${arch}}"
+              case "$remote_root" in
+                *"'"*) echo "ERROR: REMOTE_DEB_WORK must not contain single quotes" >&2; exit 1 ;;
+              esac
+              ssh_cmd="${SSH_CMD:-ssh}"
+              rsync_ssh="${RSYNC_SSH:-ssh}"
+
+              echo "==> Preparing remote Debian build directory: $remote:$remote_root"
+              $ssh_cmd "$remote" "rm -rf '$remote_root' && mkdir -p '$remote_root/src'"
+              rsync -az --delete -e "$rsync_ssh" \
+                --exclude '.git/' \
+                --exclude '.task/' \
+                --exclude '.env' \
+                --exclude '.env.*' \
+                --exclude 'bin/' \
+                --exclude 'data/' \
+                --exclude 'tmp/' \
+                --exclude 'web/node_modules/' \
+                --exclude 'web/dist/' \
+                --exclude 'packages/deb/' \
+                --exclude 'packages/debian/.debhelper/' \
+                --exclude 'packages/debian/build/' \
+                --exclude 'packages/debian/prebuilt/' \
+                --exclude 'packages/debian/gomi/' \
+                --exclude 'packages/debian/files' \
+                --exclude 'packages/debian/*.substvars' \
+                --exclude 'packages/debian/debhelper-build-stamp' \
+                ./ "$remote:$remote_root/src/"
+              $ssh_cmd "$remote" "rm -rf '$remote_root/src/debian' && cp -a '$remote_root/src/packages/debian' '$remote_root/src/debian' && mkdir -p '$remote_root/src/debian/prebuilt'"
+              rsync -az --delete -e "$rsync_ssh" packages/debian/build/ "$remote:$remote_root/src/debian/prebuilt/"
+
+              echo "==> Assembling Debian package on $remote"
+              $ssh_cmd "$remote" "cd '$remote_root/src' && DEB_BUILD_OPTIONS=nocheck dpkg-buildpackage -d -us -uc -b -a'$arch'"
+              rsync -az -e "$rsync_ssh" "$remote:$remote_root/gomi_${version}_${arch}.deb" "$deb"
+            else
+              command -v dpkg-buildpackage >/dev/null 2>&1 || { echo "ERROR: dpkg-buildpackage is required on Linux to build .deb packages" >&2; exit 1; }
+              command -v rsync >/dev/null 2>&1 || { echo "ERROR: rsync is required on Linux to build .deb packages" >&2; exit 1; }
+              local_root="${LOCAL_DEB_WORK:-tmp/gomi-deb-build-${version}-${arch}}"
+              case "$local_root" in
+                ""|"/"|".") echo "ERROR: invalid LOCAL_DEB_WORK: $local_root" >&2; exit 1 ;;
+              esac
+
+              echo "==> Preparing local Debian build directory: $local_root"
+              rm -rf "$local_root"
+              mkdir -p "$local_root/src"
+              rsync -az --delete \
+                --exclude '.git/' \
+                --exclude '.task/' \
+                --exclude '.env' \
+                --exclude '.env.*' \
+                --exclude 'bin/' \
+                --exclude 'data/' \
+                --exclude 'tmp/' \
+                --exclude 'web/node_modules/' \
+                --exclude 'web/dist/' \
+                --exclude 'packages/deb/' \
+                --exclude 'packages/debian/.debhelper/' \
+                --exclude 'packages/debian/build/' \
+                --exclude 'packages/debian/prebuilt/' \
+                --exclude 'packages/debian/gomi/' \
+                --exclude 'packages/debian/files' \
+                --exclude 'packages/debian/*.substvars' \
+                --exclude 'packages/debian/debhelper-build-stamp' \
+                ./ "$local_root/src/"
+              rm -rf "$local_root/src/debian"
+              cp -a "$local_root/src/packages/debian" "$local_root/src/debian"
+              mkdir -p "$local_root/src/debian/prebuilt"
+              cp -a packages/debian/build/. "$local_root/src/debian/prebuilt/"
+
+              echo "==> Assembling Debian package locally"
+              (cd "$local_root/src" && DEB_BUILD_OPTIONS=nocheck dpkg-buildpackage -d -us -uc -b -a"$arch")
+              cp "$local_root/gomi_${version}_${arch}.deb" "$deb"
+            fi
+            ;;
+          darwin)
+            command -v nfpm >/dev/null 2>&1 || { echo "ERROR: nfpm is required on macOS to build .deb packages" >&2; exit 1; }
+            echo "==> Assembling Debian package locally with nFPM"
+            VERSION="$version" ARCH="$arch" nfpm package --config packages/nfpm.yaml --packager deb --target "$deb"
+            ;;
+          *)
+            echo "ERROR: unsupported OS for build:deb: {{OS}}" >&2
+            exit 1
+            ;;
+        esac
+        echo "==> Package ready: $deb"
+
+  setup:build-server:
+    desc: Install Debian package build dependencies on HOST or DEB_BUILD_HOST
+    cmds:
+      - |
+        set -eu
+        remote="${DEB_BUILD_HOST:-${HOST:-}}"
+        test -n "$remote" || { echo "ERROR: HOST or DEB_BUILD_HOST is required" >&2; exit 1; }
+        ssh_cmd="${SSH_CMD:-ssh}"
+
+        echo "==> Installing Debian package build dependencies on $remote"
+        $ssh_cmd "$remote" "sudo apt-get update && sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y dpkg-dev debhelper build-essential fakeroot rsync"
+
+  build:
+    desc: Run checks and build .deb package
+    cmds:
+      - task: check
+      - task: build:deb
+
+  release:check-tag-version:
+    desc: Validate release tag matches the Debian package version
+    cmds:
+      - |
+        set -eu
+        ref_type="${GITHUB_REF_TYPE:-}"
+        tag="${GITHUB_REF_NAME:-}"
+        if [ "$ref_type" != "tag" ] || [ -z "$tag" ]; then
+          echo "==> Not running from a GitHub tag ref; skipping tag/version check"
+          exit 0
+        fi
+
+        version="$(sed -n '1s/^gomi (\([^)]*\)).*/\1/p' packages/debian/changelog)"
+        test -n "$version" || { echo "ERROR: unable to read package version from packages/debian/changelog" >&2; exit 1; }
+        no_epoch="${version#*:}"
+        upstream="${no_epoch%-*}"
+
+        for expected in "$version" "v$version" "$upstream" "v$upstream"; do
+          if [ "$tag" = "$expected" ]; then
+            echo "==> Release tag $tag matches Debian package version $version"
+            exit 0
+          fi
+        done
+
+        echo "ERROR: release tag $tag does not match Debian package version $version" >&2
+        echo "Expected one of: $version, v$version, $upstream, v$upstream" >&2
+        exit 1
+
+  release:deb:
+    desc: Run release checks and build the Debian package
+    cmds:
+      - task: release:check-tag-version
+      - task: check
+      - task: build:deb
+
+  env:check:
+    desc: Validate deploy environment variables
+    cmds:
+      - |
+        test -n "$HOST" || { echo "ERROR: HOST is required"; exit 1; }
+
+  deploy:
+    desc: Deploy the built .deb package to HOST and restart GOMI
+    cmds:
+      - task: env:check
+      - task: build:deb
+      - |
+        set -eu
+        arch="${ARCH:-amd64}"
+        ssh_cmd="${SSH_CMD:-ssh}"
+        version="$(sed -n '1s/^gomi (\([^)]*\)).*/\1/p' packages/debian/changelog)"
+        test -n "$version" || { echo "ERROR: unable to read package version from packages/debian/changelog" >&2; exit 1; }
+        DEB="packages/deb/gomi_${version}_${arch}.deb"
+        test -s "$DEB" || { echo "ERROR: missing package: $DEB"; echo "Run task build:deb or task full-deploy first."; exit 1; }
+        echo "==> Deploying $DEB to $HOST"
+        $ssh_cmd "$HOST" "cat > '/tmp/gomi_${version}_${arch}.deb'" < "$DEB"
+        $ssh_cmd "$HOST" "sudo DEBIAN_FRONTEND=noninteractive dpkg -i --force-confold /tmp/gomi_${version}_${arch}.deb && sudo systemctl daemon-reload && sudo systemctl restart gomi"
+
+  deploy:health:
+    desc: Check deployed GOMI health endpoint
+    cmds:
+      - task: env:check
+      - |
+        HOST_IP="${HOST#*@}"
+        echo "==> Health check http://${HOST_IP}:8080/healthz"
+        for i in $(seq 1 15); do
+          if curl -sf "http://${HOST_IP}:8080/healthz" >/dev/null 2>&1; then
+            curl -sf "http://${HOST_IP}:8080/healthz" | python3 -m json.tool 2>/dev/null || true
+            version="$(sed -n '1s/^gomi (\([^)]*\)).*/\1/p' packages/debian/changelog)"
+            echo "==> Deploy complete. version=$version host=$HOST"
+            exit 0
+          fi
+          sleep 2
+        done
+        echo "ERROR: health check failed after 30s" >&2
+        exit 1
+
+  full-deploy:
+    desc: Run checks, deploy, and verify health
+    cmds:
+      - task: check
+      - task: deploy
+      - task: deploy:health
+
+  upload-images:
+    desc: Download release/catalog raw OS image artifacts and upload them
+    cmds:
+      - ./tools/upload-os-images.sh "$GOMI_URL" "$GOMI_OS_IMAGE_SOURCE_URL"
+
+  bootenv:validate:
+    desc: Validate the GOMI boot environment spec
+    dir: bootenv
+    cmds:
+      - make validate GOCACHE={{.GOCACHE | default "/tmp/go-build"}} SPEC={{.SPEC | default "bootenvs/ubuntu-minimal-cloud-amd64.yaml"}}
+
+  bootenv:plan:
+    desc: Print the GOMI boot environment build plan
+    dir: bootenv
+    cmds:
+      - make plan GOCACHE={{.GOCACHE | default "/tmp/go-build"}} SPEC={{.SPEC | default "bootenvs/ubuntu-minimal-cloud-amd64.yaml"}}
+
+  bootenv:render:
+    desc: Render GOMI boot environment metadata
+    dir: bootenv
+    cmds:
+      - make render GOCACHE={{.GOCACHE | default "/tmp/go-build"}} SPEC={{.SPEC | default "bootenvs/ubuntu-minimal-cloud-amd64.yaml"}} RENDER_OUT={{.OUT | default "dist/rendered"}}
+
+  bootenv:test:
+    desc: Run GOMI boot environment unit tests
+    dir: bootenv
+    cmds:
+      - make test GOCACHE={{.GOCACHE | default "/tmp/go-build"}}
+
+  bootenv:build-runner:
+    desc: Build the Go deploy runner injected into the boot environment
+    dir: bootenv
+    cmds:
+      - make build-runner GOCACHE={{.GOCACHE | default "/tmp/go-build"}} GOARCH={{.GOARCH | default "amd64"}} RUNNER_OUT={{.RUNNER_OUT | default "dist/bin/gomi-deploy-runner"}}
+
+  bootenv:build-runner-tinygo:
+    desc: Build the deploy runner with TinyGo when tinygo is installed
+    dir: bootenv
+    cmds:
+      - make build-runner-tinygo RUNNER_OUT={{.RUNNER_OUT | default "dist/bin/gomi-deploy-runner-tinygo"}}
+
+  bootenv:build:
+    desc: Build GOMI boot environment release assets
+    dir: bootenv
+    cmds:
+      - make build GOCACHE={{.GOCACHE | default "/tmp/go-build"}} SPEC={{.SPEC | default "bootenvs/ubuntu-minimal-cloud-amd64.yaml"}} OUT={{.OUT | default "dist/ubuntu-minimal-cloud-amd64"}}
+
+  e2e:provisioning-smoke:
+    desc: Run local provisioning smoke test
+    cmds:
+      - ./tests/e2e/provisioning-smoke/run_smoke.sh
+
+  e2e:remote-provisioning-smoke:
+    desc: Run remote provisioning smoke test
+    cmds:
+      - ./tests/e2e/provisioning-smoke/run_remote.sh
+
+  e2e:remote-qemu-kvm-pxe:
+    desc: Run remote QEMU/KVM PXE test
+    cmds:
+      - ./tests/e2e/qemu-kvm-pxe/run_remote.sh
+
+  e2e:remote-gomi-vm-pxe:
+    desc: Run remote GOMI VM plus PXE target test
+    cmds:
+      - ./tests/e2e/gomi-vm-pxe/run_remote.sh
+
+  e2e:molecule-gomi-kvm-lab:
+    desc: Run Molecule smoke test for the GOMI server VM and PXE target VM lab
+    dir: tests/lab/ansible
+    cmds:
+      - uv run molecule test -s gomi-kvm-lab

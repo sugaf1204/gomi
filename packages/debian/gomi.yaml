@@ -1,0 +1,62 @@
+# GOMI configuration
+#
+# Defaults are built into the gomi binary. Set only values that should differ
+# from those defaults.
+
+data_dir: /var/lib/gomi/data
+
+# listen_addr: ":8080"
+# session_ttl: 12h
+# background_sync_enabled: true
+
+# Optional: pre-create an admin user at startup.
+# Leave unset to use the first-run setup UI/API.
+# admin:
+#   username: admin
+#   password: changeme
+
+# database:
+#   driver: sqlite
+#   dsn: /var/lib/gomi/data/gomi.db
+#
+# PostgreSQL example:
+# database:
+#   driver: postgres
+#   dsn: postgres://gomi:gomi@localhost:5432/gomi?sslmode=disable
+
+# dns:
+#   mode: off
+#   embedded_addr: ":53"
+#   ttl: 300s
+#   powerdns:
+#     base_url: ""
+#     api_token: ""
+#     server_id: localhost
+#   rfc2136:
+#     server: 192.0.2.53:53
+#     zone: lab.example
+#     tsig_name: gomi-key
+#     tsig_secret: ""
+#     tsig_algorithm: hmac-sha256.
+#     transport: udp
+
+# boot_http_base_url: http://gomi-boot.local
+
+# dhcp:
+#   mode: full
+#   iface: br-eno1
+
+# tftp:
+#   addr: ":69"
+#   root: /var/lib/gomi/data/tftp
+
+# pxe:
+#   http_base_url: ""
+#   bootfile_bios: undionly.kpxe
+#   bootfile_uefi: ipxe.efi
+
+# bootenv:
+#   source_url: https://github.com/sugaf1204/gomi/releases/latest/download
+
+# vm:
+#   provision_timeout: 30m

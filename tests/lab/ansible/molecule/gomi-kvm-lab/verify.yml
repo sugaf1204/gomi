@@ -1,0 +1,54 @@
+---
+- name: Verify GOMI KVM PXE lab results
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  become: false
+  vars:
+    gomi_kvm_lab_summary_path: >-
+      {{ playbook_dir }}/../../artifacts/gomi_lab_host/summary.json
+  tasks:
+    - name: Check summary exists
+      ansible.builtin.stat:
+        path: "{{ gomi_kvm_lab_summary_path }}"
+      register: gomi_kvm_lab_summary_stat
+
+    - name: Assert summary was fetched
+      ansible.builtin.assert:
+        that:
+          - gomi_kvm_lab_summary_stat.stat.exists
+          - gomi_kvm_lab_summary_stat.stat.isreg
+        fail_msg: "Missing lab summary: {{ gomi_kvm_lab_summary_path }}"
+
+    - name: Load summary
+      ansible.builtin.slurp:
+        src: "{{ gomi_kvm_lab_summary_path }}"
+      register: gomi_kvm_lab_summary_raw
+
+    - name: Parse summary
+      ansible.builtin.set_fact:
+        gomi_kvm_lab_summary: >-
+          {{ gomi_kvm_lab_summary_raw.content | b64decode | from_json }}
+
+    - name: Collect failed cases
+      ansible.builtin.set_fact:
+        gomi_kvm_lab_failed_cases: >-
+          {{ gomi_kvm_lab_summary.results | selectattr('status', 'equalto', 'failed') | list }}
+        gomi_kvm_lab_passed_cases: >-
+          {{ gomi_kvm_lab_summary.results | selectattr('status', 'equalto', 'passed') | list }}
+
+    - name: Assert smoke matrix completed
+      ansible.builtin.assert:
+        that:
+          - gomi_kvm_lab_summary.results | length > 0
+          - gomi_kvm_lab_passed_cases | length > 0
+          - gomi_kvm_lab_failed_cases | length == 0
+        fail_msg: >-
+          GOMI KVM PXE lab failed or produced an incomplete matrix:
+          {{ gomi_kvm_lab_summary | to_nice_json }}
+
+    - name: Show verified cases
+      ansible.builtin.debug:
+        msg: >-
+          Verified {{ gomi_kvm_lab_passed_cases | length }} case(s):
+          {{ gomi_kvm_lab_passed_cases | map(attribute='name') | list | join(', ') }}

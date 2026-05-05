@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "molecule-qemu-kvm"
+version = "0.1.0"
+description = "Minimal Molecule driver for the GOMI QEMU/KVM PXE lab"
+requires-python = ">=3.10"
+dependencies = ["molecule>=25.0.0"]
+
+[project.entry-points."molecule.driver"]
+molecule-qemu-kvm = "molecule_qemu_kvm.driver:QemuKvm"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+molecule_qemu_kvm = ["schema.json"]

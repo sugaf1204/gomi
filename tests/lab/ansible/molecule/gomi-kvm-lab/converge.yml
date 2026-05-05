@@ -1,0 +1,82 @@
+---
+- name: Build local GOMI binary for the Molecule QEMU/KVM lab
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  become: false
+  vars:
+    ansible_become: false
+    gomi_kvm_lab_repo_root: "{{ playbook_dir }}/../../../../.."
+    gomi_kvm_lab_local_build_dir: "{{ playbook_dir }}/../../build"
+    gomi_kvm_lab_local_binary: "{{ gomi_kvm_lab_local_build_dir }}/gomi-linux-amd64"
+  tasks:
+    - name: Ensure local build directory exists
+      ansible.builtin.file:
+        path: "{{ gomi_kvm_lab_local_build_dir }}"
+        state: directory
+        mode: "0755"
+
+    - name: Build local linux/amd64 gomi binary
+      ansible.builtin.command:
+        cmd: go build -o "{{ gomi_kvm_lab_local_binary }}" ./cmd/gomi
+        chdir: "{{ gomi_kvm_lab_repo_root }}"
+      environment:
+        CGO_ENABLED: "0"
+        GOOS: linux
+        GOARCH: amd64
+        GOCACHE: "{{ gomi_kvm_lab_local_build_dir }}/gocache"
+        GOPATH: "{{ gomi_kvm_lab_local_build_dir }}/gopath"
+
+- name: Build and run the Molecule QEMU/KVM PXE smoke lab
+  hosts: gomi_kvm_lab
+  gather_facts: false
+  vars_files:
+    - vars.yml
+  vars:
+    gomi_kvm_lab_repo_root: "{{ playbook_dir }}/../../../../.."
+    gomi_kvm_lab_local_build_dir: "{{ playbook_dir }}/../../build"
+    gomi_kvm_lab_local_artifacts_dir: "{{ playbook_dir }}/../../artifacts/{{ inventory_hostname }}"
+    gomi_kvm_lab_local_binary: "{{ gomi_kvm_lab_local_build_dir }}/gomi-linux-amd64"
+    gomi_kvm_lab_remote_config: "{{ gomi_kvm_lab_remote_root }}/lab-config.json"
+    gomi_kvm_lab_remote_binary: "{{ gomi_kvm_lab_remote_root }}/gomi"
+    gomi_kvm_lab_remote_runner: "{{ gomi_kvm_lab_remote_root }}/gomi_kvm_lab_runner.py"
+  tasks:
+    - name: Install remote host dependencies
+      ansible.builtin.apt:
+        update_cache: true
+        name: "{{ gomi_kvm_lab_host_packages }}"
+        state: present
+
+    - name: Ensure remote workspace exists
+      ansible.builtin.file:
+        path: "{{ gomi_kvm_lab_remote_root }}"
+        state: directory
+        mode: "0755"
+
+    - name: Upload gomi binary
+      ansible.builtin.copy:
+        src: "{{ gomi_kvm_lab_local_binary }}"
+        dest: "{{ gomi_kvm_lab_remote_binary }}"
+        mode: "0755"
+
+    - name: Upload remote lab runner
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/../../files/gomi_kvm_lab_runner.py"
+        dest: "{{ gomi_kvm_lab_remote_runner }}"
+        mode: "0755"
+
+    - name: Render remote lab config
+      ansible.builtin.template:
+        src: "{{ playbook_dir }}/../../templates/lab-config.json.j2"
+        dest: "{{ gomi_kvm_lab_remote_config }}"
+        mode: "0644"
+
+    - name: Execute remote lab runner
+      ansible.builtin.command:
+        cmd: python3 "{{ gomi_kvm_lab_remote_runner }}" --config "{{ gomi_kvm_lab_remote_config }}"
+
+    - name: Fetch summary json
+      ansible.builtin.fetch:
+        src: "{{ gomi_kvm_lab_remote_root }}/results/summary.json"
+        dest: "{{ gomi_kvm_lab_local_artifacts_dir }}/summary.json"
+        flat: true

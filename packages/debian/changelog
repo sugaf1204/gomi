@@ -1,0 +1,5 @@
+gomi (0.6.12-1) unstable; urgency=medium
+
+  * Package GOMI using the standard Debian source package layout.
+
+ -- sugaf1204 <sugaf1204@example.invalid>  Thu, 30 Apr 2026 15:00:00 +0900

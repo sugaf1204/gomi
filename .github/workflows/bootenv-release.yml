@@ -1,0 +1,50 @@
+name: Release Boot Environment
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: bootenv-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: bootenv
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: bootenv/go.mod
+          cache-dependency-path: bootenv/go.sum
+      - name: Install image build tools
+        run: |
+          sudo apt-get update
+          sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y libarchive-tools squashfs-tools
+      - name: Test
+        run: make test
+      - name: Build boot environment
+        run: make build OUT=dist/ubuntu-minimal-cloud-amd64 VERSION="${GITHUB_REF_NAME:-manual}"
+      - name: Publish release assets
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          cd dist/ubuntu-minimal-cloud-amd64
+          if ! gh release view "$TAG" >/dev/null 2>&1; then
+            gh release create "$TAG" --verify-tag --generate-notes || {
+              status=$?
+              gh release view "$TAG" >/dev/null 2>&1 || exit "$status"
+            }
+          fi
+          gh release upload "$TAG" boot-kernel boot-initrd rootfs.squashfs boot.ipxe manifest.json checksums.txt --clobber

@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "driver": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "const": "molecule-qemu-kvm"
+        },
+        "options": {
+          "type": "object",
+          "properties": {
+            "managed": {
+              "type": "boolean"
+            },
+            "login_cmd_template": {
+              "type": "string"
+            },
+            "ansible_connection_options": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "string"
+              }
+            }
+          },
+          "additionalProperties": false
+        },
+        "safe_files": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "ssh_connection_options": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": ["name"],
+      "additionalProperties": true
+    }
+  }
+}
