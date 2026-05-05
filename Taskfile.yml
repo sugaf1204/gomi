@@ -18,19 +18,24 @@ tasks:
 
   test:
     desc: Run Go tests
+    deps:
+      - web:build
     cmds:
       - go test ./...
 
   vet:
     desc: Run Go vet
+    deps:
+      - web:build
     cmds:
       - go vet ./...
 
   check:
     desc: Run backend checks
-    deps:
-      - test
-      - vet
+    cmds:
+      - task: web:build
+      - task: test
+      - task: vet
 
   run:
     desc: Run GOMI locally with background sync
