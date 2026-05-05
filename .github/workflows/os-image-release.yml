@@ -86,9 +86,9 @@ jobs:
             customize_args=(--mkdir /curtin)
             if [[ -n "$guest_packages" ]]; then
               customize_args+=(--install "$guest_packages")
-              sudo LIBGUESTFS_BACKEND=direct virt-customize --network -a "$work" "${customize_args[@]}"
+              LIBGUESTFS_BACKEND=direct virt-customize --network -a "$work" "${customize_args[@]}"
             else
-              sudo LIBGUESTFS_BACKEND=direct virt-customize --no-network -a "$work" "${customize_args[@]}"
+              LIBGUESTFS_BACKEND=direct virt-customize --no-network -a "$work" "${customize_args[@]}"
             fi
             qemu-img convert -O raw "$work" "$raw"
             zstd -T0 -19 -f "$raw" -o "$zst"
