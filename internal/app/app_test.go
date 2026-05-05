@@ -9,18 +9,19 @@ import (
 	"github.com/sugaf1204/gomi/internal/subnet"
 )
 
-func TestUEFILocalBootGRUBConfigFallsBackToFirmwareBootOrder(t *testing.T) {
+func TestUEFILocalBootGRUBConfigChainloadsInstalledEFILoaders(t *testing.T) {
 	if !strings.Contains(uefiLocalBootGRUBConfig, "exit 1") {
-		t.Fatalf("expected UEFI local boot GRUB config to fail back to firmware BootOrder")
+		t.Fatalf("expected UEFI local boot GRUB config to keep firmware BootOrder fallback")
 	}
-	for _, forbidden := range []string{
+	for _, want := range []string{
 		"chainloader",
-		"menuentry",
 		"search --",
-		"gomi_chain",
+		"/EFI/ubuntu/shimx64.efi",
+		"/EFI/debian/shimx64.efi",
+		"/EFI/BOOT/BOOTX64.EFI",
 	} {
-		if strings.Contains(uefiLocalBootGRUBConfig, forbidden) {
-			t.Fatalf("UEFI local boot GRUB config must not scan or chainload disks; found %q in:\n%s", forbidden, uefiLocalBootGRUBConfig)
+		if !strings.Contains(uefiLocalBootGRUBConfig, want) {
+			t.Fatalf("UEFI local boot GRUB config missing %q in:\n%s", want, uefiLocalBootGRUBConfig)
 		}
 	}
 }
