@@ -833,7 +833,7 @@ func TestSetupStatusRequiresFirstAdminWhenNoUsersExist(t *testing.T) {
 	}
 }
 
-func TestSetupAdminRejectsHTTPBootstrap(t *testing.T) {
+func TestSetupAdminCreatesFirstAdmin(t *testing.T) {
 	env := setupFirstRunTestEnv(t)
 
 	setupBody := map[string]any{
@@ -841,7 +841,17 @@ func TestSetupAdminRejectsHTTPBootstrap(t *testing.T) {
 		"password": "secret123",
 	}
 	rec := doRequest(env.echo, http.MethodPost, "/api/v1/setup/admin", setupBody, "")
-	requireStatus(t, rec, http.StatusForbidden)
+	requireStatus(t, rec, http.StatusCreated)
+
+	rec = doRequest(env.echo, http.MethodGet, "/api/v1/setup/status", nil, "")
+	requireStatus(t, rec, http.StatusOK)
+	body := parseBody(t, rec)
+	if body["required"] != false {
+		t.Fatalf("expected setup not required after admin creation, got %v", body["required"])
+	}
+
+	rec = doRequest(env.echo, http.MethodPost, "/api/v1/auth/login", setupBody, "")
+	requireStatus(t, rec, http.StatusOK)
 }
 
 func TestSetupAdminRejectedAfterUserExists(t *testing.T) {
@@ -852,7 +862,7 @@ func TestSetupAdminRejectedAfterUserExists(t *testing.T) {
 		"password": "secret123",
 	}
 	rec := doRequest(env.echo, http.MethodPost, "/api/v1/setup/admin", setupBody, "")
-	requireStatus(t, rec, http.StatusForbidden)
+	requireStatus(t, rec, http.StatusConflict)
 }
 
 // ---------------------------------------------------------------------------

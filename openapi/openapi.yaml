@@ -22,12 +22,26 @@ paths:
                     type: boolean
   /setup/admin:
     post:
-      summary: Disabled HTTP first-admin bootstrap
-      description: First admin creation must be performed on the server with `gomi setup admin`.
+      summary: Create first admin
+      description: Creates the initial admin user only when no users exist.
       tags: [setup]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [username, password]
+              properties:
+                username:
+                  type: string
+                password:
+                  type: string
       responses:
-        '403':
-          description: HTTP first-admin bootstrap is disabled
+        '201':
+          description: created
+        '409':
+          description: setup already completed
   /auth/login:
     post:
       summary: Login

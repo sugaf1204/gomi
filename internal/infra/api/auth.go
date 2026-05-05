@@ -12,6 +12,7 @@ import (
 
 	"github.com/sugaf1204/gomi/internal/auth"
 	"github.com/sugaf1204/gomi/internal/infra/httputil"
+	"github.com/sugaf1204/gomi/internal/setupadmin"
 )
 
 type loginRequest struct {
@@ -97,7 +98,18 @@ func (s *Server) SetupStatus(c echo.Context) error {
 }
 
 func (s *Server) SetupAdmin(c echo.Context) error {
-	return c.JSON(gohttp.StatusForbidden, map[string]string{"error": "create the first admin with `gomi setup admin` on the server"})
+	var req loginRequest
+	if err := c.Bind(&req); err != nil {
+		return c.JSON(gohttp.StatusBadRequest, map[string]string{"error": "invalid body"})
+	}
+	err := setupadmin.CreateFirstAdmin(c.Request().Context(), s.authStore, req.Username, req.Password)
+	if errors.Is(err, setupadmin.ErrAlreadyConfigured) {
+		return c.JSON(gohttp.StatusConflict, map[string]string{"error": "setup already completed"})
+	}
+	if err != nil {
+		return c.JSON(gohttp.StatusBadRequest, map[string]string{"error": err.Error()})
+	}
+	return c.JSON(gohttp.StatusCreated, map[string]string{"status": "created"})
 }
 
 func (s *Server) setupRequired(ctx context.Context) (bool, error) {
