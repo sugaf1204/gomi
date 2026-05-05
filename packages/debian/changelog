@@ -1,4 +1,4 @@
-gomi (0.6.12-1) unstable; urgency=medium
+gomi (0.0.1) unstable; urgency=medium
 
   * Package GOMI using the standard Debian source package layout.
 
