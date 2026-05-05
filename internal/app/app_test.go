@@ -3,26 +3,14 @@ package app
 import (
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/sugaf1204/gomi/internal/subnet"
 )
 
-func TestUEFILocalBootGRUBConfigChainloadsInstalledEFILoaders(t *testing.T) {
-	if !strings.Contains(uefiLocalBootGRUBConfig, "exit 1") {
-		t.Fatalf("expected UEFI local boot GRUB config to keep firmware BootOrder fallback")
-	}
-	for _, want := range []string{
-		"chainloader",
-		"search --",
-		"/EFI/ubuntu/shimx64.efi",
-		"/EFI/debian/shimx64.efi",
-		"/EFI/BOOT/BOOTX64.EFI",
-	} {
-		if !strings.Contains(uefiLocalBootGRUBConfig, want) {
-			t.Fatalf("UEFI local boot GRUB config missing %q in:\n%s", want, uefiLocalBootGRUBConfig)
-		}
+func TestUEFILocalBootGRUBConfigFallsBackToFirmwareBootOrder(t *testing.T) {
+	if got, want := uefiLocalBootGRUBConfig, "exit 1\n"; got != want {
+		t.Fatalf("UEFI local boot GRUB config = %q, want %q", got, want)
 	}
 }
 

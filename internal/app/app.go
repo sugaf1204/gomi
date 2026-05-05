@@ -653,33 +653,7 @@ func (r *Runtime) startPXE(parent context.Context, state pxeRuntimeState, spec s
 	}()
 }
 
-const uefiLocalBootGRUBConfig = `set timeout=0
-
-insmod part_gpt
-insmod fat
-
-function gomi_chainload {
-  set gomi_esp=
-  search --no-floppy --file --set=gomi_esp $1
-  if [ -n "$gomi_esp" ]; then
-    chainloader ($gomi_esp)$1
-    boot
-  fi
-}
-
-gomi_chainload /EFI/ubuntu/shimx64.efi
-gomi_chainload /EFI/ubuntu/grubx64.efi
-gomi_chainload /EFI/debian/shimx64.efi
-gomi_chainload /EFI/debian/grubx64.efi
-gomi_chainload /EFI/fedora/shimx64.efi
-gomi_chainload /EFI/fedora/grubx64.efi
-gomi_chainload /EFI/redhat/shimx64.efi
-gomi_chainload /EFI/redhat/grubx64.efi
-gomi_chainload /EFI/BOOT/BOOTX64.EFI
-gomi_chainload /EFI/BOOT/grubx64.efi
-
-exit 1
-`
+const uefiLocalBootGRUBConfig = "exit 1\n"
 
 var uefiLocalBootGRUBCandidates = []string{
 	"/usr/lib/grub/x86_64-efi/monolithic/grubnetx64.efi",
