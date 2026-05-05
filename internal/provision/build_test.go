@@ -67,6 +67,18 @@ func TestBuildCloudInitUsers_LoginUserWithoutPasswordLocked(t *testing.T) {
 	}
 }
 
+func TestLoginUserPasswordConfigured(t *testing.T) {
+	if provision.LoginUserPasswordConfigured(nil) {
+		t.Fatal("nil login user must not enable password login")
+	}
+	if provision.LoginUserPasswordConfigured(&machine.LoginUserSpec{Username: "admin"}) {
+		t.Fatal("login user without password must not enable password login")
+	}
+	if !provision.LoginUserPasswordConfigured(&machine.LoginUserSpec{Username: "admin", Password: "secret"}) {
+		t.Fatal("login user with password must enable password login")
+	}
+}
+
 func TestSelectKeysForRefs(t *testing.T) {
 	all := []sshkey.SSHKey{
 		{Name: "alice", PublicKey: "ssh-ed25519 a"},
@@ -113,6 +125,31 @@ func TestBuildArtifacts_NoSSHKeysWhenRefsUnspecified(t *testing.T) {
 	}
 	if strings.Contains(installCfg, "ssh_authorized_keys") {
 		t.Fatalf("expected no SSH authorized keys when sshKeyRefs is unspecified, got:\n%s", installCfg)
+	}
+}
+
+func TestBuildArtifacts_LoginUserPasswordEnablesSSHPWAuth(t *testing.T) {
+	_, installCfg, err := provision.BuildArtifacts(machine.Machine{
+		Name:     "bm-password",
+		Hostname: "bm-password",
+		Firmware: machine.FirmwareUEFI,
+		LoginUser: &machine.LoginUserSpec{
+			Username: "gomi",
+			Password: "gomi",
+		},
+	}, "http://boot.local/pxe", nil)
+	if err != nil {
+		t.Fatalf("BuildArtifacts: %v", err)
+	}
+	for _, want := range []string{
+		"name: gomi",
+		"plain_text_passwd: gomi",
+		"lock_passwd: false",
+		"ssh_pwauth: true",
+	} {
+		if !strings.Contains(installCfg, want) {
+			t.Fatalf("expected %q in cloud-config, got:\n%s", want, installCfg)
+		}
 	}
 }
 

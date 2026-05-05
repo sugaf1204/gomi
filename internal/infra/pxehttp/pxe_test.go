@@ -573,8 +573,6 @@ func TestPXENocloudUserData_CurtinUsesCurtinCompletionType(t *testing.T) {
 	if !strings.Contains(body, "install-complete?token=token-curtin-user-data&type=curtin") {
 		t.Fatalf("expected install-complete callback type=curtin, got: %s", body)
 	}
-	// Password SSH login is forbidden across the deployment surface; cloud-init
-	// must emit ssh_pwauth: false so sshd rejects password authentication.
 	if !strings.Contains(body, "ssh_pwauth: false") {
 		t.Fatalf("expected ssh_pwauth: false in curtin user-data, got: %s", body)
 	}
@@ -632,6 +630,63 @@ func TestPXENocloudUserData_InjectsHostnameForMachine(t *testing.T) {
 	}
 	if strings.Contains(body, "hostname: gomi-pxe") {
 		t.Fatalf("expected gomi-pxe hostname to be replaced, got: %s", body)
+	}
+}
+
+func TestPXENocloudUserData_MachineLoginUserPasswordEnablesSSHPWAuth(t *testing.T) {
+	backend := memory.New()
+	machineSvc := machine.NewService(backend.Machines())
+	now := time.Now().UTC()
+	target := machine.Machine{
+		Name:     "bm-password",
+		Hostname: "bm-password",
+		MAC:      "52:54:00:aa:bb:cc",
+		Arch:     "amd64",
+		Firmware: machine.FirmwareUEFI,
+		LoginUser: &machine.LoginUserSpec{
+			Username: "gomi",
+			Password: "gomi",
+		},
+		OSPreset: machine.OSPreset{
+			Family: machine.OSTypeUbuntu,
+		},
+		Phase: machine.PhaseProvisioning,
+		Provision: &machine.ProvisionProgress{
+			Active:          true,
+			CompletionToken: "token-password-login",
+		},
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	if err := backend.Machines().Upsert(context.Background(), target); err != nil {
+		t.Fatalf("upsert machine: %v", err)
+	}
+
+	e := echo.New()
+	req := httptest.NewRequest(http.MethodGet, "/pxe/nocloud/525400aabbcc/user-data", nil)
+	req.Host = "192.168.2.254:8080"
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+	c.SetParamNames("mac")
+	c.SetParamValues("525400aabbcc")
+
+	h := &Handler{machines: machineSvc}
+	if err := h.PXENocloudUserData(c); err != nil {
+		t.Fatalf("PXENocloudUserData: %v", err)
+	}
+	if rec.Code != http.StatusOK {
+		t.Fatalf("unexpected status: %d", rec.Code)
+	}
+	body := rec.Body.String()
+	for _, want := range []string{
+		"name: gomi",
+		"plain_text_passwd: gomi",
+		"lock_passwd: false",
+		"ssh_pwauth: true",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("expected %q in user-data, got: %s", want, body)
+		}
 	}
 }
 

@@ -94,17 +94,22 @@ func BuildCloudInitUsers(pubKeys []string, loginUser *machine.LoginUserSpec) []a
 	return users
 }
 
+func LoginUserPasswordConfigured(loginUser *machine.LoginUserSpec) bool {
+	return loginUser != nil && strings.TrimSpace(loginUser.Password) != ""
+}
+
 func buildLinuxCloudInit(m machine.Machine, sshKeys []sshkey.SSHKey) string {
 	selected := SelectKeysForRefs(sshKeys, m.SSHKeyRefs)
 	pubKeys := collectPublicKeys(selected)
 	users := BuildCloudInitUsers(pubKeys, m.LoginUser)
+	passwordLogin := LoginUserPasswordConfigured(m.LoginUser)
 
 	cfg := map[string]any{
 		"hostname":         m.Hostname,
 		"manage_etc_hosts": true,
-		// SSH password authentication is forbidden across the deployment
-		// surface; cloud-init enforces this via sshd_config.d/50-cloud-init.conf.
-		"ssh_pwauth": false,
+		// SSH password authentication is enabled only when the target
+		// explicitly declares a password-backed login user.
+		"ssh_pwauth": passwordLogin,
 		"users":      users,
 		"runcmd": []string{
 			"systemctl enable ssh || true",
