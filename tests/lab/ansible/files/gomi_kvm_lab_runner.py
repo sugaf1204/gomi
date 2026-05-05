@@ -675,12 +675,6 @@ class LabRunner:
 
     def configure_gomi_vm(self) -> None:
         self.vm_scp_to(self.config["gomi_deb_path"], "/tmp/gomi.deb")
-        self.vm_ssh("sudo rm -rf /var/lib/gomi/bootenv-source && sudo mkdir -p /var/lib/gomi/bootenv-source", capture=False)
-        self.vm_scp_dir_to(self.config["bootenv_source_path"], "/tmp/bootenv-source")
-        self.vm_ssh(
-            "sudo mkdir -p /var/lib/gomi/bootenv-source && sudo cp -a /tmp/bootenv-source/. /var/lib/gomi/bootenv-source/",
-            capture=False,
-        )
 
         self.vm_ssh("sudo mkdir -p /opt/gomi-lab", capture=False)
         self.vm_scp_to(str(self.gomi_vm_key), "/tmp/gomi-target-key")
@@ -737,7 +731,7 @@ class LabRunner:
         )
         self.vm_ssh("sudo install -m 0644 /tmp/subnet.yaml /var/lib/gomi/data/subnet.yaml", capture=False)
         self.vm_ssh("sudo ln -sfn /var/lib/gomi/data/images /var/lib/gomi/data/tftp/images", capture=False)
-        self.vm_ssh("sudo chown -R gomi:gomi /var/lib/gomi/data /var/lib/gomi/bootenv-source || true", capture=False)
+        self.vm_ssh("sudo chown -R gomi:gomi /var/lib/gomi/data || true", capture=False)
         self.vm_ssh(
             "bash -lc "
             + shlex.quote(
@@ -780,7 +774,8 @@ class LabRunner:
                 "Environment=GOMI_TFTP_ROOT=/var/lib/gomi/data/tftp",
                 "Environment=GOMI_PXE_HTTP_BASE_URL=http://10.77.0.1:8080/pxe",
                 "Environment=GOMI_BOOT_HTTP_BASE_URL=http://10.77.0.1:8080",
-                "Environment=GOMI_BOOTENV_SOURCE_URL=/var/lib/gomi/bootenv-source",
+                f"Environment=GOMI_BOOTENV_SOURCE_URL={self.config['bootenv_source_url']}",
+                f"Environment=GOMI_OS_IMAGE_SOURCE_URL={self.config['os_image_source_url']}",
                 "Environment=GOMI_CURTIN_UBUNTU_MIRROR=http://ftp.riken.jp/Linux/ubuntu",
                 "Environment=GOMI_PXE_SERIAL_CONSOLE=1",
                 "ExecStart=/usr/bin/gomi --listen=:8080 --background-sync-enabled=true",
@@ -934,8 +929,8 @@ class LabRunner:
         )
         self.vm_ssh(f"sudo APT_CONFIG=/tmp/gomi-{suite}.conf apt-get update -y", capture=False)
 
-    def prepare_ubuntu_assets(self) -> None:
-        for image in self.config["ubuntu_images"]:
+    def prepare_os_assets(self) -> None:
+        for image in self.config.get("os_images", self.config.get("ubuntu_images", [])):
             image_ref = image.get("catalog_ref", image["image_ref"])
             log(f"installing OS catalog entry {image_ref}")
             http_json(
@@ -967,7 +962,7 @@ class LabRunner:
 
             wait_for(f"os catalog install {image_ref}", timeout=3600, interval=10, fn=catalog_ready)
 
-    def activate_ubuntu_assets(self, image_ref: str) -> None:
+    def activate_os_assets(self, image_ref: str) -> None:
         self.vm_ssh("sudo test -s /var/lib/gomi/data/files/linux/boot-kernel", capture=False)
         self.vm_ssh("sudo test -s /var/lib/gomi/data/files/linux/boot-initrd", capture=False)
         self.vm_ssh("sudo test -s /var/lib/gomi/data/files/linux/rootfs.squashfs", capture=False)
@@ -1028,11 +1023,14 @@ class LabRunner:
             "network": {"domain": self.config["domain"]},
             "sshKeyRefs": ["lab-runner"],
             "osPreset": {
-                "family": "ubuntu",
+                "family": image.get("os_family", "ubuntu"),
                 "version": image["os_version"],
                 "imageRef": image_ref,
             },
         }
+        login_user = str(image.get("login_user") or "").strip()
+        if login_user:
+            payload["loginUser"] = {"username": login_user}
         http_json(
             "POST",
             f"http://127.0.0.1:{self.gomi_vm['api_port']}/api/v1/machines",
@@ -1067,7 +1065,7 @@ class LabRunner:
 
         return wait_for(f"machine ready {name}", timeout=1800, interval=5, fn=probe)
 
-    def verify_target(self, ip_addr: str) -> dict[str, str]:
+    def verify_target(self, ip_addr: str, login_user: str) -> dict[str, str]:
         guest_cmd = (
             "set -euo pipefail; "
             "iface=$(ls /sys/class/net | grep -v '^lo$' | head -n1); "
@@ -1078,7 +1076,7 @@ class LabRunner:
         ssh_cmd = (
             "ssh -i /opt/gomi-lab/target_key -o BatchMode=yes "
             "-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR "
-            f"ubuntu@{ip_addr} "
+            f"{login_user}@{ip_addr} "
             + shlex.quote(f"bash -lc {shlex.quote(guest_cmd)}")
         )
         output = self.vm_ssh(ssh_cmd).stdout.strip().splitlines()
@@ -1093,7 +1091,8 @@ class LabRunner:
         return result
 
     def run_case(self, image: dict[str, Any], nic: dict[str, Any], case_index: int) -> dict[str, Any]:
-        name = f"lab-{image['os_version'].replace('.', '')}-{nic['name']}"
+        name = f"lab-{slugify(image['image_ref'])}-{nic['name']}"
+        login_user = str(image.get("login_user") or "ubuntu")
         mac = f"52:54:00:77:{case_index // 256:02x}:{case_index % 256:02x}"
         if not self.target_manager.qemu_supports(str(nic["qemu_model"])):
             return {
@@ -1112,7 +1111,7 @@ class LabRunner:
                     f"qemu device model {nic['qemu_model']!r} is not available on this host",
                 ],
             }
-        self.activate_ubuntu_assets(image["image_ref"])
+        self.activate_os_assets(image["image_ref"])
         self.delete_machine_if_exists(name)
         self.target_manager.stop_machine(name)
         self.create_machine(name, mac, image, nic, case_index)
@@ -1123,7 +1122,7 @@ class LabRunner:
             f"target ssh {name}",
             timeout=900,
             interval=10,
-            fn=lambda: self.verify_target(machine["ip"]),
+            fn=lambda: self.verify_target(machine["ip"], login_user),
         )
 
         status = "passed"
@@ -1176,7 +1175,7 @@ class LabRunner:
 
     def run_matrix(self) -> None:
         case_index = 1
-        for image in self.config["ubuntu_images"]:
+        for image in self.config.get("os_images", self.config.get("ubuntu_images", [])):
             for nic in self.config["target_nics"]:
                 log(f"running case os={image['image_ref']} nic={nic['name']}")
                 try:
@@ -1206,7 +1205,7 @@ class LabRunner:
         self.wait_for_gomi_vm()
         self.configure_gomi_vm()
         self.login_api()
-        self.prepare_ubuntu_assets()
+        self.prepare_os_assets()
         self.run_matrix()
         self.write_summary()
         if self.config.get("cleanup_on_success"):

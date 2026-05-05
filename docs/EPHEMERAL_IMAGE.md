@@ -16,7 +16,9 @@ distributed as `.raw.zst` by default and expanded to local `.raw` files during
 catalog install. GOMI does not convert qcow2 images, mount raw disks, or mutate
 target OS images from the API process. Catalog sources are raw artifacts only;
 image conversion or curtin-specific image preparation belongs in an
-offline/release build path.
+offline/release build path. The release image workflow injects an empty
+`/curtin` directory before publishing each raw artifact so curtin can recognize
+the dd-installed target root filesystem during the extract stage.
 
 For OS image catalog artifacts, override the release asset base URL with:
 

@@ -6,7 +6,9 @@ ansible_become_password: "{{ lookup('env', 'GOMI_LAB_SUDO_PASSWORD') | default(l
 ansible_ssh_common_args: "-o ControlMaster=no -o ControlPath=none -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
 
 gomi_kvm_lab_remote_root: /var/tmp/gomi-kvm-lab
-gomi_kvm_lab_remote_bootenv_repo: /home/gomi/github/sugaf1204/gomi/bootenv
+gomi_kvm_lab_deb_url: https://github.com/sugaf1204/gomi/releases/download/v0.0.1/gomi_0.0.1_amd64.deb
+gomi_kvm_lab_bootenv_source_url: https://github.com/sugaf1204/gomi/releases/download/v0.0.1
+gomi_kvm_lab_os_image_source_url: https://github.com/sugaf1204/gomi/releases/download/v0.0.1
 gomi_kvm_lab_host_packages:
   - bridge-utils
   - cloud-image-utils
@@ -50,12 +52,15 @@ gomi_kvm_lab_gomi_vm:
   cpus: 4
   disk_gb: 40
 
-gomi_kvm_lab_ubuntu_images:
+gomi_kvm_lab_os_images:
   - image_ref: ubuntu-22.04-amd64
+    os_family: ubuntu
     os_version: "22.04"
-  - image_ref: ubuntu-24.04-amd64
-    os_version: "24.04"
-    firmware: uefi
+    login_user: ubuntu
+  - image_ref: debian-13-amd64
+    os_family: debian
+    os_version: "13"
+    login_user: ubuntu
 
 gomi_kvm_lab_target_defaults:
   arch: amd64
@@ -65,16 +70,7 @@ gomi_kvm_lab_target_defaults:
   disk_gb: 32
 
 gomi_kvm_lab_target_nics:
-  - name: igc
-    qemu_model: igc
-    expected_driver: igc
-    exact: true
   - name: e1000e
     qemu_model: e1000e
     expected_driver: e1000e
     exact: true
-  - name: r8169
-    qemu_model: rtl8139
-    expected_driver: ""
-    exact: false
-    note: "QEMU does not expose an exact r8169 model; the default lab uses rtl8139 as the closest built-in Realtek path."

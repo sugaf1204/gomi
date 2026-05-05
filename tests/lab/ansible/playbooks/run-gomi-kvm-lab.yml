@@ -7,21 +7,26 @@
     ansible_become: false
     gomi_kvm_lab_repo_root: "{{ playbook_dir }}/../../../.."
     gomi_kvm_lab_local_deb: "{{ lookup('env', 'GOMI_LAB_DEB') }}"
+    gomi_kvm_lab_deb_url: https://github.com/sugaf1204/gomi/releases/download/v0.0.1/gomi_0.0.1_amd64.deb
+    gomi_kvm_lab_downloaded_deb: "/tmp/gomi_0.0.1_amd64.deb"
   tasks:
-    - name: Build local amd64 Debian package when GOMI_LAB_DEB is not set
-      ansible.builtin.command:
-        cmd: task build:deb ARCH=amd64
-        chdir: "{{ gomi_kvm_lab_repo_root }}"
+    - name: Download release Debian package when GOMI_LAB_DEB is not set
+      become: false
+      ansible.builtin.get_url:
+        url: "{{ gomi_kvm_lab_deb_url }}"
+        dest: "{{ gomi_kvm_lab_downloaded_deb }}"
+        mode: "0644"
       when: gomi_kvm_lab_local_deb == ""
 
     - name: Resolve Debian package path
+      become: false
       ansible.builtin.shell:
         cmd: |
           set -euo pipefail
           if [ -n "{{ gomi_kvm_lab_local_deb }}" ]; then
             printf '%s\n' "{{ gomi_kvm_lab_local_deb }}"
           else
-            ls -1t packages/deb/gomi_*_amd64.deb | head -n1
+            printf '%s\n' "{{ gomi_kvm_lab_downloaded_deb }}"
           fi
         chdir: "{{ gomi_kvm_lab_repo_root }}"
         executable: /bin/bash
@@ -29,8 +34,9 @@
       changed_when: false
 
     - name: Export Debian package path for remote play
+      become: false
       ansible.builtin.set_fact:
-        gomi_kvm_lab_resolved_deb: "{{ gomi_kvm_lab_repo_root }}/{{ gomi_kvm_lab_deb_path.stdout }}"
+        gomi_kvm_lab_resolved_deb: "{{ gomi_kvm_lab_deb_path.stdout }}"
 
 - name: Build and Run GOMI KVM PXE Lab
   hosts: gomi_kvm_lab
@@ -43,7 +49,6 @@
     gomi_kvm_lab_resolved_deb: "{{ hostvars['localhost'].gomi_kvm_lab_resolved_deb }}"
     gomi_kvm_lab_remote_config: "{{ gomi_kvm_lab_remote_root }}/lab-config.json"
     gomi_kvm_lab_remote_deb: "{{ gomi_kvm_lab_remote_root }}/gomi.deb"
-    gomi_kvm_lab_remote_bootenv_source: "{{ gomi_kvm_lab_remote_root }}/bootenv/ubuntu-minimal-cloud-amd64"
     gomi_kvm_lab_remote_runner: "{{ gomi_kvm_lab_remote_root }}/gomi_kvm_lab_runner.py"
   tasks:
     - name: Install remote host dependencies
@@ -63,13 +68,6 @@
         src: "{{ gomi_kvm_lab_resolved_deb }}"
         dest: "{{ gomi_kvm_lab_remote_deb }}"
         mode: "0644"
-
-    - name: Build local bootenv release assets on node1
-      ansible.builtin.command:
-        cmd: make build GOCACHE=/tmp/go-build SPEC=bootenvs/ubuntu-minimal-cloud-amd64.yaml OUT="{{ gomi_kvm_lab_remote_bootenv_source }}"
-        chdir: "{{ gomi_kvm_lab_remote_bootenv_repo }}"
-      environment:
-        GOMI_BOOTENV_APT_MIRROR: http://ftp.riken.jp/Linux/ubuntu/
 
     - name: Upload remote lab runner
       ansible.builtin.copy:

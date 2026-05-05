@@ -7,9 +7,10 @@
   "subnet_name": {{ gomi_kvm_lab_subnet_name | to_json }},
   "subnet": {{ gomi_kvm_lab_subnet | to_json }},
   "gomi_deb_path": {{ gomi_kvm_lab_remote_deb | to_json }},
-  "bootenv_source_path": {{ gomi_kvm_lab_remote_bootenv_source | to_json }},
+  "bootenv_source_url": {{ gomi_kvm_lab_bootenv_source_url | to_json }},
+  "os_image_source_url": {{ gomi_kvm_lab_os_image_source_url | to_json }},
   "gomi_vm": {{ gomi_kvm_lab_gomi_vm | to_json }},
-  "ubuntu_images": {{ gomi_kvm_lab_ubuntu_images | to_json }},
+  "os_images": {{ gomi_kvm_lab_os_images | to_json }},
   "target_defaults": {{ gomi_kvm_lab_target_defaults | to_json }},
   "target_nics": {{ gomi_kvm_lab_target_nics | to_json }}
 }
