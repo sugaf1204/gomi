@@ -682,8 +682,8 @@ exit 1
 `
 
 var uefiLocalBootGRUBCandidates = []string{
-	"/usr/lib/grub/x86_64-efi-signed/grubnetx64.efi.signed",
 	"/usr/lib/grub/x86_64-efi/monolithic/grubnetx64.efi",
+	"/usr/lib/grub/x86_64-efi-signed/grubnetx64.efi.signed",
 }
 
 type tftpBootAsset struct {

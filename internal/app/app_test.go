@@ -58,6 +58,15 @@ func TestEnsureUEFILocalBootGRUBAssetsInstallsPackagedAsset(t *testing.T) {
 	}
 }
 
+func TestUEFILocalBootGRUBCandidatesPreferMonolithicImage(t *testing.T) {
+	if len(uefiLocalBootGRUBCandidates) == 0 {
+		t.Fatal("expected at least one UEFI local boot GRUB candidate")
+	}
+	if got, want := uefiLocalBootGRUBCandidates[0], "/usr/lib/grub/x86_64-efi/monolithic/grubnetx64.efi"; got != want {
+		t.Fatalf("first UEFI local boot GRUB candidate = %q, want %q", got, want)
+	}
+}
+
 func TestEnsureUEFILocalBootGRUBAssetsFailsWithoutPackagedAsset(t *testing.T) {
 	oldCandidates := uefiLocalBootGRUBCandidates
 	uefiLocalBootGRUBCandidates = []string{filepath.Join(t.TempDir(), "missing")}
