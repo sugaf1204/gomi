@@ -33,17 +33,19 @@ jobs:
           #   name|variant|image_url|sums_url|checksum_algo|guest_packages
           #
           # The cloud variants preserve the upstream cloud image package set.
-          # The baremetal variants add kernel module/firmware packages so the
+          # The baremetal variants add distro kernel image packages so the
           # installed target OS can drive physical NICs and storage directly
-          # after curtin writes the image to disk.
+          # after curtin writes the image to disk. Ubuntu linux-image-generic
+          # depends on linux-modules-extra-* without pulling kernel headers.
           images=(
             "ubuntu-22.04-amd64-cloud|cloud|https://cloud-images.ubuntu.com/jammy/current/jammy-server-cloudimg-amd64.img|https://cloud-images.ubuntu.com/jammy/current/SHA256SUMS|sha256|"
-            "ubuntu-22.04-amd64-baremetal|baremetal|https://cloud-images.ubuntu.com/jammy/current/jammy-server-cloudimg-amd64.img|https://cloud-images.ubuntu.com/jammy/current/SHA256SUMS|sha256|linux-generic,linux-firmware"
+            "ubuntu-22.04-amd64-baremetal|baremetal|https://cloud-images.ubuntu.com/jammy/current/jammy-server-cloudimg-amd64.img|https://cloud-images.ubuntu.com/jammy/current/SHA256SUMS|sha256|linux-image-generic"
             "ubuntu-24.04-amd64-cloud|cloud|https://cloud-images.ubuntu.com/noble/current/noble-server-cloudimg-amd64.img|https://cloud-images.ubuntu.com/noble/current/SHA256SUMS|sha256|"
-            "ubuntu-24.04-amd64-baremetal|baremetal|https://cloud-images.ubuntu.com/noble/current/noble-server-cloudimg-amd64.img|https://cloud-images.ubuntu.com/noble/current/SHA256SUMS|sha256|linux-generic,linux-firmware"
+            "ubuntu-24.04-amd64-baremetal|baremetal|https://cloud-images.ubuntu.com/noble/current/noble-server-cloudimg-amd64.img|https://cloud-images.ubuntu.com/noble/current/SHA256SUMS|sha256|linux-image-generic"
             "debian-13-amd64-cloud|cloud|https://cloud.debian.org/images/cloud/trixie/latest/debian-13-generic-amd64.qcow2|https://cloud.debian.org/images/cloud/trixie/latest/SHA512SUMS|sha512|"
             "debian-13-amd64-baremetal|baremetal|https://cloud.debian.org/images/cloud/trixie/latest/debian-13-generic-amd64.qcow2|https://cloud.debian.org/images/cloud/trixie/latest/SHA512SUMS|sha512|linux-image-amd64,firmware-linux-free"
           )
+          max_release_asset_size=2147483647
 
           verify_checksum() {
             local file="$1" sums_file="$2" algo="$3" filename expected actual
@@ -151,16 +153,26 @@ jobs:
             raw="dist/os-images/${name}.raw"
             zst="${raw}.zst"
 
+            echo "::group::Build ${name}"
+            echo "download ${image_url}"
             curl -fL --retry 3 --retry-delay 5 -o "$src" "$image_url"
             curl -fL --retry 3 --retry-delay 5 -o "$sums" "$sums_url"
             verify_checksum "$src" "$sums" "$algo"
 
+            echo "convert ${name} to raw"
             qemu-img convert -O raw "$src" "$raw"
+            echo "customize ${name}"
             customize_raw_image "$raw" "$guest_packages"
+            echo "compress ${name}"
             zstd -T0 -19 -f "$raw" -o "$zst"
             rm -f "$raw"
             sha256="$(cd dist/os-images && sha256sum "$(basename "$zst")" | awk '{print $1}')"
             size="$(stat -c%s "$zst")"
+            du -h "$zst"
+            if (( size > max_release_asset_size )); then
+              echo "ERROR: $(basename "$zst") is ${size} bytes; GitHub release assets must be <= ${max_release_asset_size} bytes" >&2
+              exit 1
+            fi
             printf '%s  %s\n' "$sha256" "$(basename "$zst")" >> dist/os-images/checksums-os-images.txt
             if [[ "$first_manifest" -eq 0 ]]; then
               printf ',\n' >> dist/os-images/manifest-os-images.json
@@ -179,6 +191,7 @@ jobs:
               "packages": [p for p in os.environ["PACKAGES"].split(",") if p],
           }, sort_keys=True), end="")
           PY
+            echo "::endgroup::"
           done
           printf '\n]\n' >> dist/os-images/manifest-os-images.json
 

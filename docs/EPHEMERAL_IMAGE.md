@@ -16,8 +16,12 @@ distributed as `.raw.zst` by default and expanded to local `.raw` files during
 catalog install. Catalog entries are variant-qualified, for example
 `ubuntu-22.04-amd64-cloud` and `ubuntu-22.04-amd64-baremetal`. The `cloud`
 variant preserves the upstream cloud image package set. The `baremetal` variant
-is still built offline, but preinstalls the kernel module and firmware packages
-needed by physical target machines before publishing the release asset.
+is still built offline, but preinstalls the distro generic kernel image package
+needed by physical target machines before publishing the release asset. Ubuntu
+uses `linux-image-generic`, which depends on the versioned
+`linux-modules-extra-*` package that carries drivers such as `igc` and `r8169`,
+without pulling kernel headers or the full `linux-firmware` package into every
+release asset.
 
 GOMI does not convert qcow2 images, mount raw disks, install packages into the
 target OS, or otherwise mutate target OS images from the API process. Catalog

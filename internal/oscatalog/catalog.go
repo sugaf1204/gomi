@@ -90,7 +90,7 @@ var entryTemplates = []Entry{
 		SourceCompression: "zstd",
 		Variant:           osimage.VariantBareMetal,
 		URL:               "ubuntu-22.04-amd64-baremetal.raw.zst",
-		Description:       "Ubuntu 22.04 LTS amd64 bare-metal raw image with linux-generic modules and firmware",
+		Description:       "Ubuntu 22.04 LTS amd64 bare-metal raw image with generic kernel modules",
 		BootEnvironment:   "ubuntu-minimal-cloud-amd64",
 	},
 	{
@@ -116,7 +116,7 @@ var entryTemplates = []Entry{
 		SourceCompression: "zstd",
 		Variant:           osimage.VariantBareMetal,
 		URL:               "ubuntu-24.04-amd64-baremetal.raw.zst",
-		Description:       "Ubuntu 24.04 LTS amd64 bare-metal raw image with linux-generic modules and firmware",
+		Description:       "Ubuntu 24.04 LTS amd64 bare-metal raw image with generic kernel modules",
 		BootEnvironment:   "ubuntu-minimal-cloud-amd64",
 	},
 }
