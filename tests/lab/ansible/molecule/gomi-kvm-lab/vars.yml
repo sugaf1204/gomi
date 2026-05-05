@@ -50,7 +50,7 @@ gomi_kvm_lab_gomi_vm:
   disk_gb: 40
 
 gomi_kvm_lab_ubuntu_images:
-  - image_ref: ubuntu-24.04-amd64
+  - image_ref: ubuntu-24.04-amd64-baremetal
     os_version: "24.04"
 
 gomi_kvm_lab_target_defaults:

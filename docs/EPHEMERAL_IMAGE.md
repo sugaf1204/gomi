@@ -7,15 +7,22 @@ artifacts. The public flow is catalog driven:
 
 ```sh
 curl -H "Authorization: Bearer $GOMI_TOKEN" \
-  -X POST http://gomi.example/api/v1/os-catalog/debian-13-amd64/install
+  -X POST http://gomi.example/api/v1/os-catalog/debian-13-amd64-baremetal/install
 ```
 
 Installing a catalog entry downloads a prebuilt raw OS image artifact into GOMI
 storage and ensures the referenced boot environment exists. Release assets are
 distributed as `.raw.zst` by default and expanded to local `.raw` files during
-catalog install. GOMI does not convert qcow2 images, mount raw disks, or mutate
-target OS images from the API process. Catalog sources are raw artifacts only;
-image conversion or curtin-specific image preparation belongs in an
+catalog install. Catalog entries are variant-qualified, for example
+`ubuntu-22.04-amd64-cloud` and `ubuntu-22.04-amd64-baremetal`. The `cloud`
+variant preserves the upstream cloud image package set. The `baremetal` variant
+is still built offline, but preinstalls the kernel module and firmware packages
+needed by physical target machines before publishing the release asset.
+
+GOMI does not convert qcow2 images, mount raw disks, install packages into the
+target OS, or otherwise mutate target OS images from the API process. Catalog
+sources are raw artifacts only; image conversion, curtin-specific image
+preparation, and variant-specific package installation belong in an
 offline/release build path. The release image workflow injects an empty
 `/curtin` directory before publishing each raw artifact so curtin can recognize
 the dd-installed target root filesystem during the extract stage.
@@ -117,7 +124,7 @@ GOMI owns only consumption:
 
 - input: supported OS catalog entry and boot environment name;
 - OS image source: `GOMI_OS_IMAGE_SOURCE_URL`, an HTTP(S) base containing
-  prebuilt `.raw.zst` or `.raw` artifacts;
+  prebuilt variant-qualified `.raw.zst` or `.raw` artifacts;
 - bootenv source: `GOMI_BOOTENV_SOURCE_URL`, either a local directory or HTTP(S)
   base;
 - verification: manifest schema/name plus SHA256/size for kernel/initrd/rootfs;

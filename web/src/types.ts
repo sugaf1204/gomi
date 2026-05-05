@@ -252,7 +252,7 @@ export type OSImage = {
   osVersion: string
   arch: string
   format: 'qcow2' | 'raw' | 'iso'
-  variant?: 'server' | 'desktop'
+  variant?: 'cloud' | 'baremetal' | 'server' | 'desktop'
   source: 'upload' | 'url'
   url?: string
   checksum?: string
@@ -285,7 +285,7 @@ export type OSCatalogEntry = {
   format: 'qcow2' | 'raw' | 'iso'
   sourceFormat?: 'qcow2' | 'raw' | 'iso'
   sourceCompression?: 'zstd'
-  variant?: 'server' | 'desktop'
+  variant?: 'cloud' | 'baremetal' | 'server' | 'desktop'
   url: string
   checksum?: string
   description?: string

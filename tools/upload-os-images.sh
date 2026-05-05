@@ -38,11 +38,14 @@ if [[ -z "${GOMI_TOKEN:-}" ]]; then
     echo "    OK"
 fi
 
-# Format: NAME|OS_FAMILY|OS_VERSION|ARCH|ARTIFACT
+# Format: NAME|OS_FAMILY|OS_VERSION|ARCH|VARIANT|ARTIFACT
 IMAGES=(
-    "ubuntu-22.04-amd64|ubuntu|22.04|amd64|ubuntu-22.04-amd64.raw.zst"
-    "ubuntu-24.04-amd64|ubuntu|24.04|amd64|ubuntu-24.04-amd64.raw.zst"
-    "debian-13-amd64|debian|13|amd64|debian-13-amd64.raw.zst"
+    "ubuntu-22.04-amd64-cloud|ubuntu|22.04|amd64|cloud|ubuntu-22.04-amd64-cloud.raw.zst"
+    "ubuntu-22.04-amd64-baremetal|ubuntu|22.04|amd64|baremetal|ubuntu-22.04-amd64-baremetal.raw.zst"
+    "ubuntu-24.04-amd64-cloud|ubuntu|24.04|amd64|cloud|ubuntu-24.04-amd64-cloud.raw.zst"
+    "ubuntu-24.04-amd64-baremetal|ubuntu|24.04|amd64|baremetal|ubuntu-24.04-amd64-baremetal.raw.zst"
+    "debian-13-amd64-cloud|debian|13|amd64|cloud|debian-13-amd64-cloud.raw.zst"
+    "debian-13-amd64-baremetal|debian|13|amd64|baremetal|debian-13-amd64-baremetal.raw.zst"
 )
 
 api() {
@@ -136,7 +139,7 @@ total=${#IMAGES[@]}
 current=0
 
 for entry in "${IMAGES[@]}"; do
-    IFS='|' read -r name family version arch artifact <<< "$entry"
+    IFS='|' read -r name family version arch variant artifact <<< "$entry"
     current=$((current + 1))
     artifact_path="${DOWNLOAD_DIR}/${artifact}"
     raw_path="${DOWNLOAD_DIR}/${name}.raw"
@@ -151,7 +154,7 @@ for entry in "${IMAGES[@]}"; do
     fi
 
     bytes="$(size_bytes "$raw_path")"
-    payload=$(NAME="$name" FAMILY="$family" VERSION="$version" ARCH="$arch" SIZE_BYTES="$bytes" python3 - <<'PY'
+    payload=$(NAME="$name" FAMILY="$family" VERSION="$version" ARCH="$arch" VARIANT="$variant" SIZE_BYTES="$bytes" python3 - <<'PY'
 import json
 import os
 
@@ -161,8 +164,9 @@ print(json.dumps({
     "osVersion": os.environ["VERSION"],
     "arch": os.environ["ARCH"],
     "format": "raw",
+    "variant": os.environ["VARIANT"],
     "source": "upload",
-    "description": f"Prebuilt raw {os.environ['FAMILY']} {os.environ['VERSION']} image ({os.environ['ARCH']})",
+    "description": f"Prebuilt raw {os.environ['FAMILY']} {os.environ['VERSION']} {os.environ['VARIANT']} image ({os.environ['ARCH']})",
     "sizeBytes": int(os.environ["SIZE_BYTES"]),
 }))
 PY

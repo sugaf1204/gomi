@@ -30,10 +30,20 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p dist/os-images downloads/os-images
+          # Format:
+          #   name|variant|image_url|sums_url|checksum_algo|guest_packages
+          #
+          # The cloud variants preserve the upstream cloud image package set.
+          # The baremetal variants add kernel module/firmware packages so the
+          # installed target OS can drive physical NICs and storage directly
+          # after curtin writes the image to disk.
           images=(
-            "ubuntu-22.04-amd64|https://cloud-images.ubuntu.com/jammy/current/jammy-server-cloudimg-amd64.img|https://cloud-images.ubuntu.com/jammy/current/SHA256SUMS|sha256"
-            "ubuntu-24.04-amd64|https://cloud-images.ubuntu.com/noble/current/noble-server-cloudimg-amd64.img|https://cloud-images.ubuntu.com/noble/current/SHA256SUMS|sha256"
-            "debian-13-amd64|https://cloud.debian.org/images/cloud/trixie/latest/debian-13-generic-amd64.qcow2|https://cloud.debian.org/images/cloud/trixie/latest/SHA512SUMS|sha512"
+            "ubuntu-22.04-amd64-cloud|cloud|https://cloud-images.ubuntu.com/jammy/current/jammy-server-cloudimg-amd64.img|https://cloud-images.ubuntu.com/jammy/current/SHA256SUMS|sha256|"
+            "ubuntu-22.04-amd64-baremetal|baremetal|https://cloud-images.ubuntu.com/jammy/current/jammy-server-cloudimg-amd64.img|https://cloud-images.ubuntu.com/jammy/current/SHA256SUMS|sha256|linux-generic,linux-firmware"
+            "ubuntu-24.04-amd64-cloud|cloud|https://cloud-images.ubuntu.com/noble/current/noble-server-cloudimg-amd64.img|https://cloud-images.ubuntu.com/noble/current/SHA256SUMS|sha256|"
+            "ubuntu-24.04-amd64-baremetal|baremetal|https://cloud-images.ubuntu.com/noble/current/noble-server-cloudimg-amd64.img|https://cloud-images.ubuntu.com/noble/current/SHA256SUMS|sha256|linux-generic,linux-firmware"
+            "debian-13-amd64-cloud|cloud|https://cloud.debian.org/images/cloud/trixie/latest/debian-13-generic-amd64.qcow2|https://cloud.debian.org/images/cloud/trixie/latest/SHA512SUMS|sha512|"
+            "debian-13-amd64-baremetal|baremetal|https://cloud.debian.org/images/cloud/trixie/latest/debian-13-generic-amd64.qcow2|https://cloud.debian.org/images/cloud/trixie/latest/SHA512SUMS|sha512|linux-image-amd64,firmware-linux-free"
           )
 
           verify_checksum() {
@@ -58,10 +68,13 @@ jobs:
           }
 
           : > dist/os-images/checksums-os-images.txt
+          printf '[\n' > dist/os-images/manifest-os-images.json
+          first_manifest=1
           for entry in "${images[@]}"; do
-            IFS='|' read -r name image_url sums_url algo <<< "$entry"
+            IFS='|' read -r name variant image_url sums_url algo guest_packages <<< "$entry"
             src="downloads/os-images/$(basename "$image_url")"
             sums="downloads/os-images/${name}.${algo}sums"
+            work="downloads/os-images/${name}.$(basename "$image_url")"
             raw="dist/os-images/${name}.raw"
             zst="${raw}.zst"
 
@@ -69,12 +82,40 @@ jobs:
             curl -fL --retry 3 --retry-delay 5 -o "$sums" "$sums_url"
             verify_checksum "$src" "$sums" "$algo"
 
-            sudo LIBGUESTFS_BACKEND=direct virt-customize --no-network -a "$src" --mkdir /curtin
-            qemu-img convert -O raw "$src" "$raw"
+            cp --reflink=auto "$src" "$work" 2>/dev/null || cp "$src" "$work"
+            customize_args=(--mkdir /curtin)
+            if [[ -n "$guest_packages" ]]; then
+              customize_args+=(--install "$guest_packages")
+              sudo LIBGUESTFS_BACKEND=direct virt-customize --network -a "$work" "${customize_args[@]}"
+            else
+              sudo LIBGUESTFS_BACKEND=direct virt-customize --no-network -a "$work" "${customize_args[@]}"
+            fi
+            qemu-img convert -O raw "$work" "$raw"
             zstd -T0 -19 -f "$raw" -o "$zst"
             rm -f "$raw"
-            (cd dist/os-images && sha256sum "$(basename "$zst")" >> checksums-os-images.txt)
+            rm -f "$work"
+            sha256="$(cd dist/os-images && sha256sum "$(basename "$zst")" | awk '{print $1}')"
+            size="$(stat -c%s "$zst")"
+            printf '%s  %s\n' "$sha256" "$(basename "$zst")" >> dist/os-images/checksums-os-images.txt
+            if [[ "$first_manifest" -eq 0 ]]; then
+              printf ',\n' >> dist/os-images/manifest-os-images.json
+            fi
+            first_manifest=0
+            NAME="$name" VARIANT="$variant" ARTIFACT="$(basename "$zst")" SHA256="$sha256" SIZE="$size" PACKAGES="$guest_packages" python3 - <<'PY' >> dist/os-images/manifest-os-images.json
+          import json
+          import os
+
+          print(json.dumps({
+              "name": os.environ["NAME"],
+              "variant": os.environ["VARIANT"],
+              "artifact": os.environ["ARTIFACT"],
+              "sha256": os.environ["SHA256"],
+              "sizeBytes": int(os.environ["SIZE"]),
+              "packages": [p for p in os.environ["PACKAGES"].split(",") if p],
+          }, sort_keys=True), end="")
+          PY
           done
+          printf '\n]\n' >> dist/os-images/manifest-os-images.json
 
       - name: Publish release assets
         if: startsWith(github.ref, 'refs/tags/')
@@ -89,4 +130,4 @@ jobs:
               gh release view "$TAG" >/dev/null 2>&1 || exit "$status"
             }
           fi
-          gh release upload "$TAG" dist/os-images/*.raw.zst dist/os-images/checksums-os-images.txt --clobber
+          gh release upload "$TAG" dist/os-images/*.raw.zst dist/os-images/checksums-os-images.txt dist/os-images/manifest-os-images.json --clobber

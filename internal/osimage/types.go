@@ -15,8 +15,10 @@ const (
 type Variant string
 
 const (
-	VariantServer  Variant = "server"
-	VariantDesktop Variant = "desktop"
+	VariantCloud     Variant = "cloud"
+	VariantBareMetal Variant = "baremetal"
+	VariantServer    Variant = "server"
+	VariantDesktop   Variant = "desktop"
 )
 
 type SourceType string

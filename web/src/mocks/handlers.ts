@@ -105,15 +105,33 @@ export const handlers = [
       items: [
         {
           entry: {
-            name: 'debian-13-amd64',
+            name: 'ubuntu-22.04-amd64-baremetal',
+            osFamily: 'ubuntu',
+            osVersion: '22.04',
+            arch: 'amd64',
+            format: 'raw',
+            sourceFormat: 'raw',
+            sourceCompression: 'zstd',
+            variant: 'baremetal',
+            url: 'https://github.com/sugaf1204/gomi/releases/latest/download/ubuntu-22.04-amd64-baremetal.raw.zst',
+            bootEnvironment: 'ubuntu-minimal-cloud-amd64'
+          },
+          installed: false,
+          installing: false,
+          osImageReady: false,
+          bootEnvironment: { name: 'ubuntu-minimal-cloud-amd64', phase: 'missing', updatedAt: new Date().toISOString() }
+        },
+        {
+          entry: {
+            name: 'debian-13-amd64-cloud',
             osFamily: 'debian',
             osVersion: '13',
             arch: 'amd64',
             format: 'raw',
             sourceFormat: 'raw',
             sourceCompression: 'zstd',
-            variant: 'server',
-            url: 'https://github.com/sugaf1204/gomi/releases/latest/download/debian-13-amd64.raw.zst',
+            variant: 'cloud',
+            url: 'https://github.com/sugaf1204/gomi/releases/latest/download/debian-13-amd64-cloud.raw.zst',
             bootEnvironment: 'ubuntu-minimal-cloud-amd64'
           },
           installed: false,
@@ -126,17 +144,20 @@ export const handlers = [
   }),
 
   http.post(`${API_BASE}/os-catalog/:name/install`, ({ params }) => {
+    const name = String(params.name)
+    const isUbuntu = name.startsWith('ubuntu-')
+    const isBareMetal = name.endsWith('-baremetal')
     return HttpResponse.json({
       entry: {
-        name: params.name,
-        osFamily: 'debian',
-        osVersion: '13',
+        name,
+        osFamily: isUbuntu ? 'ubuntu' : 'debian',
+        osVersion: isUbuntu ? (name.includes('22.04') ? '22.04' : '24.04') : '13',
         arch: 'amd64',
         format: 'raw',
         sourceFormat: 'raw',
         sourceCompression: 'zstd',
-        variant: 'server',
-        url: `https://github.com/sugaf1204/gomi/releases/latest/download/${params.name}.raw.zst`,
+        variant: isBareMetal ? 'baremetal' : 'cloud',
+        url: `https://github.com/sugaf1204/gomi/releases/latest/download/${name}.raw.zst`,
         bootEnvironment: 'ubuntu-minimal-cloud-amd64'
       },
       installed: false,

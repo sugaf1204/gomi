@@ -2332,13 +2332,16 @@ func TestOSCatalogListsSupportedImages(t *testing.T) {
 		seen[name] = bootEnv
 	}
 
-	for _, name := range []string{"debian-13-amd64", "ubuntu-24.04-amd64"} {
+	for _, name := range []string{"debian-13-amd64-cloud", "debian-13-amd64-baremetal", "ubuntu-24.04-amd64-cloud", "ubuntu-24.04-amd64-baremetal"} {
 		if seen[name] != "ubuntu-minimal-cloud-amd64" {
 			t.Fatalf("expected %s to use ubuntu-minimal-cloud-amd64 boot environment, got %q", name, seen[name])
 		}
 	}
-	if seen["ubuntu-22.04-amd64"] != "ubuntu-minimal-cloud-amd64" {
-		t.Fatalf("expected ubuntu-22.04-amd64 to use ubuntu-minimal-cloud-amd64 boot environment, got %q", seen["ubuntu-22.04-amd64"])
+	if seen["ubuntu-22.04-amd64-cloud"] != "ubuntu-minimal-cloud-amd64" {
+		t.Fatalf("expected ubuntu-22.04-amd64-cloud to use ubuntu-minimal-cloud-amd64 boot environment, got %q", seen["ubuntu-22.04-amd64-cloud"])
+	}
+	if seen["ubuntu-22.04-amd64-baremetal"] != "ubuntu-minimal-cloud-amd64" {
+		t.Fatalf("expected ubuntu-22.04-amd64-baremetal to use ubuntu-minimal-cloud-amd64 boot environment, got %q", seen["ubuntu-22.04-amd64-baremetal"])
 	}
 }
 

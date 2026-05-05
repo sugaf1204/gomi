@@ -53,11 +53,11 @@ gomi_kvm_lab_gomi_vm:
   disk_gb: 40
 
 gomi_kvm_lab_os_images:
-  - image_ref: ubuntu-22.04-amd64
+  - image_ref: ubuntu-22.04-amd64-baremetal
     os_family: ubuntu
     os_version: "22.04"
     login_user: ubuntu
-  - image_ref: debian-13-amd64
+  - image_ref: debian-13-amd64-baremetal
     os_family: debian
     os_version: "13"
     login_user: ubuntu

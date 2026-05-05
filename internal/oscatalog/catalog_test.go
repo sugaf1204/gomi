@@ -32,11 +32,33 @@ func TestListUsesRawPrebuiltArtifacts(t *testing.T) {
 func TestGetUsesConfiguredSourceBase(t *testing.T) {
 	t.Setenv("GOMI_OS_IMAGE_SOURCE_URL", "https://images.example.test/releases/latest/download/")
 
-	entry, ok := Get("ubuntu-24.04-amd64")
+	entry, ok := Get("ubuntu-24.04-amd64-baremetal")
 	if !ok {
-		t.Fatal("expected ubuntu-24.04-amd64 catalog entry")
+		t.Fatal("expected ubuntu-24.04-amd64-baremetal catalog entry")
 	}
-	if got, want := entry.URL, "https://images.example.test/releases/latest/download/ubuntu-24.04-amd64.raw.zst"; got != want {
+	if got, want := entry.URL, "https://images.example.test/releases/latest/download/ubuntu-24.04-amd64-baremetal.raw.zst"; got != want {
 		t.Fatalf("URL = %q, want %q", got, want)
+	}
+}
+
+func TestListIncludesCloudAndBareMetalVariants(t *testing.T) {
+	t.Setenv("GOMI_OS_IMAGE_SOURCE_URL", "https://images.example.test/gomi")
+
+	want := map[string]osimage.Variant{
+		"debian-13-amd64-cloud":        osimage.VariantCloud,
+		"debian-13-amd64-baremetal":    osimage.VariantBareMetal,
+		"ubuntu-22.04-amd64-cloud":     osimage.VariantCloud,
+		"ubuntu-22.04-amd64-baremetal": osimage.VariantBareMetal,
+		"ubuntu-24.04-amd64-cloud":     osimage.VariantCloud,
+		"ubuntu-24.04-amd64-baremetal": osimage.VariantBareMetal,
+	}
+	got := map[string]osimage.Variant{}
+	for _, entry := range List() {
+		got[entry.Name] = entry.Variant
+	}
+	for name, variant := range want {
+		if got[name] != variant {
+			t.Fatalf("%s variant = %q, want %q", name, got[name], variant)
+		}
 	}
 }

@@ -179,7 +179,7 @@ export function OSImagesView({ osImages, onRefresh }: OSImagesViewProps) {
             <form className="grid gap-[0.55rem]" onSubmit={(e) => void handleCreateImage(e)}>
               <label className="text-[0.84rem]">
                 Name
-                <input required value={imageForm.name} onChange={(e) => setImageForm((f) => ({ ...f, name: e.target.value }))} placeholder="e.g. debian-13-amd64" />
+                <input required value={imageForm.name} onChange={(e) => setImageForm((f) => ({ ...f, name: e.target.value }))} placeholder="e.g. debian-13-amd64-baremetal" />
               </label>
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-[0.45rem]">
                 <label className="text-[0.84rem]">
