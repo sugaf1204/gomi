@@ -93,14 +93,28 @@ jobs:
             fi
 
             loopdev="$(sudo losetup --find --partscan --show "$raw")"
-            root_part="$(lsblk -lnpo NAME,FSTYPE "$loopdev" | awk '$2 ~ /^(ext[234])$/ {print $1; exit}')"
+            sudo partprobe "$loopdev" || true
+            sudo udevadm settle
+            root_part="$(
+              sudo blkid -o device | grep -E "^${loopdev}p[0-9]+$" | while read -r part; do
+                fstype="$(sudo blkid -s TYPE -o value "$part" || true)"
+                case "$fstype" in
+                  ext2|ext3|ext4)
+                    echo "$part"
+                    break
+                    ;;
+                esac
+              done
+            )"
             if [[ -z "$root_part" ]]; then
               echo "ERROR: no ext root partition found in ${raw}" >&2
+              sudo lsblk -fp "$loopdev" >&2 || true
+              sudo blkid "${loopdev}"p* >&2 || true
               return 1
             fi
 
             if [[ -n "$guest_packages" ]]; then
-              root_part_num="$(lsblk -lnpo NAME,PARTN "$loopdev" | awk -v p="$root_part" '$1 == p {print $2; exit}')"
+              root_part_num="${root_part#${loopdev}p}"
               if [[ -z "$root_part_num" ]]; then
                 echo "ERROR: partition number not found for ${root_part}" >&2
                 return 1
@@ -111,7 +125,7 @@ jobs:
               sudo resize2fs "$root_part"
             fi
 
-            root_fstype="$(lsblk -lnpo NAME,FSTYPE "$loopdev" | awk -v p="$root_part" '$1 == p {print $2; exit}')"
+            root_fstype="$(sudo blkid -s TYPE -o value "$root_part")"
             sudo mount -t "$root_fstype" "$root_part" "$mount_dir"
             sudo mkdir -p "$mount_dir/curtin"
 
