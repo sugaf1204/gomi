@@ -1183,7 +1183,9 @@ func TestPXECurtinConfig_UsesInventoryAndRawArtifact(t *testing.T) {
 		"block-meta:",
 		`- "/dev/nvme0n1"`,
 		"sources:",
-		`- dd-img: "http://192.168.2.254:8080/pxe/artifacts/os-images/debian-13-amd64/root.raw"`,
+		"00-root:",
+		"type: dd-raw",
+		`uri: "http://192.168.2.254:8080/pxe/artifacts/os-images/debian-13-amd64/root.raw"`,
 		"late_commands:",
 		"var/lib/cloud/seed/nocloud",
 	} {
@@ -1275,7 +1277,9 @@ func TestPXECurtinConfig_DirectCloudImage(t *testing.T) {
 	body := rec.Body.String()
 	for _, want := range []string{
 		`- "/dev/vda"`,
-		`- dd-img: "http://192.168.2.254:8080/pxe/files/images/ubuntu-24.04-amd64.raw"`,
+		"00-root:",
+		"type: dd-raw",
+		`uri: "http://192.168.2.254:8080/pxe/files/images/ubuntu-24.04-amd64.raw"`,
 		"late_commands:",
 		"var/lib/cloud/seed/nocloud",
 	} {

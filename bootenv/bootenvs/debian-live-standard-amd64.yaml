@@ -22,6 +22,7 @@ spec:
       - ca-certificates
       - curl
       - wget
+      - lshw
       - dhcpcd-base
       - curtin
       - qemu-utils
