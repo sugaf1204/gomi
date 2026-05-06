@@ -22,7 +22,7 @@ func (s *Server) AuthMiddleware() echo.MiddlewareFunc {
 			authz := c.Request().Header.Get("Authorization")
 			parts := strings.SplitN(authz, " ", 2)
 			if len(parts) != 2 || !strings.EqualFold(parts[0], "Bearer") {
-				return c.JSON(gohttp.StatusUnauthorized, map[string]string{"error": "missing bearer token"})
+				return c.JSON(gohttp.StatusUnauthorized, jsonError("missing bearer token"))
 			}
 			tokenValue := strings.TrimSpace(parts[1])
 
@@ -45,7 +45,7 @@ func (s *Server) AuthMiddleware() echo.MiddlewareFunc {
 				}
 			}
 
-			return c.JSON(gohttp.StatusUnauthorized, map[string]string{"error": "invalid session"})
+			return c.JSON(gohttp.StatusUnauthorized, jsonError("invalid session"))
 		}
 	}
 }
@@ -92,10 +92,10 @@ func RequireAdmin() echo.MiddlewareFunc {
 		return func(c echo.Context) error {
 			user, ok := httputil.UserFromContext(c)
 			if !ok {
-				return c.JSON(gohttp.StatusUnauthorized, map[string]string{"error": "not authenticated"})
+				return c.JSON(gohttp.StatusUnauthorized, jsonError("not authenticated"))
 			}
 			if !user.Role.IsAdmin() {
-				return c.JSON(gohttp.StatusForbidden, map[string]string{"error": "admin access required"})
+				return c.JSON(gohttp.StatusForbidden, jsonError("admin access required"))
 			}
 			return next(c)
 		}
@@ -108,10 +108,10 @@ func RequireWriter() echo.MiddlewareFunc {
 		return func(c echo.Context) error {
 			user, ok := httputil.UserFromContext(c)
 			if !ok {
-				return c.JSON(gohttp.StatusUnauthorized, map[string]string{"error": "not authenticated"})
+				return c.JSON(gohttp.StatusUnauthorized, jsonError("not authenticated"))
 			}
 			if !user.Role.CanWrite() {
-				return c.JSON(gohttp.StatusForbidden, map[string]string{"error": "write access required"})
+				return c.JSON(gohttp.StatusForbidden, jsonError("write access required"))
 			}
 			return next(c)
 		}

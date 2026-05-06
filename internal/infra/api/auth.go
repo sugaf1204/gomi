@@ -23,18 +23,18 @@ type loginRequest struct {
 func (s *Server) Login(c echo.Context) error {
 	var req loginRequest
 	if err := c.Bind(&req); err != nil {
-		return c.JSON(gohttp.StatusBadRequest, map[string]string{"error": "invalid body"})
+		return c.JSON(gohttp.StatusBadRequest, jsonError("invalid body"))
 	}
 	session, user, err := s.login(c.Request().Context(), strings.TrimSpace(req.Username), req.Password)
 	if err != nil {
-		return c.JSON(gohttp.StatusUnauthorized, map[string]string{"error": "invalid credential"})
+		return c.JSON(gohttp.StatusUnauthorized, jsonError("invalid credential"))
 	}
-	return c.JSON(gohttp.StatusOK, map[string]any{
-		"token":   session.Token,
-		"expires": session.ExpiresAt,
-		"user": map[string]any{
-			"username": user.Username,
-			"role":     user.Role,
+	return c.JSON(gohttp.StatusOK, loginResponse{
+		Token:   session.Token,
+		Expires: session.ExpiresAt,
+		User: authUserResponse{
+			Username: user.Username,
+			Role:     user.Role,
 		},
 	})
 }
@@ -52,11 +52,11 @@ func (s *Server) Logout(c echo.Context) error {
 func (s *Server) Me(c echo.Context) error {
 	user, ok := httputil.UserFromContext(c)
 	if !ok {
-		return c.JSON(gohttp.StatusUnauthorized, map[string]string{"error": "auth required"})
+		return c.JSON(gohttp.StatusUnauthorized, jsonError("auth required"))
 	}
-	return c.JSON(gohttp.StatusOK, map[string]any{
-		"username": user.Username,
-		"role":     user.Role,
+	return c.JSON(gohttp.StatusOK, authUserResponse{
+		Username: user.Username,
+		Role:     user.Role,
 	})
 }
 
@@ -69,20 +69,20 @@ type createUserRequest struct {
 func (s *Server) CreateUser(c echo.Context) error {
 	var req createUserRequest
 	if err := c.Bind(&req); err != nil {
-		return c.JSON(gohttp.StatusBadRequest, map[string]string{"error": "invalid body"})
+		return c.JSON(gohttp.StatusBadRequest, jsonError("invalid body"))
 	}
 	username := strings.TrimSpace(req.Username)
 	if username == "" || req.Password == "" {
-		return c.JSON(gohttp.StatusBadRequest, map[string]string{"error": "username/password required"})
+		return c.JSON(gohttp.StatusBadRequest, jsonError("username/password required"))
 	}
 	role, err := validateUserRole(req.Role)
 	if err != nil {
-		return c.JSON(gohttp.StatusBadRequest, map[string]string{"error": err.Error()})
+		return c.JSON(gohttp.StatusBadRequest, jsonErrorErr(err))
 	}
 	if err := s.createUser(c.Request().Context(), username, req.Password, role); err != nil {
-		return c.JSON(gohttp.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return c.JSON(gohttp.StatusInternalServerError, jsonErrorErr(err))
 	}
-	return c.JSON(gohttp.StatusCreated, map[string]string{"status": "created"})
+	return c.JSON(gohttp.StatusCreated, statusResponse{Status: "created"})
 }
 
 type setupStatusResponse struct {
@@ -92,7 +92,7 @@ type setupStatusResponse struct {
 func (s *Server) SetupStatus(c echo.Context) error {
 	required, err := s.setupRequired(c.Request().Context())
 	if err != nil {
-		return c.JSON(gohttp.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return c.JSON(gohttp.StatusInternalServerError, jsonErrorErr(err))
 	}
 	return c.JSON(gohttp.StatusOK, setupStatusResponse{Required: required})
 }
@@ -100,16 +100,16 @@ func (s *Server) SetupStatus(c echo.Context) error {
 func (s *Server) SetupAdmin(c echo.Context) error {
 	var req loginRequest
 	if err := c.Bind(&req); err != nil {
-		return c.JSON(gohttp.StatusBadRequest, map[string]string{"error": "invalid body"})
+		return c.JSON(gohttp.StatusBadRequest, jsonError("invalid body"))
 	}
 	err := setupadmin.CreateFirstAdmin(c.Request().Context(), s.authStore, req.Username, req.Password)
 	if errors.Is(err, setupadmin.ErrAlreadyConfigured) {
-		return c.JSON(gohttp.StatusConflict, map[string]string{"error": "setup already completed"})
+		return c.JSON(gohttp.StatusConflict, jsonError("setup already completed"))
 	}
 	if err != nil {
-		return c.JSON(gohttp.StatusBadRequest, map[string]string{"error": err.Error()})
+		return c.JSON(gohttp.StatusBadRequest, jsonErrorErr(err))
 	}
-	return c.JSON(gohttp.StatusCreated, map[string]string{"status": "created"})
+	return c.JSON(gohttp.StatusCreated, statusResponse{Status: "created"})
 }
 
 func (s *Server) setupRequired(ctx context.Context) (bool, error) {

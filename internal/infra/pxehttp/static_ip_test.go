@@ -65,7 +65,7 @@ func (f *fakeSubnetStoreForStaticIP) List(_ context.Context) ([]subnet.Subnet, e
 	return f.subnets, nil
 }
 func (f *fakeSubnetStoreForStaticIP) Upsert(_ context.Context, _ subnet.Subnet) error { return nil }
-func (f *fakeSubnetStoreForStaticIP) Delete(_ context.Context, _ string) error         { return nil }
+func (f *fakeSubnetStoreForStaticIP) Delete(_ context.Context, _ string) error        { return nil }
 
 func TestPXENocloudUserData_StaticIPVM_InjectsNetplan(t *testing.T) {
 	now := time.Now().UTC()

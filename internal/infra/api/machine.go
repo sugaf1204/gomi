@@ -20,13 +20,13 @@ import (
 func (s *Server) CreateMachine(c echo.Context) error {
 	var m machine.Machine
 	if err := c.Bind(&m); err != nil {
-		return c.JSON(gohttp.StatusBadRequest, map[string]string{"error": "invalid body"})
+		return c.JSON(gohttp.StatusBadRequest, jsonError("invalid body"))
 	}
 	ctx := c.Request().Context()
 
 	// Derive osPreset.family/version from the referenced OS image.
 	if err := s.resolveOSPreset(ctx, &m); err != nil {
-		return c.JSON(gohttp.StatusBadRequest, map[string]string{"error": err.Error()})
+		return c.JSON(gohttp.StatusBadRequest, jsonErrorErr(err))
 	}
 
 	if m.Role == machine.RoleHypervisor {
@@ -35,24 +35,24 @@ func (s *Server) CreateMachine(c echo.Context) error {
 		}
 		// Reject if a hypervisor with the same name already exists.
 		if _, err := s.hypervisors.Get(ctx, m.Name); err == nil {
-			return c.JSON(gohttp.StatusConflict, map[string]string{"error": fmt.Sprintf("hypervisor %q already exists", m.Name)})
+			return c.JSON(gohttp.StatusConflict, jsonError(fmt.Sprintf("hypervisor %q already exists", m.Name)))
 		}
 	}
 
 	if err := power.FillWoLDefaults(&m.Power); err != nil {
-		return c.JSON(gohttp.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return c.JSON(gohttp.StatusInternalServerError, jsonErrorErr(err))
 	}
 	if err := power.ValidatePowerConfig(m.Power); err != nil {
-		return c.JSON(gohttp.StatusBadRequest, map[string]string{"error": err.Error()})
+		return c.JSON(gohttp.StatusBadRequest, jsonErrorErr(err))
 	}
 
 	token, err := httputil.GenerateProvisioningToken()
 	if err != nil {
-		return c.JSON(gohttp.StatusInternalServerError, map[string]string{"error": "failed to issue provisioning token"})
+		return c.JSON(gohttp.StatusInternalServerError, jsonError("failed to issue provisioning token"))
 	}
 	attemptID, err := resource.GenerateProvisioningAttemptID()
 	if err != nil {
-		return c.JSON(gohttp.StatusInternalServerError, map[string]string{"error": "failed to issue provisioning attempt id"})
+		return c.JSON(gohttp.StatusInternalServerError, jsonError("failed to issue provisioning attempt id"))
 	}
 	now := time.Now().UTC()
 	deadline := now.Add(s.provisionTimeout)
@@ -66,12 +66,12 @@ func (s *Server) CreateMachine(c echo.Context) error {
 		CompletionToken: token,
 	}
 	if _, err := s.attachHypervisorRegistrationToken(ctx, &m); err != nil {
-		return c.JSON(gohttp.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return c.JSON(gohttp.StatusInternalServerError, jsonErrorErr(err))
 	}
 
 	created, err := s.machines.Create(ctx, m)
 	if err != nil {
-		return c.JSON(gohttp.StatusBadRequest, map[string]string{"error": err.Error()})
+		return c.JSON(gohttp.StatusBadRequest, jsonErrorErr(err))
 	}
 	httputil.CreateAudit(c, s.authStore, created.Name, "create-machine", "success", "machine created", nil)
 	return c.JSON(gohttp.StatusCreated, machineResponse(created))
@@ -80,9 +80,9 @@ func (s *Server) CreateMachine(c echo.Context) error {
 func (s *Server) ListMachines(c echo.Context) error {
 	machines, err := s.machines.List(c.Request().Context())
 	if err != nil {
-		return c.JSON(gohttp.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return c.JSON(gohttp.StatusInternalServerError, jsonErrorErr(err))
 	}
-	return c.JSON(gohttp.StatusOK, map[string]any{"items": machineResponses(machines)})
+	return c.JSON(gohttp.StatusOK, itemsResponse[machineResponse]{Items: machineResponses(machines)})
 }
 
 func (s *Server) GetMachine(c echo.Context) error {
@@ -90,9 +90,9 @@ func (s *Server) GetMachine(c echo.Context) error {
 	m, err := s.machines.Get(c.Request().Context(), name)
 	if err != nil {
 		if errors.Is(err, resource.ErrNotFound) {
-			return c.JSON(gohttp.StatusNotFound, map[string]string{"error": "not found"})
+			return c.JSON(gohttp.StatusNotFound, jsonError("not found"))
 		}
-		return c.JSON(gohttp.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return c.JSON(gohttp.StatusInternalServerError, jsonErrorErr(err))
 	}
 	return c.JSON(gohttp.StatusOK, machineResponse(m))
 }
@@ -101,9 +101,9 @@ func (s *Server) DeleteMachine(c echo.Context) error {
 	name := c.Param("name")
 	if err := s.machines.Delete(c.Request().Context(), name); err != nil {
 		if errors.Is(err, resource.ErrNotFound) {
-			return c.JSON(gohttp.StatusNotFound, map[string]string{"error": "not found"})
+			return c.JSON(gohttp.StatusNotFound, jsonError("not found"))
 		}
-		return c.JSON(gohttp.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return c.JSON(gohttp.StatusInternalServerError, jsonErrorErr(err))
 	}
 	httputil.CreateAudit(c, s.authStore, name, "delete-machine", "success", "machine deleted", nil)
 	return c.NoContent(gohttp.StatusNoContent)
@@ -117,28 +117,28 @@ func (s *Server) UpdateMachineSettings(c echo.Context) error {
 	name := c.Param("name")
 	var req updateSettingsReq
 	if err := c.Bind(&req); err != nil {
-		return c.JSON(gohttp.StatusBadRequest, map[string]string{"error": "invalid body"})
+		return c.JSON(gohttp.StatusBadRequest, jsonError("invalid body"))
 	}
 	current, err := s.machines.Get(c.Request().Context(), name)
 	if err != nil {
 		if errors.Is(err, resource.ErrNotFound) {
-			return c.JSON(gohttp.StatusNotFound, map[string]string{"error": "not found"})
+			return c.JSON(gohttp.StatusNotFound, jsonError("not found"))
 		}
-		return c.JSON(gohttp.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return c.JSON(gohttp.StatusInternalServerError, jsonErrorErr(err))
 	}
 	powerCfg := mergePowerConfigDefaults(current.Power, req.Power)
 	if err := power.FillWoLDefaults(&powerCfg); err != nil {
-		return c.JSON(gohttp.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return c.JSON(gohttp.StatusInternalServerError, jsonErrorErr(err))
 	}
 	if err := power.ValidatePowerConfig(powerCfg); err != nil {
-		return c.JSON(gohttp.StatusBadRequest, map[string]string{"error": err.Error()})
+		return c.JSON(gohttp.StatusBadRequest, jsonErrorErr(err))
 	}
 	m, err := s.machines.UpdateSettings(c.Request().Context(), name, powerCfg)
 	if err != nil {
 		if errors.Is(err, resource.ErrNotFound) {
-			return c.JSON(gohttp.StatusNotFound, map[string]string{"error": "not found"})
+			return c.JSON(gohttp.StatusNotFound, jsonError("not found"))
 		}
-		return c.JSON(gohttp.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return c.JSON(gohttp.StatusInternalServerError, jsonErrorErr(err))
 	}
 	httputil.CreateAudit(c, s.authStore, name, "update-machine-settings", "success", "machine settings updated", map[string]string{
 		"powerType": string(req.Power.Type),
@@ -157,15 +157,15 @@ func (s *Server) UpdateMachineNetwork(c echo.Context) error {
 	name := c.Param("name")
 	var req updateNetworkReq
 	if err := c.Bind(&req); err != nil {
-		return c.JSON(gohttp.StatusBadRequest, map[string]string{"error": "invalid body"})
+		return c.JSON(gohttp.StatusBadRequest, jsonError("invalid body"))
 	}
 	ipAssignment := machine.IPAssignmentMode(req.IPAssignment)
 	if ipAssignment != "" && ipAssignment != machine.IPAssignmentModeDHCP && ipAssignment != machine.IPAssignmentModeStatic {
-		return c.JSON(gohttp.StatusBadRequest, map[string]string{"error": "ipAssignment must be 'dhcp' or 'static'"})
+		return c.JSON(gohttp.StatusBadRequest, jsonError("ipAssignment must be 'dhcp' or 'static'"))
 	}
 	if req.SubnetRef != "" {
 		if _, err := s.subnets.Get(c.Request().Context(), req.SubnetRef); err != nil {
-			return c.JSON(gohttp.StatusBadRequest, map[string]string{"error": "referenced subnetRef not found"})
+			return c.JSON(gohttp.StatusBadRequest, jsonError("referenced subnetRef not found"))
 		}
 	}
 	net := machine.NetworkConfig{
@@ -174,9 +174,9 @@ func (s *Server) UpdateMachineNetwork(c echo.Context) error {
 	m, err := s.machines.UpdateNetwork(c.Request().Context(), name, req.IP, ipAssignment, req.SubnetRef, net)
 	if err != nil {
 		if errors.Is(err, resource.ErrNotFound) {
-			return c.JSON(gohttp.StatusNotFound, map[string]string{"error": "not found"})
+			return c.JSON(gohttp.StatusNotFound, jsonError("not found"))
 		}
-		return c.JSON(gohttp.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return c.JSON(gohttp.StatusInternalServerError, jsonErrorErr(err))
 	}
 	httputil.CreateAudit(c, s.authStore, name, "update-machine-network", "success", "machine network settings updated", nil)
 	return c.JSON(gohttp.StatusOK, machineResponse(m))
@@ -216,19 +216,19 @@ func (s *Server) RedeployMachine(c echo.Context) error {
 	var req redeployReq
 	if c.Request().ContentLength > 0 {
 		if err := c.Bind(&req); err != nil {
-			return c.JSON(gohttp.StatusBadRequest, map[string]string{"error": "invalid body"})
+			return c.JSON(gohttp.StatusBadRequest, jsonError("invalid body"))
 		}
 	}
 	if strings.TrimSpace(req.Confirm) != "" && strings.TrimSpace(req.Confirm) != name {
-		return c.JSON(gohttp.StatusBadRequest, map[string]string{"error": "confirm must match machine name"})
+		return c.JSON(gohttp.StatusBadRequest, jsonError("confirm must match machine name"))
 	}
 
 	current, err := s.machines.Get(ctx, name)
 	if err != nil {
 		if errors.Is(err, resource.ErrNotFound) {
-			return c.JSON(gohttp.StatusNotFound, map[string]string{"error": "not found"})
+			return c.JSON(gohttp.StatusNotFound, jsonError("not found"))
 		}
-		return c.JSON(gohttp.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return c.JSON(gohttp.StatusInternalServerError, jsonErrorErr(err))
 	}
 	powerCycleFallbackIP := current.IP
 
@@ -237,10 +237,10 @@ func (s *Server) RedeployMachine(c echo.Context) error {
 		if req.Power != nil {
 			copyCfg := mergePowerConfigDefaults(current.Power, *req.Power)
 			if err := power.FillWoLDefaults(&copyCfg); err != nil {
-				return c.JSON(gohttp.StatusInternalServerError, map[string]string{"error": err.Error()})
+				return c.JSON(gohttp.StatusInternalServerError, jsonErrorErr(err))
 			}
 			if err := power.ValidatePowerConfig(copyCfg); err != nil {
-				return c.JSON(gohttp.StatusBadRequest, map[string]string{"error": err.Error()})
+				return c.JSON(gohttp.StatusBadRequest, jsonErrorErr(err))
 			}
 			powerCfg = &copyCfg
 		}
@@ -251,7 +251,7 @@ func (s *Server) RedeployMachine(c echo.Context) error {
 			draft := current
 			draft.OSPreset = nextPreset
 			if err := s.resolveOSPreset(ctx, &draft); err != nil {
-				return c.JSON(gohttp.StatusBadRequest, map[string]string{"error": err.Error()})
+				return c.JSON(gohttp.StatusBadRequest, jsonErrorErr(err))
 			}
 			nextPreset = draft.OSPreset
 		}
@@ -266,7 +266,7 @@ func (s *Server) RedeployMachine(c echo.Context) error {
 			trimmed := strings.TrimSpace(*req.SubnetRef)
 			if trimmed != "" {
 				if _, err := s.subnets.Get(ctx, trimmed); err != nil {
-					return c.JSON(gohttp.StatusBadRequest, map[string]string{"error": "referenced subnetRef not found"})
+					return c.JSON(gohttp.StatusBadRequest, jsonError("referenced subnetRef not found"))
 				}
 			}
 			subnetRef = &trimmed
@@ -276,7 +276,7 @@ func (s *Server) RedeployMachine(c echo.Context) error {
 		if req.IPAssignment != nil {
 			mode := machine.IPAssignmentMode(strings.TrimSpace(*req.IPAssignment))
 			if mode != "" && mode != machine.IPAssignmentModeDHCP && mode != machine.IPAssignmentModeStatic {
-				return c.JSON(gohttp.StatusBadRequest, map[string]string{"error": "ipAssignment must be 'dhcp' or 'static'"})
+				return c.JSON(gohttp.StatusBadRequest, jsonError("ipAssignment must be 'dhcp' or 'static'"))
 			}
 			ipAssignment = &mode
 		}
@@ -291,13 +291,13 @@ func (s *Server) RedeployMachine(c echo.Context) error {
 		if req.Role != nil {
 			value := machine.Role(strings.TrimSpace(*req.Role))
 			if value != machine.RoleDefault && value != machine.RoleHypervisor {
-				return c.JSON(gohttp.StatusBadRequest, map[string]string{"error": "role must be '' or 'hypervisor'"})
+				return c.JSON(gohttp.StatusBadRequest, jsonError("role must be '' or 'hypervisor'"))
 			}
 			if value == machine.RoleHypervisor && current.Role != machine.RoleHypervisor {
 				if _, err := s.hypervisors.Get(ctx, name); err == nil {
-					return c.JSON(gohttp.StatusConflict, map[string]string{"error": fmt.Sprintf("hypervisor %q already exists", name)})
+					return c.JSON(gohttp.StatusConflict, jsonError(fmt.Sprintf("hypervisor %q already exists", name)))
 				} else if !errors.Is(err, resource.ErrNotFound) {
-					return c.JSON(gohttp.StatusInternalServerError, map[string]string{"error": err.Error()})
+					return c.JSON(gohttp.StatusInternalServerError, jsonErrorErr(err))
 				}
 			}
 			role = &value
@@ -339,18 +339,18 @@ func (s *Server) RedeployMachine(c echo.Context) error {
 	m, err := s.machines.Reinstall(ctx, name, user.Username, opts)
 	if err != nil {
 		if errors.Is(err, resource.ErrNotFound) {
-			return c.JSON(gohttp.StatusNotFound, map[string]string{"error": "not found"})
+			return c.JSON(gohttp.StatusNotFound, jsonError("not found"))
 		}
 		httputil.CreateAudit(c, s.authStore, name, "redeploy", "failure", err.Error(), nil)
-		return c.JSON(gohttp.StatusBadRequest, map[string]string{"error": err.Error()})
+		return c.JSON(gohttp.StatusBadRequest, jsonErrorErr(err))
 	}
 	if changed, err := s.attachHypervisorRegistrationToken(ctx, &m); err != nil {
 		httputil.CreateAudit(c, s.authStore, name, "redeploy", "failure", err.Error(), nil)
-		return c.JSON(gohttp.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return c.JSON(gohttp.StatusInternalServerError, jsonErrorErr(err))
 	} else if changed {
 		if err := s.machines.Store().Upsert(ctx, m); err != nil {
 			httputil.CreateAudit(c, s.authStore, name, "redeploy", "failure", err.Error(), nil)
-			return c.JSON(gohttp.StatusInternalServerError, map[string]string{"error": err.Error()})
+			return c.JSON(gohttp.StatusInternalServerError, jsonErrorErr(err))
 		}
 	}
 	httputil.CreateAudit(c, s.authStore, name, "redeploy", "success", "redeploy started", nil)
@@ -452,15 +452,15 @@ func (s *Server) runPowerAction(c echo.Context, actionStr string) error {
 	m, err := s.machines.Get(c.Request().Context(), name)
 	if err != nil {
 		if errors.Is(err, resource.ErrNotFound) {
-			return c.JSON(gohttp.StatusNotFound, map[string]string{"error": "not found"})
+			return c.JSON(gohttp.StatusNotFound, jsonError("not found"))
 		}
-		return c.JSON(gohttp.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return c.JSON(gohttp.StatusInternalServerError, jsonErrorErr(err))
 	}
 	if err := power.FillWoLDefaults(&m.Power); err != nil {
-		return c.JSON(gohttp.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return c.JSON(gohttp.StatusInternalServerError, jsonErrorErr(err))
 	}
 	if err := power.ValidatePowerConfig(m.Power); err != nil {
-		return c.JSON(gohttp.StatusBadRequest, map[string]string{"error": err.Error()})
+		return c.JSON(gohttp.StatusBadRequest, jsonErrorErr(err))
 	}
 	action := power.Action(actionStr)
 	mi := power.MachineInfo{
@@ -474,7 +474,7 @@ func (s *Server) runPowerAction(c echo.Context, actionStr string) error {
 	if err != nil {
 		s.recordMachinePowerAction(name, action, stringPtr(err.Error()))
 		httputil.CreateAudit(c, s.authStore, name, actionStr, "failure", err.Error(), nil)
-		return c.JSON(gohttp.StatusBadGateway, map[string]string{"error": err.Error()})
+		return c.JSON(gohttp.StatusBadGateway, jsonErrorErr(err))
 	}
 	s.recordMachinePowerAction(name, action, stringPtr(""))
 	details := map[string]string{}
@@ -485,11 +485,10 @@ func (s *Server) runPowerAction(c echo.Context, actionStr string) error {
 		details = nil
 	}
 	httputil.CreateAudit(c, s.authStore, name, actionStr, "success", "power action complete", details)
-	response := map[string]string{"status": "ok"}
-	if result.RequestID != "" {
-		response["requestID"] = result.RequestID
-	}
-	return c.JSON(gohttp.StatusOK, response)
+	return c.JSON(gohttp.StatusOK, statusResponse{
+		Status:    "ok",
+		RequestID: result.RequestID,
+	})
 }
 
 func (s *Server) executePowerAction(ctx context.Context, mi power.MachineInfo, action power.Action) (power.ActionResult, error) {

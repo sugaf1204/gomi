@@ -34,24 +34,24 @@ func (s *Server) ListOSCatalog(c echo.Context) error {
 	items := make([]osCatalogEntryResponse, 0)
 	entries, err := oscatalog.ListWithContext(ctx)
 	if err != nil {
-		return c.JSON(gohttp.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return c.JSON(gohttp.StatusInternalServerError, jsonErrorErr(err))
 	}
 	for _, entry := range entries {
 		items = append(items, s.osCatalogStatus(ctx, entry))
 	}
-	return c.JSON(gohttp.StatusOK, map[string]any{"items": items})
+	return c.JSON(gohttp.StatusOK, itemsResponse[osCatalogEntryResponse]{Items: items})
 }
 
 func (s *Server) InstallOSCatalogEntry(c echo.Context) error {
 	entry, ok, err := oscatalog.GetWithContext(c.Request().Context(), c.Param("name"))
 	if err != nil {
-		return c.JSON(gohttp.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return c.JSON(gohttp.StatusInternalServerError, jsonErrorErr(err))
 	}
 	if !ok {
-		return c.JSON(gohttp.StatusNotFound, map[string]string{"error": "catalog entry not found"})
+		return c.JSON(gohttp.StatusNotFound, jsonError("catalog entry not found"))
 	}
 	if s.bootenvs == nil {
-		return c.JSON(gohttp.StatusServiceUnavailable, map[string]string{"error": "boot environment manager is not configured"})
+		return c.JSON(gohttp.StatusServiceUnavailable, jsonError("boot environment manager is not configured"))
 	}
 
 	status := s.osCatalogStatus(c.Request().Context(), entry)
@@ -71,7 +71,7 @@ func (s *Server) InstallOSCatalogEntry(c echo.Context) error {
 		s.catalogMu.Lock()
 		delete(s.catalogInstalls, entry.Name)
 		s.catalogMu.Unlock()
-		return c.JSON(gohttp.StatusBadRequest, map[string]string{"error": err.Error()})
+		return c.JSON(gohttp.StatusBadRequest, jsonErrorErr(err))
 	}
 
 	go s.runCatalogInstall(entry)
@@ -203,31 +203,31 @@ func (s *Server) osCatalogStatus(ctx context.Context, entry oscatalog.Entry) osC
 
 func (s *Server) ListBootEnvironments(c echo.Context) error {
 	if s.bootenvs == nil {
-		return c.JSON(gohttp.StatusOK, map[string]any{"items": []bootenv.Status{}})
+		return c.JSON(gohttp.StatusOK, itemsResponse[bootenv.Status]{Items: []bootenv.Status{}})
 	}
-	return c.JSON(gohttp.StatusOK, map[string]any{"items": s.bootenvs.List()})
+	return c.JSON(gohttp.StatusOK, itemsResponse[bootenv.Status]{Items: s.bootenvs.List()})
 }
 
 func (s *Server) RebuildBootEnvironment(c echo.Context) error {
 	if s.bootenvs == nil {
-		return c.JSON(gohttp.StatusServiceUnavailable, map[string]string{"error": "boot environment manager is not configured"})
+		return c.JSON(gohttp.StatusServiceUnavailable, jsonError("boot environment manager is not configured"))
 	}
 	return c.JSON(gohttp.StatusAccepted, s.bootenvs.StartRebuild(c.Param("name")))
 }
 
 func (s *Server) GetBootEnvironmentLogs(c echo.Context) error {
 	if s.bootenvs == nil {
-		return c.JSON(gohttp.StatusNotFound, map[string]string{"error": "boot environment manager is not configured"})
+		return c.JSON(gohttp.StatusNotFound, jsonError("boot environment manager is not configured"))
 	}
 	st := s.bootenvs.Status(c.Param("name"))
 	if st.LogPath == "" {
-		return c.JSON(gohttp.StatusNotFound, map[string]string{"error": "build log not found"})
+		return c.JSON(gohttp.StatusNotFound, jsonError("build log not found"))
 	}
 	if _, err := os.Stat(st.LogPath); err != nil {
 		if errors.Is(err, os.ErrNotExist) || errors.Is(err, resource.ErrNotFound) {
-			return c.JSON(gohttp.StatusNotFound, map[string]string{"error": "build log not found"})
+			return c.JSON(gohttp.StatusNotFound, jsonError("build log not found"))
 		}
-		return c.JSON(gohttp.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return c.JSON(gohttp.StatusInternalServerError, jsonErrorErr(err))
 	}
 	return c.File(st.LogPath)
 }

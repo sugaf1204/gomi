@@ -31,31 +31,31 @@ func (s *Server) ReportMachinePowerEvent(c echo.Context) error {
 	name := c.Param("name")
 	raw, err := io.ReadAll(io.LimitReader(c.Request().Body, 1<<20))
 	if err != nil {
-		return c.JSON(gohttp.StatusBadRequest, map[string]string{"error": "invalid body"})
+		return c.JSON(gohttp.StatusBadRequest, jsonError("invalid body"))
 	}
 
 	m, err := s.machines.Get(c.Request().Context(), name)
 	if err != nil {
 		if errors.Is(err, resource.ErrNotFound) {
-			return c.JSON(gohttp.StatusNotFound, map[string]string{"error": "not found"})
+			return c.JSON(gohttp.StatusNotFound, jsonError("not found"))
 		}
-		return c.JSON(gohttp.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return c.JSON(gohttp.StatusInternalServerError, jsonErrorErr(err))
 	}
 	if m.Power.Type != power.PowerTypeWoL || m.Power.WoL == nil || strings.TrimSpace(m.Power.WoL.HMACSecret) == "" {
-		return c.JSON(gohttp.StatusBadRequest, map[string]string{"error": "machine does not have WoL callback signing configured"})
+		return c.JSON(gohttp.StatusBadRequest, jsonError("machine does not have WoL callback signing configured"))
 	}
 	if !verifyPowerEventSignature(raw, m.Power.WoL.HMACSecret, c.Request().Header.Get("X-GOMI-WOL-Signature")) {
-		return c.JSON(gohttp.StatusUnauthorized, map[string]string{"error": "invalid signature"})
+		return c.JSON(gohttp.StatusUnauthorized, jsonError("invalid signature"))
 	}
 
 	var req machinePowerEventRequest
 	if err := json.Unmarshal(raw, &req); err != nil {
-		return c.JSON(gohttp.StatusBadRequest, map[string]string{"error": "invalid body"})
+		return c.JSON(gohttp.StatusBadRequest, jsonError("invalid body"))
 	}
 	req.RequestID = strings.TrimSpace(req.RequestID)
 	req.Stage = strings.TrimSpace(req.Stage)
 	if req.RequestID == "" || req.Stage == "" {
-		return c.JSON(gohttp.StatusBadRequest, map[string]string{"error": "requestID and stage are required"})
+		return c.JSON(gohttp.StatusBadRequest, jsonError("requestID and stage are required"))
 	}
 
 	result := "success"
@@ -89,7 +89,7 @@ func (s *Server) ReportMachinePowerEvent(c echo.Context) error {
 			CreatedAt: time.Now().UTC(),
 		})
 	}
-	return c.JSON(gohttp.StatusOK, map[string]string{"status": "ok"})
+	return c.JSON(gohttp.StatusOK, statusResponse{Status: "ok"})
 }
 
 func verifyPowerEventSignature(body []byte, secret, signature string) bool {

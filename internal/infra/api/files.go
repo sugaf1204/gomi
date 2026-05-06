@@ -15,21 +15,21 @@ import (
 // Paths containing ".." are rejected to prevent path traversal attacks.
 func (s *Server) ServeFile(c echo.Context) error {
 	if strings.TrimSpace(s.filesDir) == "" {
-		return c.JSON(gohttp.StatusNotFound, map[string]string{"error": "files directory is not configured"})
+		return c.JSON(gohttp.StatusNotFound, jsonError("files directory is not configured"))
 	}
 
 	raw := strings.TrimPrefix(c.Param("*"), "/")
 	rel, err := sanitizeFilePath(raw)
 	if err != nil {
-		return c.JSON(gohttp.StatusBadRequest, map[string]string{"error": "invalid file path"})
+		return c.JSON(gohttp.StatusBadRequest, jsonError("invalid file path"))
 	}
 
 	full := filepath.Join(s.filesDir, filepath.FromSlash(rel))
 	if _, err := os.Stat(full); err != nil {
 		if os.IsNotExist(err) {
-			return c.JSON(gohttp.StatusNotFound, map[string]string{"error": "file not found"})
+			return c.JSON(gohttp.StatusNotFound, jsonError("file not found"))
 		}
-		return c.JSON(gohttp.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return c.JSON(gohttp.StatusInternalServerError, jsonErrorErr(err))
 	}
 	return c.File(full)
 }

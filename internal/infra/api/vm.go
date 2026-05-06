@@ -25,16 +25,16 @@ const defaultVMBridge = "br-eth0"
 func (s *Server) CreateVirtualMachine(c echo.Context) error {
 	var v vm.VirtualMachine
 	if err := c.Bind(&v); err != nil {
-		return c.JSON(gohttp.StatusBadRequest, map[string]string{"error": "invalid body"})
+		return c.JSON(gohttp.StatusBadRequest, jsonError("invalid body"))
 	}
 	ctx := c.Request().Context()
 	ensureVMNetwork(&v)
 	if err := s.applyInstallConfigByOSImage(ctx, &v); err != nil {
-		return c.JSON(gohttp.StatusBadRequest, map[string]string{"error": err.Error()})
+		return c.JSON(gohttp.StatusBadRequest, jsonErrorErr(err))
 	}
 	token, err := httputil.GenerateProvisioningToken()
 	if err != nil {
-		return c.JSON(gohttp.StatusInternalServerError, map[string]string{"error": "failed to issue provisioning token"})
+		return c.JSON(gohttp.StatusInternalServerError, jsonError("failed to issue provisioning token"))
 	}
 	now := time.Now().UTC()
 	v.Provisioning = vm.ProvisioningStatus{
@@ -47,19 +47,19 @@ func (s *Server) CreateVirtualMachine(c echo.Context) error {
 	if v.HypervisorRef == "" {
 		hvList, err := s.hypervisors.List(ctx)
 		if err != nil {
-			return c.JSON(gohttp.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("list hypervisors: %v", err)})
+			return c.JSON(gohttp.StatusInternalServerError, jsonError(fmt.Sprintf("list hypervisors: %v", err)))
 		}
 		selected := vm.SelectHypervisor(hvList)
 		if selected == "" {
-			return c.JSON(gohttp.StatusBadRequest, map[string]string{"error": "no ready hypervisors available for auto-placement"})
+			return c.JSON(gohttp.StatusBadRequest, jsonError("no ready hypervisors available for auto-placement"))
 		}
 		v.HypervisorRef = selected
 	} else {
 		if _, err := s.hypervisors.Get(ctx, v.HypervisorRef); err != nil {
 			if errors.Is(err, resource.ErrNotFound) {
-				return c.JSON(gohttp.StatusBadRequest, map[string]string{"error": "referenced hypervisorRef not found: " + v.HypervisorRef})
+				return c.JSON(gohttp.StatusBadRequest, jsonError("referenced hypervisorRef not found: "+v.HypervisorRef))
 			}
-			return c.JSON(gohttp.StatusInternalServerError, map[string]string{"error": err.Error()})
+			return c.JSON(gohttp.StatusInternalServerError, jsonErrorErr(err))
 		}
 	}
 
@@ -67,7 +67,7 @@ func (s *Server) CreateVirtualMachine(c echo.Context) error {
 
 	created, err := s.vms.Create(ctx, v)
 	if err != nil {
-		return c.JSON(gohttp.StatusBadRequest, map[string]string{"error": err.Error()})
+		return c.JSON(gohttp.StatusBadRequest, jsonErrorErr(err))
 	}
 
 	if s.vmDeployer != nil {
@@ -86,7 +86,7 @@ func (s *Server) ListVirtualMachines(c echo.Context) error {
 	ctx := c.Request().Context()
 	items, err := s.vms.List(ctx)
 	if err != nil {
-		return c.JSON(gohttp.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return c.JSON(gohttp.StatusInternalServerError, jsonErrorErr(err))
 	}
 	if s.vmRuntimeSyncer != nil {
 		leaseIPByMAC, leaseErr := s.leaseIPsByMAC(ctx)
@@ -102,7 +102,7 @@ func (s *Server) ListVirtualMachines(c echo.Context) error {
 			items[i] = synced
 		}
 	}
-	return c.JSON(gohttp.StatusOK, map[string]any{"items": items})
+	return c.JSON(gohttp.StatusOK, itemsResponse[vm.VirtualMachine]{Items: items})
 }
 
 func (s *Server) GetVirtualMachine(c echo.Context) error {
@@ -111,9 +111,9 @@ func (s *Server) GetVirtualMachine(c echo.Context) error {
 	v, err := s.vms.Get(ctx, name)
 	if err != nil {
 		if errors.Is(err, resource.ErrNotFound) {
-			return c.JSON(gohttp.StatusNotFound, map[string]string{"error": "not found"})
+			return c.JSON(gohttp.StatusNotFound, jsonError("not found"))
 		}
-		return c.JSON(gohttp.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return c.JSON(gohttp.StatusInternalServerError, jsonErrorErr(err))
 	}
 	if s.vmRuntimeSyncer != nil {
 		leaseIPByMAC, leaseErr := s.leaseIPsByMAC(ctx)
@@ -135,19 +135,19 @@ func (s *Server) DeleteVirtualMachine(c echo.Context) error {
 	v, err := s.vms.Get(ctx, name)
 	if err != nil {
 		if errors.Is(err, resource.ErrNotFound) {
-			return c.JSON(gohttp.StatusNotFound, map[string]string{"error": "not found"})
+			return c.JSON(gohttp.StatusNotFound, jsonError("not found"))
 		}
-		return c.JSON(gohttp.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return c.JSON(gohttp.StatusInternalServerError, jsonErrorErr(err))
 	}
 	if err := s.deleteVirtualMachineRuntime(ctx, v); err != nil {
 		httputil.CreateAudit(c, s.authStore, name, "delete-vm", "failure", err.Error(), nil)
-		return c.JSON(gohttp.StatusBadGateway, map[string]string{"error": err.Error()})
+		return c.JSON(gohttp.StatusBadGateway, jsonErrorErr(err))
 	}
 	if err := s.vms.Delete(ctx, name); err != nil {
 		if errors.Is(err, resource.ErrNotFound) {
-			return c.JSON(gohttp.StatusNotFound, map[string]string{"error": "not found"})
+			return c.JSON(gohttp.StatusNotFound, jsonError("not found"))
 		}
-		return c.JSON(gohttp.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return c.JSON(gohttp.StatusInternalServerError, jsonErrorErr(err))
 	}
 	httputil.CreateAudit(c, s.authStore, name, "delete-vm", "success", "virtual machine deleted", nil)
 	return c.NoContent(gohttp.StatusNoContent)
@@ -229,25 +229,25 @@ func (s *Server) ReinstallVM(c echo.Context) error {
 	var req vmReinstallReq
 	if c.Request().ContentLength > 0 {
 		if err := c.Bind(&req); err != nil {
-			return c.JSON(gohttp.StatusBadRequest, map[string]string{"error": "invalid body"})
+			return c.JSON(gohttp.StatusBadRequest, jsonError("invalid body"))
 		}
 	}
 	if strings.TrimSpace(req.Confirm) != "" && strings.TrimSpace(req.Confirm) != name {
-		return c.JSON(gohttp.StatusBadRequest, map[string]string{"error": "confirm must match vm name"})
+		return c.JSON(gohttp.StatusBadRequest, jsonError("confirm must match vm name"))
 	}
 
 	current, err := s.vms.Get(ctx, name)
 	if err != nil {
 		if errors.Is(err, resource.ErrNotFound) {
-			return c.JSON(gohttp.StatusNotFound, map[string]string{"error": "not found"})
+			return c.JSON(gohttp.StatusNotFound, jsonError("not found"))
 		}
-		return c.JSON(gohttp.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return c.JSON(gohttp.StatusInternalServerError, jsonErrorErr(err))
 	}
 	if req.SubnetRef != nil {
 		subnetRef := strings.TrimSpace(*req.SubnetRef)
 		if subnetRef != "" {
 			if _, err := s.subnets.Get(ctx, subnetRef); err != nil {
-				return c.JSON(gohttp.StatusBadRequest, map[string]string{"error": "referenced subnetRef not found"})
+				return c.JSON(gohttp.StatusBadRequest, jsonError("referenced subnetRef not found"))
 			}
 		}
 	}
@@ -265,7 +265,7 @@ func (s *Server) ReinstallVM(c echo.Context) error {
 		applyReinstallCloudInitRef(&current, cloudInitRef)
 	}
 	if err := s.applyInstallConfigByOSImage(ctx, &current); err != nil {
-		return c.JSON(gohttp.StatusBadRequest, map[string]string{"error": err.Error()})
+		return c.JSON(gohttp.StatusBadRequest, jsonErrorErr(err))
 	}
 
 	if current.LastDeployedCloudInitRef == "" {
@@ -276,7 +276,7 @@ func (s *Server) ReinstallVM(c echo.Context) error {
 
 	token, err := httputil.GenerateProvisioningToken()
 	if err != nil {
-		return c.JSON(gohttp.StatusInternalServerError, map[string]string{"error": "failed to issue provisioning token"})
+		return c.JSON(gohttp.StatusInternalServerError, jsonError("failed to issue provisioning token"))
 	}
 	now := time.Now().UTC()
 	current.Phase = vm.PhaseProvisioning
@@ -291,17 +291,17 @@ func (s *Server) ReinstallVM(c echo.Context) error {
 	current.UpdatedAt = now
 
 	if err := vm.ValidateVirtualMachine(current); err != nil {
-		return c.JSON(gohttp.StatusBadRequest, map[string]string{"error": err.Error()})
+		return c.JSON(gohttp.StatusBadRequest, jsonErrorErr(err))
 	}
 	if err := s.vms.Store().Upsert(ctx, current); err != nil {
-		return c.JSON(gohttp.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return c.JSON(gohttp.StatusInternalServerError, jsonErrorErr(err))
 	}
 
 	if s.vmDeployer != nil {
 		if err := s.vmDeployer.Redeploy(ctx, current, pxehttp.RenderNoCloudLineConfig); err != nil {
 			_ = s.updateVMPXEProvisioningError(ctx, current, err)
 			httputil.CreateAudit(c, s.authStore, name, "redeploy-vm", "failure", err.Error(), nil)
-			return c.JSON(gohttp.StatusInternalServerError, map[string]string{"error": err.Error()})
+			return c.JSON(gohttp.StatusInternalServerError, jsonErrorErr(err))
 		}
 	}
 
@@ -520,16 +520,16 @@ func (s *Server) runVMPowerAction(c echo.Context, action string) error {
 	v, err := s.vms.Get(ctx, name)
 	if err != nil {
 		if errors.Is(err, resource.ErrNotFound) {
-			return c.JSON(gohttp.StatusNotFound, map[string]string{"error": "not found"})
+			return c.JSON(gohttp.StatusNotFound, jsonError("not found"))
 		}
-		return c.JSON(gohttp.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return c.JSON(gohttp.StatusInternalServerError, jsonErrorErr(err))
 	}
 
 	hv, err := s.hypervisors.Get(ctx, v.HypervisorRef)
 	if err != nil {
 		msg := fmt.Sprintf("hypervisor %q not found: %v", v.HypervisorRef, err)
 		httputil.CreateAudit(c, s.authStore, name, action, "failure", msg, nil)
-		return c.JSON(gohttp.StatusInternalServerError, map[string]string{"error": msg})
+		return c.JSON(gohttp.StatusInternalServerError, jsonError(msg))
 	}
 
 	libvirtErr := s.executeLibvirtPowerAction(ctx, hv, v, action)
@@ -554,14 +554,17 @@ func (s *Server) runVMPowerAction(c echo.Context, action string) error {
 	updated, err := s.vms.UpdateStatus(ctx, name, targetPhase, action, lastErr)
 	if err != nil {
 		httputil.CreateAudit(c, s.authStore, name, action, "failure", err.Error(), nil)
-		return c.JSON(gohttp.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return c.JSON(gohttp.StatusInternalServerError, jsonErrorErr(err))
 	}
 
 	if libvirtErr != nil {
 		httputil.CreateAudit(c, s.authStore, name, action, "failure", libvirtErr.Error(), nil)
-		return c.JSON(gohttp.StatusInternalServerError, map[string]string{
-			"error": fmt.Sprintf("libvirt action failed: %v", libvirtErr),
-			"phase": string(updated.Phase),
+		return c.JSON(gohttp.StatusInternalServerError, struct {
+			Error string `json:"error"`
+			Phase string `json:"phase"`
+		}{
+			Error: fmt.Sprintf("libvirt action failed: %v", libvirtErr),
+			Phase: string(updated.Phase),
 		})
 	}
 
@@ -580,29 +583,29 @@ func (s *Server) MigrateVM(c echo.Context) error {
 	var req vmMigrateReq
 	if c.Request().ContentLength > 0 {
 		if err := c.Bind(&req); err != nil {
-			return c.JSON(gohttp.StatusBadRequest, map[string]string{"error": "invalid body"})
+			return c.JSON(gohttp.StatusBadRequest, jsonError("invalid body"))
 		}
 	}
 
 	v, err := s.vms.Get(ctx, name)
 	if err != nil {
 		if errors.Is(err, resource.ErrNotFound) {
-			return c.JSON(gohttp.StatusNotFound, map[string]string{"error": "not found"})
+			return c.JSON(gohttp.StatusNotFound, jsonError("not found"))
 		}
-		return c.JSON(gohttp.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return c.JSON(gohttp.StatusInternalServerError, jsonErrorErr(err))
 	}
 	if v.Phase != vm.PhaseRunning {
-		return c.JSON(gohttp.StatusBadRequest, map[string]string{"error": "vm must be in Running phase to migrate"})
+		return c.JSON(gohttp.StatusBadRequest, jsonError("vm must be in Running phase to migrate"))
 	}
 
 	if s.vmMigrator == nil {
-		return c.JSON(gohttp.StatusInternalServerError, map[string]string{"error": "migration not configured"})
+		return c.JSON(gohttp.StatusInternalServerError, jsonError("migration not configured"))
 	}
 
 	targetHVName := strings.TrimSpace(req.TargetHypervisor)
 	sourceHVName := v.HypervisorRef
 	if targetHVName == sourceHVName {
-		return c.JSON(gohttp.StatusBadRequest, map[string]string{"error": "target hypervisor must be different from source"})
+		return c.JSON(gohttp.StatusBadRequest, jsonError("target hypervisor must be different from source"))
 	}
 
 	updated, migrateErr := s.vmMigrator.Migrate(ctx, v, targetHVName)
@@ -611,7 +614,7 @@ func (s *Server) MigrateVM(c echo.Context) error {
 			"source": sourceHVName,
 			"target": targetHVName,
 		})
-		return c.JSON(gohttp.StatusInternalServerError, map[string]string{"error": migrateErr.Error()})
+		return c.JSON(gohttp.StatusInternalServerError, jsonErrorErr(migrateErr))
 	}
 
 	httputil.CreateAudit(c, s.authStore, name, "migrate-vm", "success", fmt.Sprintf("migrated from %s to %s", sourceHVName, targetHVName), map[string]string{

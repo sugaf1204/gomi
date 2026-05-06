@@ -18,7 +18,7 @@ func (s *Server) ListAuditEvents(c echo.Context) error {
 	}
 	events, err := s.authStore.ListAuditEvents(c.Request().Context(), machineName, limit)
 	if err != nil {
-		return c.JSON(gohttp.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return c.JSON(gohttp.StatusInternalServerError, jsonErrorErr(err))
 	}
-	return c.JSON(gohttp.StatusOK, map[string]any{"items": events})
+	return c.JSON(gohttp.StatusOK, itemsResponse[auth.AuditEvent]{Items: events})
 }
