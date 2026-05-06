@@ -379,51 +379,14 @@ func (h *Handler) PXENocloudNetworkConfig(c echo.Context) error {
 // buildNetworkConfig builds a netplan v2 network-config matched by MAC address.
 // If ip is empty, DHCP is configured. Otherwise a static address is configured.
 func buildNetworkConfig(mac, ip string, spec *subnet.SubnetSpec) string {
-	var sb strings.Builder
-	sb.WriteString("version: 2\nethernets:\n  gomi-nic:\n")
-
-	if mac != "" {
-		sb.WriteString(fmt.Sprintf("    match:\n      macaddress: %q\n", strings.ToLower(mac)))
-		sb.WriteString("    wakeonlan: true\n")
-	}
-
-	if ip == "" {
-		sb.WriteString("    dhcp4: true\n    dhcp6: false\n")
-		return sb.String()
-	}
-
-	prefixLen := 24
-	if spec != nil && spec.CIDR != "" {
-		if _, ipNet, err := net.ParseCIDR(spec.CIDR); err == nil {
-			ones, _ := ipNet.Mask.Size()
-			prefixLen = ones
-		}
-	}
-
-	sb.WriteString(fmt.Sprintf("    addresses:\n      - %s/%d\n", ip, prefixLen))
-	sb.WriteString("    dhcp4: false\n")
-
-	if gateway := strings.TrimSpace(func() string {
-		if spec != nil {
-			return spec.DefaultGateway
-		}
-		return ""
-	}()); gateway != "" {
-		sb.WriteString(fmt.Sprintf("    routes:\n      - to: default\n        via: %s\n", gateway))
-	}
-
-	nameservers := func() []string {
-		if spec != nil && len(spec.DNSServers) > 0 {
-			return spec.DNSServers
-		}
-		return []string{"8.8.8.8", "8.8.4.4"}
-	}()
-	sb.WriteString("    nameservers:\n      addresses:\n")
-	for _, ns := range nameservers {
-		sb.WriteString(fmt.Sprintf("        - %s\n", ns))
-	}
-
-	return sb.String()
+	return marshalYAMLString(buildDirectNetplanConfig(
+		mac,
+		ip,
+		subnetPrefixLen(spec),
+		subnetGateway(spec),
+		subnetNameServers(spec),
+		ip == "",
+	))
 }
 
 // injectHypervisorSetup adds libvirt/KVM packages and runcmd entries to a
@@ -542,28 +505,54 @@ func shellQuote(value string) string {
 	return "'" + strings.ReplaceAll(value, "'", `'"'"'`) + "'"
 }
 
-// buildBridgedNetworkConfig builds a netplan v2 config that creates a bridge
-// with the matched physical NIC as a member. Used for hypervisor machines so
-// VMs can share the same physical network.
-func buildBridgedNetworkConfig(mac, bridgeName, ip string, spec *subnet.SubnetSpec) string {
-	var sb strings.Builder
-	sb.WriteString("version: 2\nethernets:\n  gomi-nic:\n")
-	if mac != "" {
-		sb.WriteString(fmt.Sprintf("    match:\n      macaddress: %q\n", strings.ToLower(mac)))
-		sb.WriteString("    wakeonlan: true\n")
-	}
-	sb.WriteString("    dhcp4: false\n    dhcp6: false\n")
+type netplanConfig struct {
+	Version   int                      `yaml:"version"`
+	Ethernets map[string]netplanNIC    `yaml:"ethernets,omitempty"`
+	Bridges   map[string]netplanBridge `yaml:"bridges,omitempty"`
+}
 
-	sb.WriteString(fmt.Sprintf("bridges:\n  %s:\n    interfaces: [gomi-nic]\n", bridgeName))
-	if mac != "" {
-		sb.WriteString(fmt.Sprintf("    macaddress: %q\n", strings.ToLower(mac)))
-	}
+type netplanNIC struct {
+	Match       *netplanMatch       `yaml:"match,omitempty"`
+	WakeOnLAN   bool                `yaml:"wakeonlan,omitempty"`
+	DHCP4       bool                `yaml:"dhcp4"`
+	DHCP6       bool                `yaml:"dhcp6,omitempty"`
+	Addresses   []string            `yaml:"addresses,omitempty"`
+	Routes      []netplanRoute      `yaml:"routes,omitempty"`
+	NameServers *netplanNameServers `yaml:"nameservers,omitempty"`
+}
 
-	if ip == "" {
-		sb.WriteString("    dhcp4: true\n    dhcp6: false\n")
-		return sb.String()
-	}
+type netplanBridge struct {
+	Interfaces  []string            `yaml:"interfaces,omitempty"`
+	MACAddress  string              `yaml:"macaddress,omitempty"`
+	DHCP4       bool                `yaml:"dhcp4"`
+	DHCP6       bool                `yaml:"dhcp6,omitempty"`
+	Addresses   []string            `yaml:"addresses,omitempty"`
+	Routes      []netplanRoute      `yaml:"routes,omitempty"`
+	NameServers *netplanNameServers `yaml:"nameservers,omitempty"`
+}
 
+type netplanMatch struct {
+	MACAddress string `yaml:"macaddress,omitempty"`
+}
+
+type netplanRoute struct {
+	To  string `yaml:"to"`
+	Via string `yaml:"via"`
+}
+
+type netplanNameServers struct {
+	Addresses []string `yaml:"addresses,omitempty"`
+}
+
+func marshalYAMLString(value any) string {
+	raw, err := yaml.Marshal(value)
+	if err != nil {
+		return ""
+	}
+	return string(raw)
+}
+
+func subnetPrefixLen(spec *subnet.SubnetSpec) int {
 	prefixLen := 24
 	if spec != nil && spec.CIDR != "" {
 		if _, ipNet, err := net.ParseCIDR(spec.CIDR); err == nil {
@@ -571,31 +560,115 @@ func buildBridgedNetworkConfig(mac, bridgeName, ip string, spec *subnet.SubnetSp
 			prefixLen = ones
 		}
 	}
+	return prefixLen
+}
 
-	sb.WriteString(fmt.Sprintf("    addresses:\n      - %s/%d\n", ip, prefixLen))
-	sb.WriteString("    dhcp4: false\n")
-
-	if gateway := strings.TrimSpace(func() string {
-		if spec != nil {
-			return spec.DefaultGateway
-		}
+func subnetGateway(spec *subnet.SubnetSpec) string {
+	if spec == nil {
 		return ""
-	}()); gateway != "" {
-		sb.WriteString(fmt.Sprintf("    routes:\n      - to: default\n        via: %s\n", gateway))
 	}
+	return strings.TrimSpace(spec.DefaultGateway)
+}
 
-	nameservers := func() []string {
-		if spec != nil && len(spec.DNSServers) > 0 {
-			return spec.DNSServers
+func subnetNameServers(spec *subnet.SubnetSpec) []string {
+	if spec == nil {
+		return nil
+	}
+	out := make([]string, 0, len(spec.DNSServers))
+	for _, ns := range spec.DNSServers {
+		ns = strings.TrimSpace(ns)
+		if ns != "" {
+			out = append(out, ns)
 		}
-		return []string{"8.8.8.8", "8.8.4.4"}
-	}()
-	sb.WriteString("    nameservers:\n      addresses:\n")
-	for _, ns := range nameservers {
-		sb.WriteString(fmt.Sprintf("        - %s\n", ns))
 	}
+	return out
+}
 
-	return sb.String()
+func macMatch(mac string) *netplanMatch {
+	mac = strings.ToLower(strings.TrimSpace(mac))
+	if mac == "" {
+		return nil
+	}
+	return &netplanMatch{MACAddress: mac}
+}
+
+func nameserverBlock(values []string) *netplanNameServers {
+	if len(values) == 0 {
+		return nil
+	}
+	return &netplanNameServers{Addresses: values}
+}
+
+func defaultRoute(gateway string) []netplanRoute {
+	gateway = strings.TrimSpace(gateway)
+	if gateway == "" {
+		return nil
+	}
+	return []netplanRoute{{To: "default", Via: gateway}}
+}
+
+func buildDirectNetplanConfig(mac, ip string, prefixLen int, gateway string, nameservers []string, dhcp bool) netplanConfig {
+	nic := netplanNIC{
+		Match:     macMatch(mac),
+		WakeOnLAN: strings.TrimSpace(mac) != "",
+		DHCP4:     dhcp,
+		DHCP6:     false,
+	}
+	if !dhcp {
+		nic.Addresses = []string{fmt.Sprintf("%s/%d", ip, prefixLen)}
+		nic.Routes = defaultRoute(gateway)
+		nic.NameServers = nameserverBlock(nameservers)
+	}
+	return netplanConfig{
+		Version:   2,
+		Ethernets: map[string]netplanNIC{"gomi-nic": nic},
+	}
+}
+
+func buildBridgedNetplanConfig(mac, bridgeName, ip string, prefixLen int, gateway string, nameservers []string, dhcp bool) netplanConfig {
+	bridgeName = strings.TrimSpace(bridgeName)
+	if bridgeName == "" {
+		bridgeName = "br0"
+	}
+	mac = strings.ToLower(strings.TrimSpace(mac))
+
+	nic := netplanNIC{
+		Match:     macMatch(mac),
+		WakeOnLAN: mac != "",
+		DHCP4:     false,
+		DHCP6:     false,
+	}
+	bridge := netplanBridge{
+		Interfaces: []string{"gomi-nic"},
+		MACAddress: mac,
+		DHCP4:      dhcp,
+		DHCP6:      false,
+	}
+	if !dhcp {
+		bridge.Addresses = []string{fmt.Sprintf("%s/%d", ip, prefixLen)}
+		bridge.Routes = defaultRoute(gateway)
+		bridge.NameServers = nameserverBlock(nameservers)
+	}
+	return netplanConfig{
+		Version:   2,
+		Ethernets: map[string]netplanNIC{"gomi-nic": nic},
+		Bridges:   map[string]netplanBridge{bridgeName: bridge},
+	}
+}
+
+// buildBridgedNetworkConfig builds a netplan v2 config that creates a bridge
+// with the matched physical NIC as a member. Used for hypervisor machines so
+// VMs can share the same physical network.
+func buildBridgedNetworkConfig(mac, bridgeName, ip string, spec *subnet.SubnetSpec) string {
+	return marshalYAMLString(buildBridgedNetplanConfig(
+		mac,
+		bridgeName,
+		ip,
+		subnetPrefixLen(spec),
+		subnetGateway(spec),
+		subnetNameServers(spec),
+		ip == "",
+	))
 }
 
 type pxeInstallCompleteReq struct {
@@ -1566,51 +1639,41 @@ func injectNetplanConfigFromParams(cloudConfig string, params netplanParams, spe
 		return cloudConfig
 	}
 
-	prefixLen := 24
-	if spec != nil && spec.CIDR != "" {
-		if _, ipNet, err := net.ParseCIDR(spec.CIDR); err == nil {
-			ones, _ := ipNet.Mask.Size()
-			prefixLen = ones
-		}
-	}
-
 	gateway := strings.TrimSpace(params.Gateway)
 	if gateway == "" && spec != nil {
-		gateway = strings.TrimSpace(spec.DefaultGateway)
+		gateway = subnetGateway(spec)
 	}
 
-	nameServers := params.NameServers
-	if len(nameServers) == 0 && spec != nil {
-		nameServers = spec.DNSServers
-	}
-
-	mac := strings.ToLower(strings.TrimSpace(params.MAC))
-
-	var np strings.Builder
-	np.WriteString("network:\n")
-	np.WriteString("  version: 2\n")
-	np.WriteString("  ethernets:\n")
-	np.WriteString("    id0:\n")
-	np.WriteString("      match:\n")
-	np.WriteString(fmt.Sprintf("        macaddress: \"%s\"\n", mac))
-	np.WriteString("      wakeonlan: true\n")
-	np.WriteString("      dhcp4: false\n")
-	np.WriteString(fmt.Sprintf("      addresses:\n        - %s/%d\n", ip.String(), prefixLen))
-	if len(nameServers) > 0 {
-		np.WriteString("      nameservers:\n        addresses:\n")
-		for _, ns := range nameServers {
-			ns = strings.TrimSpace(ns)
-			if ns != "" {
-				np.WriteString(fmt.Sprintf("          - \"%s\"\n", ns))
-			}
+	nameServers := make([]string, 0, len(params.NameServers))
+	for _, ns := range params.NameServers {
+		ns = strings.TrimSpace(ns)
+		if ns != "" {
+			nameServers = append(nameServers, ns)
 		}
 	}
-	if gateway != "" {
-		np.WriteString("      routes:\n        - to: default\n")
-		np.WriteString(fmt.Sprintf("          via: %s\n", gateway))
+	if len(nameServers) == 0 {
+		nameServers = subnetNameServers(spec)
 	}
-
-	netplanYAML := np.String()
+	netplanYAML := marshalYAMLString(struct {
+		Network netplanConfig `yaml:"network"`
+	}{
+		Network: netplanConfig{
+			Version: 2,
+			Ethernets: map[string]netplanNIC{
+				"id0": {
+					Match:       macMatch(params.MAC),
+					WakeOnLAN:   strings.TrimSpace(params.MAC) != "",
+					DHCP4:       false,
+					Addresses:   []string{fmt.Sprintf("%s/%d", ip.String(), subnetPrefixLen(spec))},
+					Routes:      defaultRoute(gateway),
+					NameServers: nameserverBlock(nameServers),
+				},
+			},
+		},
+	})
+	if netplanYAML == "" {
+		return cloudConfig
+	}
 
 	trimmed := strings.TrimSpace(cloudConfig)
 	if trimmed == "" {
@@ -1657,59 +1720,22 @@ func injectBridgedNetplanConfig(cloudConfig string, m *machine.Machine, spec *su
 	if ip == "" {
 		return cloudConfig
 	}
-	mac := strings.ToLower(strings.TrimSpace(m.PrimaryMAC()))
-	bridgeName := m.BridgeName
-	if bridgeName == "" {
-		bridgeName = "br0"
+	netplanYAML := marshalYAMLString(struct {
+		Network netplanConfig `yaml:"network"`
+	}{
+		Network: buildBridgedNetplanConfig(
+			m.PrimaryMAC(),
+			m.BridgeName,
+			ip,
+			subnetPrefixLen(spec),
+			subnetGateway(spec),
+			subnetNameServers(spec),
+			false,
+		),
+	})
+	if netplanYAML == "" {
+		return cloudConfig
 	}
-
-	prefixLen := 24
-	if spec != nil && spec.CIDR != "" {
-		if _, ipNet, err := net.ParseCIDR(spec.CIDR); err == nil {
-			ones, _ := ipNet.Mask.Size()
-			prefixLen = ones
-		}
-	}
-
-	var np strings.Builder
-	np.WriteString("network:\n")
-	np.WriteString("  version: 2\n")
-	np.WriteString("  ethernets:\n")
-	np.WriteString("    gomi-nic:\n")
-	np.WriteString(fmt.Sprintf("      match:\n        macaddress: \"%s\"\n", mac))
-	np.WriteString("      wakeonlan: true\n")
-	np.WriteString("      dhcp4: false\n      dhcp6: false\n")
-	np.WriteString("  bridges:\n")
-	np.WriteString(fmt.Sprintf("    %s:\n", bridgeName))
-	np.WriteString("      interfaces: [gomi-nic]\n")
-	np.WriteString(fmt.Sprintf("      macaddress: \"%s\"\n", mac))
-	np.WriteString(fmt.Sprintf("      addresses:\n        - %s/%d\n", ip, prefixLen))
-	np.WriteString("      dhcp4: false\n")
-
-	if gateway := strings.TrimSpace(func() string {
-		if spec != nil {
-			return spec.DefaultGateway
-		}
-		return ""
-	}()); gateway != "" {
-		np.WriteString(fmt.Sprintf("      routes:\n        - to: default\n          via: %s\n", gateway))
-	}
-
-	nameservers := func() []string {
-		if spec != nil && len(spec.DNSServers) > 0 {
-			return spec.DNSServers
-		}
-		return []string{"8.8.8.8", "8.8.4.4"}
-	}()
-	np.WriteString("      nameservers:\n        addresses:\n")
-	for _, ns := range nameservers {
-		ns = strings.TrimSpace(ns)
-		if ns != "" {
-			np.WriteString(fmt.Sprintf("          - \"%s\"\n", ns))
-		}
-	}
-
-	netplanYAML := np.String()
 
 	trimmed := strings.TrimSpace(cloudConfig)
 	if trimmed == "" {

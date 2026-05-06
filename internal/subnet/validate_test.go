@@ -28,6 +28,16 @@ func TestValidateSubnet_MissingCIDR(t *testing.T) {
 	}
 }
 
+func TestValidateSubnet_MissingDNS(t *testing.T) {
+	s := Subnet{
+		Name: "mgmt",
+		Spec: SubnetSpec{CIDR: "10.0.0.0/24"},
+	}
+	if err := ValidateSubnet(s); err == nil {
+		t.Fatal("expected error for missing DNS servers")
+	}
+}
+
 func TestValidateSubnet_InvalidCIDR(t *testing.T) {
 	s := Subnet{
 		Name: "mgmt",

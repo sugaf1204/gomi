@@ -1355,11 +1355,11 @@ func TestPXECurtinConfig_UsesInventoryAndRawArtifact(t *testing.T) {
 	for _, want := range []string{
 		"install:",
 		"block-meta:",
-		`- "/dev/nvme0n1"`,
+		"- /dev/nvme0n1",
 		"sources:",
 		"00-root:",
 		"type: dd-raw",
-		`uri: "http://192.168.2.254:8080/pxe/artifacts/os-images/debian-13-amd64/root.raw"`,
+		"uri: http://192.168.2.254:8080/pxe/artifacts/os-images/debian-13-amd64/root.raw",
 		"late_commands:",
 		"var/lib/cloud/seed/nocloud",
 	} {
@@ -1450,10 +1450,10 @@ func TestPXECurtinConfig_DirectCloudImage(t *testing.T) {
 	}
 	body := rec.Body.String()
 	for _, want := range []string{
-		`- "/dev/vda"`,
+		"- /dev/vda",
 		"00-root:",
 		"type: dd-raw",
-		`uri: "http://192.168.2.254:8080/pxe/files/images/ubuntu-24.04-amd64.raw"`,
+		"uri: http://192.168.2.254:8080/pxe/files/images/ubuntu-24.04-amd64.raw",
 		"late_commands:",
 		"var/lib/cloud/seed/nocloud",
 	} {
@@ -2435,7 +2435,7 @@ func TestPXENocloudNetworkConfig_DHCP(t *testing.T) {
 
 func TestBuildNetworkConfig_DHCP(t *testing.T) {
 	got := buildNetworkConfig("84:47:09:1f:1c:d6", "", nil)
-	if !strings.Contains(got, `macaddress: "84:47:09:1f:1c:d6"`) {
+	if !strings.Contains(got, "macaddress: 84:47:09:1f:1c:d6") {
 		t.Fatalf("expected mac match, got:\n%s", got)
 	}
 	if !strings.Contains(got, "dhcp4: true") {
@@ -2456,7 +2456,7 @@ func TestBuildNetworkConfig_Static(t *testing.T) {
 		DNSServers:     []string{"192.168.2.1"},
 	}
 	got := buildNetworkConfig("84:47:09:1f:1c:d6", "192.168.2.100", spec)
-	if !strings.Contains(got, `macaddress: "84:47:09:1f:1c:d6"`) {
+	if !strings.Contains(got, "macaddress: 84:47:09:1f:1c:d6") {
 		t.Fatalf("expected mac match, got:\n%s", got)
 	}
 	if !strings.Contains(got, "192.168.2.100/24") {
@@ -2470,5 +2470,37 @@ func TestBuildNetworkConfig_Static(t *testing.T) {
 	}
 	if !strings.Contains(got, "192.168.2.1") {
 		t.Fatalf("expected gateway, got:\n%s", got)
+	}
+}
+
+func TestBuildBridgedNetworkConfig_Static(t *testing.T) {
+	spec := &subnet.SubnetSpec{
+		CIDR:           "192.168.2.0/24",
+		DefaultGateway: "192.168.2.1",
+		DNSServers:     []string{"192.168.2.1"},
+	}
+	got := buildBridgedNetworkConfig("84:47:09:1f:1c:d6", "br-test", "192.168.2.101", spec)
+
+	var cfg map[string]any
+	if err := yaml.Unmarshal([]byte(got), &cfg); err != nil {
+		t.Fatalf("yaml.Unmarshal: %v\n%s", err, got)
+	}
+
+	bridges, ok := cfg["bridges"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected bridges in config, got: %#v", cfg)
+	}
+	bridge, ok := bridges["br-test"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected br-test bridge in config, got: %#v", bridges)
+	}
+	if bridge["macaddress"] != "84:47:09:1f:1c:d6" {
+		t.Fatalf("expected bridge macaddress, got: %#v", bridge["macaddress"])
+	}
+	if !strings.Contains(got, "192.168.2.101/24") {
+		t.Fatalf("expected static bridge IP, got:\n%s", got)
+	}
+	if !strings.Contains(got, "192.168.2.1") {
+		t.Fatalf("expected gateway or dns in bridged config, got:\n%s", got)
 	}
 }
