@@ -6,6 +6,8 @@ import (
 	"strings"
 
 	"github.com/labstack/echo/v4"
+
+	"github.com/sugaf1204/gomi/internal/auth"
 )
 
 func (s *Server) ListAuditEvents(c echo.Context) error {

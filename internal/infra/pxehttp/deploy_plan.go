@@ -52,6 +52,7 @@ type deployEventRequest struct {
 }
 
 func (h *Handler) PXEInventory(c echo.Context) error {
+	requestStarted := time.Now().UTC()
 	token := strings.TrimSpace(c.QueryParam("token"))
 	if token == "" {
 		return c.JSON(gohttp.StatusBadRequest, jsonError("token is required"))
@@ -71,6 +72,7 @@ func (h *Handler) PXEInventory(c echo.Context) error {
 	if attemptID == "" {
 		return c.JSON(gohttp.StatusConflict, jsonError("provisioning attempt id is required"))
 	}
+	decodeStarted := time.Now().UTC()
 	var info hwinfo.HardwareInfo
 	if strings.HasPrefix(c.Request().Header.Get("Content-Type"), "text/plain") {
 		body, err := io.ReadAll(c.Request().Body)
@@ -92,14 +94,17 @@ func (h *Handler) PXEInventory(c echo.Context) error {
 			info = hwinfo.FromInventory(payload)
 		}
 	}
+	decodeFinished := time.Now().UTC()
 	info.Name = target.Name + "-hwinfo"
 	info.MachineName = target.Name
 	info.AttemptID = attemptID
+	storeStarted := time.Now().UTC()
 	if h.hwinfo != nil {
 		if _, err := h.hwinfo.Upsert(ctx, info); err != nil {
 			return c.JSON(gohttp.StatusInternalServerError, jsonErrorErr(err))
 		}
 	}
+	storeFinished := time.Now().UTC()
 
 	if err := h.updateProvisionProgress(ctx, target.Name, func(m *machine.Machine) {
 		if m.Provision == nil {
@@ -109,6 +114,11 @@ func (h *Handler) PXEInventory(c echo.Context) error {
 		m.Provision.InventoryID = info.Name
 		m.Provision.LastSignalAt = timePtr(time.Now().UTC())
 		m.Provision.Message = "hardware inventory received"
+		m.Provision.Timings = appendProvisionTiming(m.Provision.Timings,
+			serverTiming("server.inventory.decode", "read and decode hardware inventory", "success", decodeStarted, decodeFinished, 0),
+			serverTiming("server.inventory.store", "store hardware inventory", "success", storeStarted, storeFinished, 0),
+			serverTiming("server.inventory.total", "handle hardware inventory callback", "success", requestStarted, time.Now().UTC(), 0),
+		)
 	}); err != nil {
 		return c.JSON(gohttp.StatusInternalServerError, jsonErrorErr(err))
 	}
@@ -337,26 +347,48 @@ func provisionTimingFromDeployEvent(req deployEventRequest, eventType string, no
 	}, true
 }
 
-func appendProvisionTiming(events []machine.ProvisionTiming, event machine.ProvisionTiming) []machine.ProvisionTiming {
-	if event.DurationMillis <= 0 && event.FinishedAt != nil {
-		for i := len(events) - 1; i >= 0; i-- {
-			prev := events[i]
-			if prev.StartedAt == nil || prev.FinishedAt != nil {
-				continue
+func appendProvisionTiming(events []machine.ProvisionTiming, next ...machine.ProvisionTiming) []machine.ProvisionTiming {
+	for _, event := range next {
+		if event.DurationMillis <= 0 && event.FinishedAt != nil {
+			for i := len(events) - 1; i >= 0; i-- {
+				prev := events[i]
+				if prev.StartedAt == nil || prev.FinishedAt != nil {
+					continue
+				}
+				if strings.TrimSpace(prev.Source) != strings.TrimSpace(event.Source) || strings.TrimSpace(prev.Name) != strings.TrimSpace(event.Name) {
+					continue
+				}
+				event.StartedAt = prev.StartedAt
+				event.DurationMillis = event.FinishedAt.Sub(*prev.StartedAt).Milliseconds()
+				break
 			}
-			if strings.TrimSpace(prev.Source) != strings.TrimSpace(event.Source) || strings.TrimSpace(prev.Name) != strings.TrimSpace(event.Name) {
-				continue
-			}
-			event.StartedAt = prev.StartedAt
-			event.DurationMillis = event.FinishedAt.Sub(*prev.StartedAt).Milliseconds()
-			break
+		}
+		events = append(events, event)
+		if len(events) > maxProvisionTimingEvents {
+			events = events[len(events)-maxProvisionTimingEvents:]
 		}
 	}
-	events = append(events, event)
-	if len(events) > maxProvisionTimingEvents {
-		events = events[len(events)-maxProvisionTimingEvents:]
-	}
 	return events
+}
+
+func serverTiming(name, message, result string, startedAt, finishedAt time.Time, sizeBytes int64) machine.ProvisionTiming {
+	duration := finishedAt.Sub(startedAt).Milliseconds()
+	if duration < 0 {
+		duration = 0
+	}
+	if sizeBytes > 0 {
+		message = fmt.Sprintf("%s (%d bytes)", message, sizeBytes)
+	}
+	return machine.ProvisionTiming{
+		Source:         "server",
+		Name:           name,
+		EventType:      "timing",
+		Message:        message,
+		Result:         result,
+		StartedAt:      &startedAt,
+		FinishedAt:     &finishedAt,
+		DurationMillis: duration,
+	}
 }
 
 func parseEventTime(value string) *time.Time {
@@ -523,7 +555,44 @@ func (h *Handler) PXEArtifact(c echo.Context) error {
 		}
 		return c.JSON(gohttp.StatusInternalServerError, jsonErrorErr(err))
 	}
-	return c.File(full)
+	return h.serveProvisionedPXEFile(c, full, "server.artifact_transfer", "serve OS artifact "+rel)
+}
+
+func (h *Handler) serveProvisionedPXEFile(c echo.Context, full, name, message string) error {
+	token := strings.TrimSpace(c.QueryParam("token"))
+	attemptID := strings.TrimSpace(c.QueryParam("attempt_id"))
+	if token == "" || attemptID == "" {
+		return c.File(full)
+	}
+	sizeBytes := int64(0)
+	if st, err := os.Stat(full); err == nil {
+		sizeBytes = st.Size()
+	}
+	startedAt := time.Now().UTC()
+	err := c.File(full)
+	finishedAt := time.Now().UTC()
+	result := "success"
+	if err != nil {
+		result = "failure"
+	}
+	timing := serverTiming(name, message, result, startedAt, finishedAt, sizeBytes)
+	h.appendProvisionTimingByToken(c.Request().Context(), token, attemptID, timing)
+	return err
+}
+
+func (h *Handler) appendProvisionTimingByToken(ctx context.Context, token, attemptID string, timing machine.ProvisionTiming) {
+	target, err := h.requireProvisioningMachine(ctx, token)
+	if err != nil || validateAttemptParam(target, attemptID) != nil {
+		return
+	}
+	now := time.Now().UTC()
+	_ = h.updateProvisionProgress(ctx, target.Name, func(m *machine.Machine) {
+		if m.Provision == nil {
+			m.Provision = &machine.ProvisionProgress{}
+		}
+		m.Provision.LastSignalAt = &now
+		m.Provision.Timings = appendProvisionTiming(m.Provision.Timings, timing)
+	})
 }
 
 func (h *Handler) buildCurtinInstallConfig(ctx context.Context, c echo.Context, m *machine.Machine, img osimage.OSImage, info *hwinfo.HardwareInfo) (string, error) {
@@ -566,7 +635,7 @@ func (h *Handler) buildCurtinInstallConfig(ctx context.Context, c echo.Context, 
 	case "", string(osimage.FormatRAW):
 		switch imageCompression {
 		case "", "none":
-			sourceURI = imageURL
+			sourceURI = appendProvisionQuery(imageURL, token, attemptID)
 		default:
 			return "", fmt.Errorf("curtin deploy requires uncompressed raw image, got compression %q", imageCompression)
 		}
@@ -676,6 +745,22 @@ func imageFileURL(base string, img osimage.OSImage) (string, error) {
 		return "", fmt.Errorf("os image %q has no local path", img.Name)
 	}
 	return fmt.Sprintf("%s/files/images/%s", strings.TrimRight(base, "/"), url.PathEscape(filepath.Base(local))), nil
+}
+
+func appendProvisionQuery(rawURL, token, attemptID string) string {
+	parsed, err := url.Parse(rawURL)
+	if err != nil {
+		return rawURL
+	}
+	query := parsed.Query()
+	if strings.TrimSpace(token) != "" {
+		query.Set("token", strings.TrimSpace(token))
+	}
+	if strings.TrimSpace(attemptID) != "" {
+		query.Set("attempt_id", strings.TrimSpace(attemptID))
+	}
+	parsed.RawQuery = query.Encode()
+	return parsed.String()
 }
 
 func artifactBaseDir(img osimage.OSImage) (string, error) {

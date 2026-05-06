@@ -946,6 +946,7 @@ func TestReinstallPXEVM_UpdatesInstallConfigAndCloudInitRef(t *testing.T) {
 		"name": "vm-redeploy-net",
 		"spec": map[string]any{
 			"cidr":         "192.168.30.0/24",
+			"dnsServers":   []string{"8.8.8.8"},
 			"pxeInterface": "br-lab",
 		},
 	}, env.token)
@@ -1735,6 +1736,7 @@ func TestRedeployMachine_UpdatesSpecAndNetwork(t *testing.T) {
 		"name": "subnet-old",
 		"spec": map[string]any{
 			"cidr":       "192.168.10.0/24",
+			"dnsServers": []string{"8.8.8.8"},
 			"domainName": "old.example",
 		},
 	}, env.token)
@@ -1744,6 +1746,7 @@ func TestRedeployMachine_UpdatesSpecAndNetwork(t *testing.T) {
 		"name": "subnet-new",
 		"spec": map[string]any{
 			"cidr":       "192.168.20.0/24",
+			"dnsServers": []string{"8.8.8.8"},
 			"domainName": "new.example",
 		},
 	}, env.token)

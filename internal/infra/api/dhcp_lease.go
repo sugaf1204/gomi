@@ -4,6 +4,8 @@ import (
 	gohttp "net/http"
 
 	"github.com/labstack/echo/v4"
+
+	"github.com/sugaf1204/gomi/internal/pxe"
 )
 
 func (s *Server) ListDHCPLeases(c echo.Context) error {
@@ -16,5 +18,5 @@ func (s *Server) ListDHCPLeases(c echo.Context) error {
 		return c.JSON(gohttp.StatusInternalServerError, jsonErrorErr(err))
 	}
 
-	return c.JSON(gohttp.StatusOK, itemsResponse[pxe.Lease]{Items: leases})
+	return c.JSON(gohttp.StatusOK, itemsResponse[pxe.DHCPLease]{Items: leases})
 }

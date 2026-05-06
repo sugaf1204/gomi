@@ -82,7 +82,7 @@ func (s *Server) ListMachines(c echo.Context) error {
 	if err != nil {
 		return c.JSON(gohttp.StatusInternalServerError, jsonErrorErr(err))
 	}
-	return c.JSON(gohttp.StatusOK, itemsResponse[machineResponse]{Items: machineResponses(machines)})
+	return c.JSON(gohttp.StatusOK, itemsResponse[MachineResponse]{Items: machineResponses(machines)})
 }
 
 func (s *Server) GetMachine(c echo.Context) error {

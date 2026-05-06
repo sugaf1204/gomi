@@ -103,6 +103,66 @@ func TestPXEFile(t *testing.T) {
 	}
 }
 
+func TestPXEFileRecordsProvisionedTransferTiming(t *testing.T) {
+	tmp := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(tmp, "images"), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(tmp, "images", "root.raw"), []byte("root"), 0o644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+	backend := memory.New()
+	machineSvc := machine.NewService(backend.Machines())
+	now := time.Now().UTC()
+	target := machine.Machine{
+		Name:     "bm-transfer",
+		Hostname: "bm-transfer",
+		MAC:      "52:54:00:aa:bb:99",
+		Arch:     "amd64",
+		Firmware: machine.FirmwareUEFI,
+		Phase:    machine.PhaseProvisioning,
+		Provision: &machine.ProvisionProgress{
+			Active:          true,
+			AttemptID:       "attempt-transfer",
+			CompletionToken: "token-transfer",
+		},
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	if err := backend.Machines().Upsert(context.Background(), target); err != nil {
+		t.Fatalf("upsert machine: %v", err)
+	}
+
+	e := echo.New()
+	req := httptest.NewRequest(http.MethodGet, "/pxe/files/images/root.raw?attempt_id=attempt-transfer&token=token-transfer", nil)
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+	c.SetParamNames("*")
+	c.SetParamValues("images/root.raw")
+
+	h := &Handler{pxeFilesDir: tmp, machines: machineSvc}
+	if err := h.PXEFile(c); err != nil {
+		t.Fatalf("PXEFile: %v", err)
+	}
+	if rec.Code != http.StatusOK {
+		t.Fatalf("unexpected status: %d body=%s", rec.Code, rec.Body.String())
+	}
+	stored, err := backend.Machines().Get(context.Background(), target.Name)
+	if err != nil {
+		t.Fatalf("get machine: %v", err)
+	}
+	if len(stored.Provision.Timings) != 1 {
+		t.Fatalf("expected one transfer timing, got %#v", stored.Provision.Timings)
+	}
+	timing := stored.Provision.Timings[0]
+	if timing.Name != "server.file_transfer" || timing.Source != "server" || timing.Result != "success" {
+		t.Fatalf("unexpected transfer timing: %#v", timing)
+	}
+	if !strings.Contains(timing.Message, "4 bytes") {
+		t.Fatalf("expected served size in timing message, got %q", timing.Message)
+	}
+}
+
 func TestSanitizePXEPath(t *testing.T) {
 	if _, err := sanitizePXEPath("../../etc/passwd"); err == nil {
 		t.Fatal("expected path traversal to be rejected")
@@ -1359,7 +1419,7 @@ func TestPXECurtinConfig_UsesInventoryAndRawArtifact(t *testing.T) {
 		"sources:",
 		"00-root:",
 		"type: dd-raw",
-		"uri: http://192.168.2.254:8080/pxe/artifacts/os-images/debian-13-amd64/root.raw",
+		"uri: http://192.168.2.254:8080/pxe/artifacts/os-images/debian-13-amd64/root.raw?attempt_id=attempt-plan&token=token-plan",
 		"reporting:",
 		"/pxe/deploy-events?",
 		"attempt_id=attempt-plan",
@@ -1458,7 +1518,7 @@ func TestPXECurtinConfig_DirectCloudImage(t *testing.T) {
 		"- /dev/vda",
 		"00-root:",
 		"type: dd-raw",
-		"uri: http://192.168.2.254:8080/pxe/files/images/ubuntu-24.04-amd64.raw",
+		"uri: http://192.168.2.254:8080/pxe/files/images/ubuntu-24.04-amd64.raw?attempt_id=attempt-direct-plan&token=token-direct-plan",
 		"late_commands:",
 		"var/lib/cloud/seed/nocloud",
 	} {
@@ -1538,6 +1598,12 @@ func TestPXEInventory_StoresHardwareInfoAndReturnsPlanURLs(t *testing.T) {
 	}
 	if got.AttemptID != updated.Provision.AttemptID {
 		t.Fatalf("expected inventory attempt id %q, got %q", updated.Provision.AttemptID, got.AttemptID)
+	}
+	if len(updated.Provision.Timings) != 3 {
+		t.Fatalf("expected inventory server timings, got %#v", updated.Provision.Timings)
+	}
+	if updated.Provision.Timings[1].Name != "server.inventory.store" || updated.Provision.Timings[1].Source != "server" {
+		t.Fatalf("expected inventory store timing, got %#v", updated.Provision.Timings)
 	}
 }
 

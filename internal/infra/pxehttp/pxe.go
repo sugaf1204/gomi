@@ -885,7 +885,7 @@ func (h *Handler) PXEFile(c echo.Context) error {
 		}
 		return c.JSON(gohttp.StatusInternalServerError, jsonErrorErr(err))
 	}
-	return c.File(full)
+	return h.serveProvisionedPXEFile(c, full, "server.file_transfer", "serve PXE file "+rel)
 }
 
 // --- helpers ---

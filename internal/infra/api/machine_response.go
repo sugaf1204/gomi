@@ -42,22 +42,23 @@ type MachineResponse struct {
 }
 
 type ProvisionProgressResponse struct {
-	Active           bool              `json:"active,omitempty"`
-	AttemptID        string            `json:"attemptId,omitempty"`
-	InventoryID      string            `json:"inventoryId,omitempty"`
-	StartedAt        *time.Time        `json:"startedAt,omitempty"`
-	DeadlineAt       *time.Time        `json:"deadlineAt,omitempty"`
-	FinishedAt       *time.Time        `json:"finishedAt,omitempty"`
-	CompletedAt      *time.Time        `json:"completedAt,omitempty"`
-	Trigger          string            `json:"trigger,omitempty"`
-	RequestedBy      string            `json:"requestedBy,omitempty"`
-	Message          string            `json:"message,omitempty"`
-	Artifacts        map[string]string `json:"artifacts,omitempty"`
-	CompletionSource string            `json:"completionSource,omitempty"`
-	LastSignalAt     *time.Time        `json:"lastSignalAt,omitempty"`
-	CurtinConfig     json.RawMessage   `json:"curtinConfig,omitempty"`
-	FailureReason    string            `json:"failureReason,omitempty"`
-	LogURL           string            `json:"logUrl,omitempty"`
+	Active           bool                      `json:"active,omitempty"`
+	AttemptID        string                    `json:"attemptId,omitempty"`
+	InventoryID      string                    `json:"inventoryId,omitempty"`
+	StartedAt        *time.Time                `json:"startedAt,omitempty"`
+	DeadlineAt       *time.Time                `json:"deadlineAt,omitempty"`
+	FinishedAt       *time.Time                `json:"finishedAt,omitempty"`
+	CompletedAt      *time.Time                `json:"completedAt,omitempty"`
+	Trigger          string                    `json:"trigger,omitempty"`
+	RequestedBy      string                    `json:"requestedBy,omitempty"`
+	Message          string                    `json:"message,omitempty"`
+	Artifacts        map[string]string         `json:"artifacts,omitempty"`
+	CompletionSource string                    `json:"completionSource,omitempty"`
+	LastSignalAt     *time.Time                `json:"lastSignalAt,omitempty"`
+	CurtinConfig     json.RawMessage           `json:"curtinConfig,omitempty"`
+	FailureReason    string                    `json:"failureReason,omitempty"`
+	LogURL           string                    `json:"logUrl,omitempty"`
+	Timings          []machine.ProvisionTiming `json:"timings,omitempty"`
 }
 
 type PowerConfigResponse struct {
@@ -154,6 +155,7 @@ func provisionProgressResponse(p *machine.ProvisionProgress) *ProvisionProgressR
 		CurtinConfig:     p.CurtinConfig,
 		FailureReason:    p.FailureReason,
 		LogURL:           p.LogURL,
+		Timings:          p.Timings,
 	}
 }
 

@@ -87,6 +87,7 @@ export type Machine = {
     startedAt?: string
     deadlineAt?: string
     finishedAt?: string
+    completedAt?: string
     trigger?: string
     requestedBy?: string
     message?: string
