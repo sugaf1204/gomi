@@ -82,6 +82,20 @@ type ProvisionProgress struct {
 	CurtinConfig     json.RawMessage   `json:"curtinConfig,omitempty"`
 	FailureReason    string            `json:"failureReason,omitempty"`
 	LogURL           string            `json:"logUrl,omitempty"`
+	Timings          []ProvisionTiming `json:"timings,omitempty"`
+}
+
+type ProvisionTiming struct {
+	Source           string     `json:"source,omitempty"`
+	Name             string     `json:"name"`
+	EventType        string     `json:"eventType,omitempty"`
+	Message          string     `json:"message,omitempty"`
+	Result           string     `json:"result,omitempty"`
+	Timestamp        *time.Time `json:"timestamp,omitempty"`
+	StartedAt        *time.Time `json:"startedAt,omitempty"`
+	FinishedAt       *time.Time `json:"finishedAt,omitempty"`
+	DurationMillis   int64      `json:"durationMs,omitempty"`
+	MonotonicSeconds float64    `json:"monotonicSeconds,omitempty"`
 }
 
 const (

@@ -83,13 +83,35 @@ export type Machine = {
   sshKeyRefs?: string[]
   loginUser?: LoginUserSpec
   phase: string
-  provision?: { startedAt?: string; deadlineAt?: string; finishedAt?: string; trigger?: string; requestedBy?: string; message?: string; artifacts?: Record<string, string> }
+  provision?: {
+    startedAt?: string
+    deadlineAt?: string
+    finishedAt?: string
+    trigger?: string
+    requestedBy?: string
+    message?: string
+    artifacts?: Record<string, string>
+    timings?: ProvisionTiming[]
+  }
   powerState?: PowerState
   powerStateAt?: string
   lastPowerAction?: string
   lastDeployedCloudInitRef?: string
   lastError?: string
   updatedAt?: string
+}
+
+export type ProvisionTiming = {
+  source?: string
+  name: string
+  eventType?: string
+  message?: string
+  result?: string
+  timestamp?: string
+  startedAt?: string
+  finishedAt?: string
+  durationMs?: number
+  monotonicSeconds?: number
 }
 
 export type AuditEvent = {

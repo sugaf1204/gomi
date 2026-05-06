@@ -28,14 +28,26 @@ const provisionArtifactImageApplied = "imageApplied"
 const provisionArtifactImageAppliedAt = "imageAppliedAt"
 const provisionArtifactFailureLogTail = "failureLogTail"
 const maxProvisionFailureLogTailLen = 32 * 1024
+const maxProvisionTimingEvents = 240
 
 type deployEventRequest struct {
-	AttemptID string          `json:"attemptId,omitempty"`
-	Type      string          `json:"type"`
-	Message   string          `json:"message,omitempty"`
-	Reason    string          `json:"reason,omitempty"`
-	LogTail   string          `json:"logTail,omitempty"`
-	Details   json.RawMessage `json:"details,omitempty"`
+	AttemptID        string          `json:"attemptId,omitempty"`
+	Type             string          `json:"type"`
+	Source           string          `json:"source,omitempty"`
+	Name             string          `json:"name,omitempty"`
+	Message          string          `json:"message,omitempty"`
+	Reason           string          `json:"reason,omitempty"`
+	Result           string          `json:"result,omitempty"`
+	LogTail          string          `json:"logTail,omitempty"`
+	StartedAt        string          `json:"startedAt,omitempty"`
+	FinishedAt       string          `json:"finishedAt,omitempty"`
+	Timestamp        any             `json:"timestamp,omitempty"`
+	DurationMillis   int64           `json:"durationMs,omitempty"`
+	MonotonicSeconds float64         `json:"monotonicSeconds,omitempty"`
+	CurtinEventType  string          `json:"event_type,omitempty"`
+	CurtinOrigin     string          `json:"origin,omitempty"`
+	Description      string          `json:"description,omitempty"`
+	Details          json.RawMessage `json:"details,omitempty"`
 }
 
 func (h *Handler) PXEInventory(c echo.Context) error {
@@ -176,14 +188,35 @@ func (h *Handler) PXEDeployEvents(c echo.Context) error {
 	var req deployEventRequest
 	if strings.HasPrefix(c.Request().Header.Get("Content-Type"), "application/x-www-form-urlencoded") {
 		req.Type = c.FormValue("type")
+		req.Source = c.FormValue("source")
+		req.Name = c.FormValue("name")
 		req.Message = c.FormValue("message")
 		req.Reason = c.FormValue("reason")
+		req.Result = c.FormValue("result")
 		req.LogTail = c.FormValue("logTail")
 		req.AttemptID = c.FormValue("attemptId")
+		req.StartedAt = c.FormValue("startedAt")
+		req.FinishedAt = c.FormValue("finishedAt")
+		req.Timestamp = c.FormValue("timestamp")
+		if duration := strings.TrimSpace(c.FormValue("durationMs")); duration != "" {
+			req.DurationMillis, _ = strconv.ParseInt(duration, 10, 64)
+		}
+		if monotonic := strings.TrimSpace(c.FormValue("monotonicSeconds")); monotonic != "" {
+			req.MonotonicSeconds, _ = strconv.ParseFloat(monotonic, 64)
+		}
 	} else if err := c.Bind(&req); err != nil {
 		return c.JSON(gohttp.StatusBadRequest, map[string]string{"error": "invalid body"})
 	}
+	if req.Source == "" {
+		req.Source = strings.TrimSpace(c.QueryParam("source"))
+	}
 	eventType := strings.ToLower(strings.TrimSpace(req.Type))
+	if eventType == "" && strings.TrimSpace(req.CurtinEventType) != "" {
+		eventType = strings.ToLower(strings.TrimSpace(req.CurtinEventType))
+	}
+	if eventType == "" && (strings.TrimSpace(req.Source) != "" || strings.TrimSpace(req.Name) != "") {
+		eventType = "timing"
+	}
 	if eventType == "" {
 		return c.JSON(gohttp.StatusBadRequest, map[string]string{"error": "type is required"})
 	}
@@ -202,8 +235,13 @@ func (h *Handler) PXEDeployEvents(c echo.Context) error {
 			m.Provision = &machine.ProvisionProgress{}
 		}
 		m.Provision.LastSignalAt = &now
-		message := eventMessage(eventType, req.Message)
-		m.Provision.Message = message
+		if timing, ok := provisionTimingFromDeployEvent(req, eventType, now); ok {
+			m.Provision.Timings = appendProvisionTiming(m.Provision.Timings, timing)
+		}
+		message := eventMessage(eventType, firstNonEmpty(req.Message, req.Description))
+		if !isTimingOnlyDeployEvent(eventType) {
+			m.Provision.Message = message
+		}
 		if eventType == "failed" {
 			m.Phase = machine.PhaseError
 			m.LastError = firstNonEmpty(req.Reason, req.Message, "deploy failed")
@@ -230,6 +268,15 @@ func (h *Handler) PXEDeployEvents(c echo.Context) error {
 	return c.JSON(gohttp.StatusOK, map[string]string{"status": "ok"})
 }
 
+func isTimingOnlyDeployEvent(eventType string) bool {
+	switch strings.ToLower(strings.TrimSpace(eventType)) {
+	case "timing", "start", "finish":
+		return true
+	default:
+		return false
+	}
+}
+
 func trimLogTail(value string, maxLen int) string {
 	value = strings.TrimSpace(value)
 	if value == "" || maxLen <= 0 {
@@ -239,6 +286,109 @@ func trimLogTail(value string, maxLen int) string {
 		return value
 	}
 	return value[len(value)-maxLen:]
+}
+
+func provisionTimingFromDeployEvent(req deployEventRequest, eventType string, now time.Time) (machine.ProvisionTiming, bool) {
+	source := strings.TrimSpace(req.Source)
+	if source == "" && strings.TrimSpace(req.CurtinOrigin) != "" {
+		source = strings.TrimSpace(req.CurtinOrigin)
+	}
+	if source == "" && strings.TrimSpace(req.CurtinEventType) != "" {
+		source = "curtin"
+	}
+	if source == "" && eventType == "timing" {
+		source = "runner"
+	}
+	name := strings.TrimSpace(req.Name)
+	if name == "" && strings.TrimSpace(req.CurtinEventType) != "" {
+		name = strings.TrimSpace(req.CurtinEventType)
+	}
+	if name == "" && eventType != "" {
+		name = eventType
+	}
+	if source == "" && name == "" && req.DurationMillis <= 0 && req.MonotonicSeconds == 0 && req.StartedAt == "" && req.FinishedAt == "" && req.Timestamp == nil {
+		return machine.ProvisionTiming{}, false
+	}
+	startedAt := parseEventTime(req.StartedAt)
+	finishedAt := parseEventTime(req.FinishedAt)
+	timestamp := parseEventTimeValue(req.Timestamp)
+	if timestamp == nil && startedAt == nil && finishedAt == nil {
+		t := now
+		timestamp = &t
+	}
+	if strings.EqualFold(eventType, "start") && startedAt == nil && timestamp != nil {
+		startedAt = timestamp
+	}
+	if strings.EqualFold(eventType, "finish") && finishedAt == nil && timestamp != nil {
+		finishedAt = timestamp
+	}
+	return machine.ProvisionTiming{
+		Source:           source,
+		Name:             name,
+		EventType:        eventType,
+		Message:          firstNonEmpty(req.Message, req.Description),
+		Result:           strings.TrimSpace(req.Result),
+		Timestamp:        timestamp,
+		StartedAt:        startedAt,
+		FinishedAt:       finishedAt,
+		DurationMillis:   req.DurationMillis,
+		MonotonicSeconds: req.MonotonicSeconds,
+	}, true
+}
+
+func appendProvisionTiming(events []machine.ProvisionTiming, event machine.ProvisionTiming) []machine.ProvisionTiming {
+	if event.DurationMillis <= 0 && event.FinishedAt != nil {
+		for i := len(events) - 1; i >= 0; i-- {
+			prev := events[i]
+			if prev.StartedAt == nil || prev.FinishedAt != nil {
+				continue
+			}
+			if strings.TrimSpace(prev.Source) != strings.TrimSpace(event.Source) || strings.TrimSpace(prev.Name) != strings.TrimSpace(event.Name) {
+				continue
+			}
+			event.StartedAt = prev.StartedAt
+			event.DurationMillis = event.FinishedAt.Sub(*prev.StartedAt).Milliseconds()
+			break
+		}
+	}
+	events = append(events, event)
+	if len(events) > maxProvisionTimingEvents {
+		events = events[len(events)-maxProvisionTimingEvents:]
+	}
+	return events
+}
+
+func parseEventTime(value string) *time.Time {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return nil
+	}
+	if t, err := time.Parse(time.RFC3339Nano, value); err == nil {
+		utc := t.UTC()
+		return &utc
+	}
+	if unix, err := strconv.ParseFloat(value, 64); err == nil && unix > 0 {
+		sec := int64(unix)
+		nsec := int64((unix - float64(sec)) * 1e9)
+		t := time.Unix(sec, nsec).UTC()
+		return &t
+	}
+	return nil
+}
+
+func parseEventTimeValue(value any) *time.Time {
+	switch v := value.(type) {
+	case nil:
+		return nil
+	case string:
+		return parseEventTime(v)
+	case float64:
+		return parseEventTime(strconv.FormatFloat(v, 'f', -1, 64))
+	case json.Number:
+		return parseEventTime(string(v))
+	default:
+		return nil
+	}
 }
 
 func parseTextInventory(body string) hwinfo.HardwareInfo {
@@ -378,6 +528,7 @@ func (h *Handler) PXEArtifact(c echo.Context) error {
 func (h *Handler) buildCurtinInstallConfig(ctx context.Context, c echo.Context, m *machine.Machine, img osimage.OSImage, info *hwinfo.HardwareInfo) (string, error) {
 	_ = ctx
 	base := h.resolvePXEBaseURL(c)
+	token := strings.TrimSpace(c.QueryParam("token"))
 	attemptID := strings.TrimSpace(c.QueryParam("attempt_id"))
 	if err := validateAttemptParam(m, attemptID); err != nil {
 		return "", err
@@ -432,8 +583,15 @@ func (h *Handler) buildCurtinInstallConfig(ctx context.Context, c echo.Context, 
 	var b strings.Builder
 	b.WriteString("install:\n")
 	b.WriteString("  log_file: /tmp/curtin-install.log\n")
+	b.WriteString("  post_files:\n")
+	b.WriteString("    - /tmp/curtin-install.log\n")
 	b.WriteString("  save_install_config: /root/gomi-curtin.yaml\n")
 	b.WriteString("  save_install_log: /var/log/gomi-curtin-install.log\n")
+	b.WriteString("reporting:\n")
+	b.WriteString("  gomi:\n")
+	b.WriteString("    type: webhook\n")
+	b.WriteString("    endpoint: " + yamlQuote(buildPXEDeployEventsURL(base, token, attemptID)+"&source=curtin") + "\n")
+	b.WriteString("    level: DEBUG\n")
 	if ubuntuMirror := strings.TrimRight(strings.TrimSpace(os.Getenv("GOMI_CURTIN_UBUNTU_MIRROR")), "/"); ubuntuMirror != "" && strings.EqualFold(strings.TrimSpace(img.OSFamily), "ubuntu") {
 		b.WriteString("apt_mirrors:\n")
 		b.WriteString("  ubuntu_archive: " + yamlQuote(ubuntuMirror) + "\n")

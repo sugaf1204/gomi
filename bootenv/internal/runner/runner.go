@@ -15,6 +15,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	apiinventory "github.com/sugaf1204/gomi/api/inventory"
 )
@@ -63,45 +64,100 @@ type InventoryResponse struct {
 	EventsURL       string `json:"eventsUrl,omitempty"`
 }
 
+type timingEvent struct {
+	Source           string  `json:"source,omitempty"`
+	Name             string  `json:"name"`
+	EventType        string  `json:"eventType,omitempty"`
+	Message          string  `json:"message,omitempty"`
+	Result           string  `json:"result,omitempty"`
+	StartedAt        string  `json:"startedAt,omitempty"`
+	FinishedAt       string  `json:"finishedAt,omitempty"`
+	DurationMillis   int64   `json:"durationMs,omitempty"`
+	MonotonicSeconds float64 `json:"monotonicSeconds,omitempty"`
+}
+
 func (r *Runner) Run() error {
 	r.setDefaults()
+	var pending []timingEvent
+	record := func(name, message string, fn func() error) error {
+		started := time.Now().UTC()
+		err := fn()
+		finished := time.Now().UTC()
+		result := "success"
+		if err != nil {
+			result = "failure"
+		}
+		pending = append(pending, timingEvent{
+			Source:         "runner",
+			Name:           name,
+			EventType:      "timing",
+			Message:        message,
+			Result:         result,
+			StartedAt:      started.Format(time.RFC3339Nano),
+			FinishedAt:     finished.Format(time.RFC3339Nano),
+			DurationMillis: finished.Sub(started).Milliseconds(),
+		})
+		return err
+	}
 	cfg, err := r.runtimeConfigFromCmdline()
 	if err != nil {
 		return err
 	}
 	r.log("GOMI deploy runtime starting")
 
-	iface, err := r.selectIface(cfg.BootMAC)
-	if err != nil {
+	var iface string
+	if err := record("runner.select_interface", "selecting PXE network interface", func() error {
+		var selectErr error
+		iface, selectErr = r.selectIface(cfg.BootMAC)
+		return selectErr
+	}); err != nil {
 		return err
 	}
-	if err := r.command().Run("ip", "link", "set", "dev", iface, "up"); err != nil {
+	if err := record("runner.link_up", "bringing PXE network interface up", func() error {
+		return r.command().Run("ip", "link", "set", "dev", iface, "up")
+	}); err != nil {
 		return fmt.Errorf("bring up interface %s: %w", iface, err)
 	}
-	if err := r.command().Run("dhcpcd", "-4", "-w", iface); err != nil {
+	if err := record("runner.dhcp", "waiting for DHCP lease", func() error {
+		return r.command().Run("dhcpcd", "-4", "-w", iface)
+	}); err != nil {
 		return fmt.Errorf("DHCP failed on %s: %w", iface, err)
 	}
 
-	response, err := r.postInventory(cfg)
-	if err != nil {
+	var response InventoryResponse
+	if err := record("runner.inventory", "posting hardware inventory", func() error {
+		var inventoryErr error
+		response, inventoryErr = r.postInventory(cfg)
+		return inventoryErr
+	}); err != nil {
 		return err
 	}
+	r.postTimingEvents(response.EventsURL, pending)
+	r.postInitramfsTimingEvents(response.EventsURL)
 	curtinCfg := filepath.Join(r.TmpDir, "gomi-curtin.yaml")
 	r.postEvent(response.EventsURL, "progress", "fetching curtin config")
-	if err := r.fetchFile(response.CurtinConfigURL, curtinCfg); err != nil {
+	if err := r.timedEvent(response.EventsURL, "runner.fetch_curtin_config", "fetching curtin config", func() error {
+		return r.fetchFile(response.CurtinConfigURL, curtinCfg)
+	}); err != nil {
 		return fmt.Errorf("curtin config fetch failed: %w", err)
 	}
 	if st, err := os.Stat(curtinCfg); err != nil || st.Size() == 0 {
 		return fmt.Errorf("curtin config is empty")
 	}
 	r.postEvent(response.EventsURL, "progress", "running curtin install")
-	if err := r.command().Run("curtin", "-c", curtinCfg, "install"); err != nil {
+	if err := r.timedEvent(response.EventsURL, "runner.curtin_install", "running curtin install", func() error {
+		return r.command().Run("curtin", "-c", curtinCfg, "install")
+	}); err != nil {
 		r.postFailureEvent(response.EventsURL, "curtin install failed", err)
 		return fmt.Errorf("curtin install failed: %w", err)
 	}
 	r.postEvent(response.EventsURL, eventImageApplied, "curtin install completed")
-	_ = r.command().Run("sync")
-	return r.command().Run("reboot", "-f")
+	_ = r.timedEvent(response.EventsURL, "runner.sync", "syncing deployment filesystem state", func() error {
+		return r.command().Run("sync")
+	})
+	return r.timedEvent(response.EventsURL, "runner.reboot", "rebooting into target OS", func() error {
+		return r.command().Run("reboot", "-f")
+	})
 }
 
 func (r *Runner) CollectInventory() (apiinventory.HardwareInventory, error) {
@@ -345,6 +401,77 @@ func (r *Runner) postEvent(eventsURL, typ, message string) {
 	r.postEventForm(eventsURL, typ, message, "", "")
 }
 
+func (r *Runner) timedEvent(eventsURL, name, message string, fn func() error) error {
+	started := time.Now().UTC()
+	err := fn()
+	finished := time.Now().UTC()
+	result := "success"
+	if err != nil {
+		result = "failure"
+	}
+	r.postTimingEvents(eventsURL, []timingEvent{{
+		Source:         "runner",
+		Name:           name,
+		EventType:      "timing",
+		Message:        message,
+		Result:         result,
+		StartedAt:      started.Format(time.RFC3339Nano),
+		FinishedAt:     finished.Format(time.RFC3339Nano),
+		DurationMillis: finished.Sub(started).Milliseconds(),
+	}})
+	return err
+}
+
+func (r *Runner) postTimingEvents(eventsURL string, events []timingEvent) {
+	for _, event := range events {
+		if strings.TrimSpace(event.Name) == "" {
+			continue
+		}
+		form := url.Values{}
+		form.Set("type", "timing")
+		form.Set("source", event.Source)
+		form.Set("name", event.Name)
+		form.Set("message", event.Message)
+		form.Set("result", event.Result)
+		form.Set("startedAt", event.StartedAt)
+		form.Set("finishedAt", event.FinishedAt)
+		if event.DurationMillis > 0 {
+			form.Set("durationMs", strconv.FormatInt(event.DurationMillis, 10))
+		}
+		if event.MonotonicSeconds > 0 {
+			form.Set("monotonicSeconds", strconv.FormatFloat(event.MonotonicSeconds, 'f', 3, 64))
+		}
+		r.postForm(eventsURL, form)
+	}
+}
+
+func (r *Runner) postInitramfsTimingEvents(eventsURL string) {
+	for _, path := range []string{"/run/gomi/timing.ndjson", "/tmp/gomi-initramfs-timing.ndjson"} {
+		data, err := os.ReadFile(path)
+		if err != nil || len(data) == 0 {
+			continue
+		}
+		for _, raw := range strings.Split(string(data), "\n") {
+			raw = strings.TrimSpace(raw)
+			if raw == "" {
+				continue
+			}
+			var event timingEvent
+			if err := json.Unmarshal([]byte(raw), &event); err != nil {
+				continue
+			}
+			if event.Source == "" {
+				event.Source = "initramfs"
+			}
+			if event.EventType == "" {
+				event.EventType = "marker"
+			}
+			r.postTimingEvents(eventsURL, []timingEvent{event})
+		}
+		return
+	}
+}
+
 func (r *Runner) postFailureEvent(eventsURL, message string, err error) {
 	reason := message
 	if err != nil {
@@ -365,6 +492,13 @@ func (r *Runner) postEventForm(eventsURL, typ, message, reason, logTail string) 
 	}
 	if strings.TrimSpace(logTail) != "" {
 		form.Set("logTail", logTail)
+	}
+	r.postForm(eventsURL, form)
+}
+
+func (r *Runner) postForm(eventsURL string, form url.Values) {
+	if strings.TrimSpace(eventsURL) == "" {
+		return
 	}
 	resp, err := r.client().PostForm(eventsURL, form)
 	if err != nil {
