@@ -7,8 +7,8 @@
     ansible_become: false
     gomi_kvm_lab_repo_root: "{{ playbook_dir }}/../../../.."
     gomi_kvm_lab_local_deb: "{{ lookup('env', 'GOMI_LAB_DEB') }}"
-    gomi_kvm_lab_deb_url: https://github.com/sugaf1204/gomi/releases/download/v0.0.1/gomi_0.0.1_amd64.deb
-    gomi_kvm_lab_downloaded_deb: "/tmp/gomi_0.0.1_amd64.deb"
+    gomi_kvm_lab_deb_url: https://github.com/sugaf1204/gomi/releases/download/v0.0.2/gomi_0.0.2_amd64.deb
+    gomi_kvm_lab_downloaded_deb: "/tmp/gomi_0.0.2_amd64.deb"
   tasks:
     - name: Download release Debian package when GOMI_LAB_DEB is not set
       become: false

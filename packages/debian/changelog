@@ -1,3 +1,9 @@
+gomi (0.0.2) unstable; urgency=medium
+
+  * Release GOMI with OS catalog and KVM lab validation updates.
+
+ -- sugaf1204 <sugaf1204@example.invalid>  Thu, 07 May 2026 07:20:00 +0900
+
 gomi (0.0.1) unstable; urgency=medium
 
   * Package GOMI using the standard Debian source package layout.
