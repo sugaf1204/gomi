@@ -5,6 +5,7 @@ go 1.25.0
 require (
 	codeberg.org/miekg/dns v0.6.73
 	github.com/digitalocean/go-libvirt v0.0.0-20260217163227-273eaa321819
+	github.com/google/jsonschema-go v0.4.3
 	github.com/google/uuid v1.6.0
 	github.com/insomniacslk/dhcp v0.0.0-20260220084031-5adc3eb26f91
 	github.com/jackc/pgx/v5 v5.8.0

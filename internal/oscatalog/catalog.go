@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	_ "embed"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -11,8 +12,10 @@ import (
 	"os"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
+	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/sugaf1204/gomi/internal/osimage"
 	"gopkg.in/yaml.v3"
 )
@@ -21,6 +24,15 @@ const defaultOSImageSourceURL = "https://github.com/sugaf1204/gomi/releases/late
 
 //go:embed default-catalog.yaml
 var defaultCatalogYAML []byte
+
+//go:embed catalog.schema.json
+var catalogSchemaJSON []byte
+
+var (
+	catalogSchemaOnce sync.Once
+	catalogSchema     *jsonschema.Resolved
+	catalogSchemaErr  error
+)
 
 type Entry struct {
 	Name              string              `json:"name" yaml:"name"`
@@ -148,81 +160,50 @@ func Load(ctx context.Context, opts LoadOptions) ([]Entry, error) {
 }
 
 func Parse(raw []byte) ([]Entry, error) {
-	var doc struct {
-		Entries []Entry `yaml:"entries"`
-	}
-	dec := yaml.NewDecoder(bytes.NewReader(raw))
-	dec.KnownFields(true)
-	if err := dec.Decode(&doc); err == nil && len(doc.Entries) > 0 {
-		return doc.Entries, nil
-	}
-
-	var list []Entry
-	dec = yaml.NewDecoder(bytes.NewReader(raw))
-	dec.KnownFields(true)
-	if err := dec.Decode(&list); err == nil && len(list) > 0 {
-		return list, nil
-	}
-
-	var single Entry
-	dec = yaml.NewDecoder(bytes.NewReader(raw))
-	dec.KnownFields(true)
-	if err := dec.Decode(&single); err != nil {
+	doc, err := decodeYAMLDocument(raw)
+	if err != nil {
 		return nil, err
 	}
-	if strings.TrimSpace(single.Name) == "" {
-		return nil, errors.New("OS catalog has no entries")
+	if err := validateCatalogDocument(doc); err != nil {
+		return nil, err
 	}
-	return []Entry{single}, nil
+	jsonRaw, err := json.Marshal(doc)
+	if err != nil {
+		return nil, err
+	}
+	switch typed := doc.(type) {
+	case []any:
+		var entries []Entry
+		if err := json.Unmarshal(jsonRaw, &entries); err != nil {
+			return nil, err
+		}
+		return entries, validateUniqueNames(entries)
+	case map[string]any:
+		if _, ok := typed["entries"]; ok {
+			var wrapper struct {
+				Entries []Entry `json:"entries"`
+			}
+			if err := json.Unmarshal(jsonRaw, &wrapper); err != nil {
+				return nil, err
+			}
+			return wrapper.Entries, validateUniqueNames(wrapper.Entries)
+		}
+		var single Entry
+		if err := json.Unmarshal(jsonRaw, &single); err != nil {
+			return nil, err
+		}
+		return []Entry{single}, nil
+	default:
+		return nil, errors.New("OS catalog must be an entry, entry list, or entries object")
+	}
 }
 
 func Validate(entry Entry) error {
-	if strings.TrimSpace(entry.Name) == "" {
-		return errors.New("name is required")
+	doc, err := toJSONDocument(entry)
+	if err != nil {
+		return err
 	}
-	if strings.TrimSpace(entry.OSFamily) == "" {
-		return fmt.Errorf("%s: osFamily is required", entry.Name)
-	}
-	if strings.TrimSpace(entry.OSVersion) == "" {
-		return fmt.Errorf("%s: osVersion is required", entry.Name)
-	}
-	if strings.TrimSpace(entry.Arch) == "" {
-		return fmt.Errorf("%s: arch is required", entry.Name)
-	}
-	if entry.Format != osimage.FormatRAW {
-		return fmt.Errorf("%s: unsupported format %q; only raw catalog images are supported", entry.Name, entry.Format)
-	}
-	sourceFormat := entry.SourceFormat
-	if sourceFormat == "" {
-		sourceFormat = entry.Format
-	}
-	if sourceFormat != osimage.FormatRAW {
-		return fmt.Errorf("%s: unsupported sourceFormat %q; only raw catalog sources are supported", entry.Name, sourceFormat)
-	}
-	if strings.TrimSpace(entry.URL) == "" {
-		return fmt.Errorf("%s: url is required", entry.Name)
-	}
-	if compression := strings.TrimSpace(entry.SourceCompression); compression != "" && compression != "zstd" {
-		return fmt.Errorf("%s: unsupported sourceCompression %q", entry.Name, compression)
-	}
-	if strings.TrimSpace(entry.BootEnvironment) == "" {
-		return fmt.Errorf("%s: bootEnvironment is required", entry.Name)
-	}
-	if entry.Build != nil {
-		if entry.Build.Type != "packer-qemu-cloud-image" {
-			return fmt.Errorf("%s: unsupported build.type %q", entry.Name, entry.Build.Type)
-		}
-		if strings.TrimSpace(entry.Build.Source.URL) == "" {
-			return fmt.Errorf("%s: build.source.url is required", entry.Name)
-		}
-		if strings.TrimSpace(entry.Build.Source.Checksum) == "" {
-			return fmt.Errorf("%s: build.source.checksum is required", entry.Name)
-		}
-		if entry.Build.Source.Format == "" {
-			return fmt.Errorf("%s: build.source.format is required", entry.Name)
-		}
-	}
-	return nil
+	return validateCatalogDocument(doc)
 }
 
 func BuildEntries(entries []Entry) []Entry {
@@ -242,21 +223,52 @@ func materializeEntries(entries []Entry, sourceBase string) ([]Entry, error) {
 		base = defaultOSImageSourceURL
 	}
 	out := make([]Entry, 0, len(entries))
-	seen := map[string]struct{}{}
 	for _, entry := range entries {
 		entry.Name = strings.TrimSpace(entry.Name)
-		if _, ok := seen[entry.Name]; ok {
-			return nil, fmt.Errorf("duplicate OS catalog entry: %s", entry.Name)
-		}
-		seen[entry.Name] = struct{}{}
 		entry.URL = resolveArtifactURL(base, entry.URL)
-		if err := Validate(entry); err != nil {
-			return nil, err
-		}
 		out = append(out, entry)
+	}
+	if err := validateCatalogSemantics(out); err != nil {
+		return nil, err
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out, nil
+}
+
+type semanticValidator func([]Entry) error
+
+var semanticValidators = []semanticValidator{
+	validateUniqueNames,
+	validateResolvedArtifactURLs,
+}
+
+func validateCatalogSemantics(entries []Entry) error {
+	for _, validate := range semanticValidators {
+		if err := validate(entries); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func validateUniqueNames(entries []Entry) error {
+	seen := map[string]struct{}{}
+	for _, entry := range entries {
+		if _, ok := seen[entry.Name]; ok {
+			return fmt.Errorf("duplicate OS catalog entry: %s", entry.Name)
+		}
+		seen[entry.Name] = struct{}{}
+	}
+	return nil
+}
+
+func validateResolvedArtifactURLs(entries []Entry) error {
+	for _, entry := range entries {
+		if !strings.HasPrefix(entry.URL, "http://") && !strings.HasPrefix(entry.URL, "https://") {
+			return fmt.Errorf("%s: resolved url must be http or https: %s", entry.Name, entry.URL)
+		}
+	}
+	return nil
 }
 
 func resolveArtifactURL(base, artifact string) string {
@@ -302,6 +314,76 @@ func fetchCatalog(ctx context.Context, rawURL string) ([]byte, error) {
 		return nil, fmt.Errorf("download OS catalog URL: status %d", resp.StatusCode)
 	}
 	return io.ReadAll(resp.Body)
+}
+
+func decodeYAMLDocument(raw []byte) (any, error) {
+	var doc any
+	dec := yaml.NewDecoder(bytes.NewReader(raw))
+	if err := dec.Decode(&doc); err != nil {
+		return nil, err
+	}
+	return normalizeYAML(doc), nil
+}
+
+func normalizeYAML(value any) any {
+	switch typed := value.(type) {
+	case map[string]any:
+		out := make(map[string]any, len(typed))
+		for k, v := range typed {
+			out[k] = normalizeYAML(v)
+		}
+		return out
+	case map[any]any:
+		out := make(map[string]any, len(typed))
+		for k, v := range typed {
+			out[fmt.Sprint(k)] = normalizeYAML(v)
+		}
+		return out
+	case []any:
+		for i, v := range typed {
+			typed[i] = normalizeYAML(v)
+		}
+		return typed
+	default:
+		return typed
+	}
+}
+
+func toJSONDocument(value any) (any, error) {
+	raw, err := json.Marshal(value)
+	if err != nil {
+		return nil, err
+	}
+	var doc any
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		return nil, err
+	}
+	return doc, nil
+}
+
+func validateCatalogDocument(doc any) error {
+	schema, err := getCatalogSchema()
+	if err != nil {
+		return err
+	}
+	if err := schema.Validate(doc); err != nil {
+		return fmt.Errorf("validate OS catalog schema: %w", err)
+	}
+	return nil
+}
+
+func getCatalogSchema() (*jsonschema.Resolved, error) {
+	catalogSchemaOnce.Do(func() {
+		var schema jsonschema.Schema
+		if err := json.Unmarshal(catalogSchemaJSON, &schema); err != nil {
+			catalogSchemaErr = err
+			return
+		}
+		catalogSchema, catalogSchemaErr = schema.Resolve(&jsonschema.ResolveOptions{
+			BaseURI: "https://gomi.invalid/schemas/os-catalog.schema.json",
+		})
+	})
+	return catalogSchema, catalogSchemaErr
 }
 
 func truthy(value string) bool {

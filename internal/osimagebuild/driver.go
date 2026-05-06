@@ -2,17 +2,12 @@ package osimagebuild
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"sort"
-	"strconv"
 	"strings"
 
 	"github.com/sugaf1204/gomi/internal/oscatalog"
@@ -23,45 +18,31 @@ const defaultMaxReleaseAssetSize int64 = 2147483647
 type LoadOptions = oscatalog.LoadOptions
 
 type BuildOptions struct {
-	EntryName string
-	OutDir    string
-	WorkDir   string
-	Template  string
-	Timeout   string
-	MaxSize   int64
+	EntryName     string
+	OutDir        string
+	WorkDir       string
+	Template      string
+	Timeout       string
+	MaxSize       int64
+	CommandRunner CommandRunner
 }
 
-type Matrix struct {
-	Include []MatrixEntry `json:"include"`
+type CommandRunner interface {
+	Run(ctx context.Context, env []string, name string, args ...string) error
 }
 
-type MatrixEntry struct {
-	Name string `json:"name"`
-}
+type execCommandRunner struct{}
 
-type ImageMetadata struct {
-	Name      string   `json:"name"`
-	OSFamily  string   `json:"osFamily"`
-	OSVersion string   `json:"osVersion"`
-	Arch      string   `json:"arch"`
-	Variant   string   `json:"variant"`
-	Artifact  string   `json:"artifact"`
-	SHA256    string   `json:"sha256"`
-	SizeBytes int64    `json:"sizeBytes"`
-	Packages  []string `json:"packages,omitempty"`
-}
-
-func LoadCatalog(ctx context.Context, opts LoadOptions) ([]oscatalog.Entry, error) {
-	return oscatalog.Load(ctx, opts)
-}
-
-func BuildMatrix(entries []oscatalog.Entry) Matrix {
-	buildEntries := oscatalog.BuildEntries(entries)
-	matrix := Matrix{Include: make([]MatrixEntry, 0, len(buildEntries))}
-	for _, entry := range buildEntries {
-		matrix.Include = append(matrix.Include, MatrixEntry{Name: entry.Name})
+func (execCommandRunner) Run(ctx context.Context, env []string, name string, args ...string) error {
+	cmd := exec.CommandContext(ctx, name, args...)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	cmd.Stdin = os.Stdin
+	cmd.Env = append(os.Environ(), env...)
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("%s %s: %w", name, strings.Join(args, " "), err)
 	}
-	return matrix
+	return nil
 }
 
 func Build(ctx context.Context, entries []oscatalog.Entry, opts BuildOptions) (ImageMetadata, error) {
@@ -72,14 +53,17 @@ func Build(ctx context.Context, entries []oscatalog.Entry, opts BuildOptions) (I
 	if entry.Build == nil {
 		return ImageMetadata{}, fmt.Errorf("%s: catalog entry does not define build recipe", entry.Name)
 	}
-	if entry.Build.Type != "packer-qemu-cloud-image" {
-		return ImageMetadata{}, fmt.Errorf("%s: unsupported build.type %q", entry.Name, entry.Build.Type)
+	runner := opts.CommandRunner
+	if runner == nil {
+		runner = execCommandRunner{}
 	}
-	if opts.Timeout == "" {
-		opts.Timeout = "30m"
+	timeout := opts.Timeout
+	if timeout == "" {
+		timeout = "30m"
 	}
-	if opts.MaxSize == 0 {
-		opts.MaxSize = defaultMaxReleaseAssetSize
+	maxSize := opts.MaxSize
+	if maxSize == 0 {
+		maxSize = defaultMaxReleaseAssetSize
 	}
 	repoRoot, err := findRepoRoot()
 	if err != nil {
@@ -100,31 +84,19 @@ func Build(ctx context.Context, entries []oscatalog.Entry, opts BuildOptions) (I
 	if !filepath.IsAbs(opts.Template) {
 		opts.Template = filepath.Join(repoRoot, opts.Template)
 	}
-	for _, command := range []string{"cloud-localds", "packer", "qemu-img", "zstd"} {
-		if err := requireCommand(command); err != nil {
-			return ImageMetadata{}, err
-		}
-	}
+
 	if err := os.RemoveAll(opts.WorkDir); err != nil {
-		return ImageMetadata{}, err
-	}
-	if err := os.MkdirAll(opts.WorkDir, 0o755); err != nil {
-		return ImageMetadata{}, err
-	}
-	if err := os.MkdirAll(opts.OutDir, 0o755); err != nil {
 		return ImageMetadata{}, err
 	}
 	outputDir := filepath.Join(opts.WorkDir, "output")
 	cacheDir := filepath.Join(opts.WorkDir, "packer-cache")
-	if err := os.MkdirAll(cacheDir, 0o755); err != nil {
-		return ImageMetadata{}, err
+	for _, dir := range []string{opts.WorkDir, opts.OutDir, cacheDir} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			return ImageMetadata{}, err
+		}
 	}
 
-	templateDir, err := prepareTemplateDir(opts.Template, opts.WorkDir)
-	if err != nil {
-		return ImageMetadata{}, err
-	}
-	seedISO, err := createSeedISO(ctx, opts.WorkDir, templateDir, entry.Name)
+	seedISO, err := createSeedISO(ctx, runner, opts.WorkDir, opts.Template, entry.Name)
 	if err != nil {
 		return ImageMetadata{}, err
 	}
@@ -136,28 +108,26 @@ func Build(ctx context.Context, entries []oscatalog.Entry, opts BuildOptions) (I
 	if err != nil {
 		return ImageMetadata{}, err
 	}
-	varFile := filepath.Join(opts.WorkDir, "build.pkrvars.hcl")
-	if err := writePackerVars(varFile, entry, outputDir, ovmfCode, ovmfVars, seedISO, qemuMachine, qemuCPU, opts.Timeout); err != nil {
+	varFile := filepath.Join(opts.WorkDir, "build.pkrvars.json")
+	if err := writePackerVarsJSON(varFile, entry, outputDir, ovmfCode, ovmfVars, seedISO, qemuMachine, qemuCPU, timeout); err != nil {
 		return ImageMetadata{}, err
 	}
 
-	if err := run(ctx, cacheDir, "packer", "init", templateDir); err != nil {
+	packerEnv := []string{"PACKER_CACHE_DIR=" + cacheDir}
+	if err := runner.Run(ctx, packerEnv, "packer", "init", opts.Template); err != nil {
 		return ImageMetadata{}, err
 	}
-	if err := run(ctx, cacheDir, "packer", "build", "-var-file", varFile, templateDir); err != nil {
+	if err := runner.Run(ctx, packerEnv, "packer", "build", "-var-file", varFile, opts.Template); err != nil {
 		return ImageMetadata{}, err
 	}
 
 	qcow2 := filepath.Join(outputDir, entry.Name+".qcow2")
-	if err := requireNonEmptyFile(qcow2); err != nil {
-		return ImageMetadata{}, err
-	}
 	raw := filepath.Join(opts.OutDir, entry.Name+".raw")
 	zst := raw + ".zst"
-	if err := run(ctx, "", "qemu-img", "convert", "-O", "raw", qcow2, raw); err != nil {
+	if err := runner.Run(ctx, nil, "qemu-img", "convert", "-O", "raw", qcow2, raw); err != nil {
 		return ImageMetadata{}, err
 	}
-	if err := run(ctx, "", "zstd", "-T0", "-19", "-f", raw, "-o", zst); err != nil {
+	if err := runner.Run(ctx, nil, "zstd", "-T0", "-19", "-f", raw, "-o", zst); err != nil {
 		return ImageMetadata{}, err
 	}
 	_ = os.Remove(raw)
@@ -166,84 +136,33 @@ func Build(ctx context.Context, entries []oscatalog.Entry, opts BuildOptions) (I
 	if err != nil {
 		return ImageMetadata{}, err
 	}
-	if meta.SizeBytes > opts.MaxSize {
-		return ImageMetadata{}, fmt.Errorf("%s is %d bytes; release assets must be <= %d bytes", filepath.Base(zst), meta.SizeBytes, opts.MaxSize)
+	if meta.SizeBytes > maxSize {
+		return ImageMetadata{}, fmt.Errorf("%s is %d bytes; release assets must be <= %d bytes", filepath.Base(zst), meta.SizeBytes, maxSize)
 	}
 	return meta, nil
 }
 
-func WriteManifest(dir string) error {
-	if dir == "" {
-		dir = filepath.Join("dist", "os-images")
-	}
-	metadataPaths, err := filepath.Glob(filepath.Join(dir, "*.json"))
-	if err != nil {
-		return err
-	}
-	entries := make([]ImageMetadata, 0)
-	for _, path := range metadataPaths {
-		if filepath.Base(path) == "manifest-os-images.json" {
-			continue
-		}
-		raw, err := os.ReadFile(path)
-		if err != nil {
-			return err
-		}
-		var meta ImageMetadata
-		if err := json.Unmarshal(raw, &meta); err != nil {
-			return fmt.Errorf("parse %s: %w", path, err)
-		}
-		entries = append(entries, meta)
-	}
-	sort.Slice(entries, func(i, j int) bool { return entries[i].Name < entries[j].Name })
-	manifest, err := json.MarshalIndent(entries, "", "  ")
-	if err != nil {
-		return err
-	}
-	if err := os.WriteFile(filepath.Join(dir, "manifest-os-images.json"), append(manifest, '\n'), 0o644); err != nil {
-		return err
-	}
-
-	zstPaths, err := filepath.Glob(filepath.Join(dir, "*.raw.zst"))
-	if err != nil {
-		return err
-	}
-	sort.Strings(zstPaths)
-	var checksums strings.Builder
-	for _, path := range zstPaths {
-		sum, err := sha256File(path)
-		if err != nil {
-			return err
-		}
-		checksums.WriteString(sum)
-		checksums.WriteString("  ")
-		checksums.WriteString(filepath.Base(path))
-		checksums.WriteByte('\n')
-	}
-	return os.WriteFile(filepath.Join(dir, "checksums-os-images.txt"), []byte(checksums.String()), 0o644)
+type packerVars struct {
+	ImageName           string   `json:"image_name"`
+	Architecture        string   `json:"architecture"`
+	DiskSize            string   `json:"disk_size"`
+	OutputDirectory     string   `json:"output_directory"`
+	OVMFCode            string   `json:"ovmf_code"`
+	OVMFVars            string   `json:"ovmf_vars"`
+	QemuCPU             string   `json:"qemu_cpu"`
+	QemuMachine         string   `json:"qemu_machine"`
+	SeedISO             string   `json:"seed_iso"`
+	SourceURL           string   `json:"source_url"`
+	SourceChecksum      string   `json:"source_checksum"`
+	SourceFormat        string   `json:"source_format"`
+	SSHUsername         string   `json:"ssh_username"`
+	SSHPassword         string   `json:"ssh_password"`
+	Timeout             string   `json:"timeout"`
+	CurtinKernelPackage string   `json:"curtin_kernel_package"`
+	AptPackages         []string `json:"apt_packages"`
 }
 
-func findBuildEntry(entries []oscatalog.Entry, name string) (oscatalog.Entry, error) {
-	name = strings.TrimSpace(name)
-	if name == "" {
-		return oscatalog.Entry{}, errors.New("entry name is required")
-	}
-	for _, entry := range entries {
-		if entry.Name == name {
-			return entry, nil
-		}
-	}
-	return oscatalog.Entry{}, fmt.Errorf("catalog entry not found: %s", name)
-}
-
-func requireCommand(name string) error {
-	if _, err := exec.LookPath(name); err != nil {
-		return fmt.Errorf("required command not found: %s", name)
-	}
-	return nil
-}
-
-func createSeedISO(ctx context.Context, workDir, templateDir, imageName string) (string, error) {
+func createSeedISO(ctx context.Context, runner CommandRunner, workDir, templateDir, imageName string) (string, error) {
 	seedDir := filepath.Join(workDir, "seed")
 	if err := os.MkdirAll(seedDir, 0o755); err != nil {
 		return "", err
@@ -252,65 +171,11 @@ func createSeedISO(ctx context.Context, workDir, templateDir, imageName string) 
 	if err := os.WriteFile(metaData, []byte("instance-id: "+imageName+"\nlocal-hostname: "+imageName+"\n"), 0o644); err != nil {
 		return "", err
 	}
-	userData := filepath.Join(templateDir, "seed", "user-data.yaml")
-	if err := requireNonEmptyFile(userData); err != nil {
-		return "", err
-	}
 	seedISO := filepath.Join(workDir, "seed.iso")
-	if err := run(ctx, "", "cloud-localds", seedISO, userData, metaData); err != nil {
+	if err := runner.Run(ctx, nil, "cloud-localds", seedISO, filepath.Join(templateDir, "seed", "user-data.yaml"), metaData); err != nil {
 		return "", err
 	}
 	return seedISO, nil
-}
-
-func prepareTemplateDir(src, workDir string) (string, error) {
-	st, err := os.Stat(src)
-	if err != nil {
-		return "", err
-	}
-	if !st.IsDir() {
-		return "", fmt.Errorf("expected template directory: %s", src)
-	}
-
-	dst := filepath.Join(workDir, "template")
-	if err := os.RemoveAll(dst); err != nil {
-		return "", err
-	}
-	err = filepath.WalkDir(src, func(path string, d os.DirEntry, walkErr error) error {
-		if walkErr != nil {
-			return walkErr
-		}
-		if shouldSkipTemplateEntry(d.Name()) {
-			if d.IsDir() {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-		rel, err := filepath.Rel(src, path)
-		if err != nil {
-			return err
-		}
-		dstPath := filepath.Join(dst, rel)
-		if d.IsDir() {
-			return os.MkdirAll(dstPath, 0o755)
-		}
-		info, err := d.Info()
-		if err != nil {
-			return err
-		}
-		if !info.Mode().IsRegular() {
-			return nil
-		}
-		return copyFileMode(path, dstPath, info.Mode().Perm())
-	})
-	if err != nil {
-		return "", err
-	}
-	return dst, nil
-}
-
-func shouldSkipTemplateEntry(name string) bool {
-	return name == ".DS_Store" || name == "__MACOSX" || strings.HasPrefix(name, "._")
 }
 
 func copyOVMF(workDir string) (string, string, error) {
@@ -339,15 +204,55 @@ func copyOVMF(workDir string) (string, string, error) {
 	return codeDst, varsDst, nil
 }
 
+func writePackerVarsJSON(path string, entry oscatalog.Entry, outputDir, ovmfCode, ovmfVars, seedISO, qemuMachine, qemuCPU, timeout string) error {
+	diskSize := entry.Build.DiskSize
+	if diskSize == "" {
+		diskSize = "8G"
+	}
+	raw, err := json.MarshalIndent(packerVars{
+		ImageName:           entry.Name,
+		Architecture:        entry.Arch,
+		DiskSize:            diskSize,
+		OutputDirectory:     outputDir,
+		OVMFCode:            ovmfCode,
+		OVMFVars:            ovmfVars,
+		QemuCPU:             qemuCPU,
+		QemuMachine:         qemuMachine,
+		SeedISO:             seedISO,
+		SourceURL:           entry.Build.Source.URL,
+		SourceChecksum:      entry.Build.Source.Checksum,
+		SourceFormat:        string(entry.Build.Source.Format),
+		SSHUsername:         "root",
+		SSHPassword:         "packer",
+		Timeout:             timeout,
+		CurtinKernelPackage: entry.Build.CurtinKernelPackage,
+		AptPackages:         entry.Build.AptPackages,
+	}, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, append(raw, '\n'), 0o644)
+}
+
+func findBuildEntry(entries []oscatalog.Entry, name string) (oscatalog.Entry, error) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return oscatalog.Entry{}, errors.New("entry name is required")
+	}
+	for _, entry := range entries {
+		if entry.Name == name {
+			return entry, nil
+		}
+	}
+	return oscatalog.Entry{}, fmt.Errorf("catalog entry not found: %s", name)
+}
+
 func findOVMF(envName string, candidates []string) (string, error) {
 	if value := strings.TrimSpace(os.Getenv(envName)); value != "" {
-		if err := requireNonEmptyFile(value); err != nil {
-			return "", err
-		}
 		return value, nil
 	}
 	for _, path := range candidates {
-		if err := requireNonEmptyFile(path); err == nil {
+		if _, err := os.Stat(path); err == nil {
 			return path, nil
 		}
 	}
@@ -357,7 +262,7 @@ func findOVMF(envName string, candidates []string) (string, error) {
 func qemuSettings(arch string) (string, string, error) {
 	switch arch {
 	case "amd64":
-		if canUseKVM() {
+		if defaultCanUseKVM() {
 			return "accel=kvm", "host", nil
 		}
 		return "accel=tcg", "max", nil
@@ -368,58 +273,13 @@ func qemuSettings(arch string) (string, string, error) {
 	}
 }
 
-func canUseKVM() bool {
+func defaultCanUseKVM() bool {
 	f, err := os.OpenFile("/dev/kvm", os.O_RDWR, 0)
 	if err != nil {
 		return false
 	}
 	_ = f.Close()
 	return true
-}
-
-func writePackerVars(path string, entry oscatalog.Entry, outputDir, ovmfCode, ovmfVars, seedISO, qemuMachine, qemuCPU, timeout string) error {
-	diskSize := entry.Build.DiskSize
-	if diskSize == "" {
-		diskSize = "8G"
-	}
-	var b strings.Builder
-	writeVar(&b, "image_name", entry.Name)
-	writeVar(&b, "architecture", entry.Arch)
-	writeVar(&b, "disk_size", diskSize)
-	writeVar(&b, "output_directory", outputDir)
-	writeVar(&b, "ovmf_code", ovmfCode)
-	writeVar(&b, "ovmf_vars", ovmfVars)
-	writeVar(&b, "qemu_cpu", qemuCPU)
-	writeVar(&b, "qemu_machine", qemuMachine)
-	writeVar(&b, "seed_iso", seedISO)
-	writeVar(&b, "source_url", entry.Build.Source.URL)
-	writeVar(&b, "source_checksum", entry.Build.Source.Checksum)
-	writeVar(&b, "source_format", string(entry.Build.Source.Format))
-	writeVar(&b, "ssh_username", "root")
-	writeVar(&b, "ssh_password", "packer")
-	writeVar(&b, "timeout", timeout)
-	writeVar(&b, "curtin_kernel_package", entry.Build.CurtinKernelPackage)
-	writeListVar(&b, "apt_packages", entry.Build.AptPackages)
-	return os.WriteFile(path, []byte(b.String()), 0o644)
-}
-
-func writeVar(b *strings.Builder, name, value string) {
-	b.WriteString(name)
-	b.WriteString(" = ")
-	b.WriteString(strconv.Quote(value))
-	b.WriteByte('\n')
-}
-
-func writeListVar(b *strings.Builder, name string, values []string) {
-	b.WriteString(name)
-	b.WriteString(" = [")
-	for i, value := range values {
-		if i > 0 {
-			b.WriteString(", ")
-		}
-		b.WriteString(strconv.Quote(value))
-	}
-	b.WriteString("]\n")
 }
 
 func writeMetadata(entry oscatalog.Entry, zstPath, outDir string) (ImageMetadata, error) {
@@ -454,70 +314,15 @@ func writeMetadata(entry oscatalog.Entry, zstPath, outDir string) (ImageMetadata
 	return meta, nil
 }
 
-func run(ctx context.Context, packerCacheDir, name string, args ...string) error {
-	cmd := exec.CommandContext(ctx, name, args...)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	cmd.Stdin = os.Stdin
-	cmd.Env = os.Environ()
-	if packerCacheDir != "" {
-		cmd.Env = append(cmd.Env, "PACKER_CACHE_DIR="+packerCacheDir)
-	}
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("%s %s: %w", name, strings.Join(args, " "), err)
-	}
-	return nil
-}
-
-func requireNonEmptyFile(path string) error {
-	st, err := os.Stat(path)
-	if err != nil {
-		return err
-	}
-	if st.IsDir() || st.Size() == 0 {
-		return fmt.Errorf("expected non-empty file: %s", path)
-	}
-	return nil
-}
-
 func copyFile(src, dst string) error {
-	return copyFileMode(src, dst, 0o644)
-}
-
-func copyFileMode(src, dst string, mode os.FileMode) error {
-	in, err := os.Open(src)
+	raw, err := os.ReadFile(src)
 	if err != nil {
 		return err
 	}
-	defer in.Close()
 	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
 		return err
 	}
-	out, err := os.OpenFile(dst, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, mode)
-	if err != nil {
-		return err
-	}
-	if _, err := io.Copy(out, in); err != nil {
-		out.Close()
-		return err
-	}
-	if err := out.Close(); err != nil {
-		return err
-	}
-	return os.Chmod(dst, mode)
-}
-
-func sha256File(path string) (string, error) {
-	f, err := os.Open(path)
-	if err != nil {
-		return "", err
-	}
-	defer f.Close()
-	h := sha256.New()
-	if _, err := io.Copy(h, f); err != nil {
-		return "", err
-	}
-	return hex.EncodeToString(h.Sum(nil)), nil
+	return os.WriteFile(dst, raw, 0o644)
 }
 
 func findRepoRoot() (string, error) {

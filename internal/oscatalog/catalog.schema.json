@@ -1,0 +1,141 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://gomi.invalid/schemas/os-catalog.schema.json",
+  "oneOf": [
+    {
+      "type": "object",
+      "required": ["entries"],
+      "additionalProperties": false,
+      "properties": {
+        "entries": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/entry"
+          }
+        }
+      }
+    },
+    {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/entry"
+      }
+    },
+    {
+      "$ref": "#/$defs/entry"
+    }
+  ],
+  "$defs": {
+    "entry": {
+      "type": "object",
+      "required": ["name", "osFamily", "osVersion", "arch", "format", "url", "bootEnvironment"],
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "\\S"
+        },
+        "osFamily": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "\\S"
+        },
+        "osVersion": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "\\S"
+        },
+        "arch": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "\\S"
+        },
+        "format": {
+          "const": "raw"
+        },
+        "sourceFormat": {
+          "const": "raw"
+        },
+        "sourceCompression": {
+          "enum": ["zstd", ""]
+        },
+        "variant": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "\\S"
+        },
+        "url": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "\\S"
+        },
+        "checksum": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "bootEnvironment": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "\\S"
+        },
+        "build": {
+          "$ref": "#/$defs/build"
+        }
+      }
+    },
+    "build": {
+      "type": "object",
+      "required": ["type", "source"],
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "packer-qemu-cloud-image"
+        },
+        "source": {
+          "$ref": "#/$defs/buildSource"
+        },
+        "aptPackages": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "curtinKernelPackage": {
+          "type": "string"
+        },
+        "packerTemplate": {
+          "type": "string"
+        },
+        "diskSize": {
+          "type": "string"
+        }
+      }
+    },
+    "buildSource": {
+      "type": "object",
+      "required": ["url", "checksum", "format"],
+      "additionalProperties": false,
+      "properties": {
+        "url": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "\\S"
+        },
+        "checksum": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "\\S"
+        },
+        "format": {
+          "enum": ["qcow2", "raw"]
+        }
+      }
+    }
+  }
+}

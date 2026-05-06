@@ -5,8 +5,11 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/sugaf1204/gomi/internal/oscatalog"
 )
 
 func TestMatrixUsesBuildRecipesOnly(t *testing.T) {
@@ -96,42 +99,164 @@ func TestWriteManifest(t *testing.T) {
 	}
 }
 
-func TestPrepareTemplateDirSkipsMacMetadata(t *testing.T) {
-	src := filepath.Join(t.TempDir(), "template")
-	if err := os.MkdirAll(filepath.Join(src, "scripts"), 0o755); err != nil {
-		t.Fatalf("create template: %v", err)
+func TestBuildRunsCommandsAndWritesPackerVarJSON(t *testing.T) {
+	workDir := filepath.Join(t.TempDir(), "work")
+	outDir := filepath.Join(t.TempDir(), "out")
+	templateDir := filepath.Join(t.TempDir(), "template")
+	writeTemplate(t, templateDir)
+	ovmfCode := filepath.Join(t.TempDir(), "OVMF_CODE.fd")
+	ovmfVars := filepath.Join(t.TempDir(), "OVMF_VARS.fd")
+	if err := os.WriteFile(ovmfCode, []byte("code"), 0o644); err != nil {
+		t.Fatalf("write ovmf code: %v", err)
 	}
-	files := map[string]string{
-		"cloud-image.pkr.hcl":        "packer {}",
-		"._cloud-image.pkr.hcl":      "appledouble",
-		".DS_Store":                  "finder",
-		"scripts/provision.sh":       "#!/bin/sh\n",
-		"scripts/._provision.sh":     "appledouble",
-		"scripts/__MACOSX/ignored":   "ignored",
-		"scripts/__MACOSX/._ignored": "ignored",
+	if err := os.WriteFile(ovmfVars, []byte("vars"), 0o644); err != nil {
+		t.Fatalf("write ovmf vars: %v", err)
 	}
-	for name, body := range files {
-		path := filepath.Join(src, name)
-		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-			t.Fatalf("create parent: %v", err)
-		}
-		if err := os.WriteFile(path, []byte(body), 0o755); err != nil {
-			t.Fatalf("write %s: %v", name, err)
-		}
+	t.Setenv("PACKER_OVMF_CODE", ovmfCode)
+	t.Setenv("PACKER_OVMF_VARS", ovmfVars)
+
+	runner := &fakeCommandRunner{}
+	meta, err := Build(context.Background(), loadBuildTestCatalog(t), BuildOptions{
+		EntryName:     "buildable",
+		OutDir:        outDir,
+		WorkDir:       workDir,
+		Template:      templateDir,
+		CommandRunner: runner,
+	})
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	if meta.Artifact != "buildable.raw.zst" || meta.SizeBytes == 0 {
+		t.Fatalf("metadata = %#v", meta)
+	}
+	gotCommands := runner.commandLabels()
+	wantCommands := []string{"cloud-localds", "packer init", "packer build", "qemu-img convert", "zstd"}
+	if !reflect.DeepEqual(gotCommands, wantCommands) {
+		t.Fatalf("commands = %#v, want %#v", gotCommands, wantCommands)
 	}
 
-	dst, err := prepareTemplateDir(src, t.TempDir())
+	var vars packerVars
+	varPath := filepath.Join(workDir, "build.pkrvars.json")
+	raw, err := os.ReadFile(varPath)
 	if err != nil {
-		t.Fatalf("prepare template: %v", err)
+		t.Fatalf("read var file: %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(dst, "cloud-image.pkr.hcl")); err != nil {
-		t.Fatalf("expected template file copied: %v", err)
+	if err := json.Unmarshal(raw, &vars); err != nil {
+		t.Fatalf("decode var file: %v", err)
 	}
-	for _, name := range []string{".DS_Store", "._cloud-image.pkr.hcl", filepath.Join("scripts", "._provision.sh"), filepath.Join("scripts", "__MACOSX")} {
-		if _, err := os.Stat(filepath.Join(dst, name)); !os.IsNotExist(err) {
-			t.Fatalf("expected %s to be skipped, stat err=%v", name, err)
+	if vars.ImageName != "buildable" || vars.OutputDirectory == "" || vars.SeedISO == "" {
+		t.Fatalf("vars = %#v", vars)
+	}
+	if !reflect.DeepEqual(vars.AptPackages, []string{"linux-image-generic"}) {
+		t.Fatalf("apt packages = %#v", vars.AptPackages)
+	}
+}
+
+func loadBuildTestCatalog(t *testing.T) []oscatalog.Entry {
+	t.Helper()
+	catalog := writeCatalog(t, `
+entries:
+  - name: buildable
+    osFamily: custom
+    osVersion: "1"
+    arch: amd64
+    variant: baremetal
+    format: raw
+    sourceFormat: raw
+    sourceCompression: zstd
+    url: buildable.raw.zst
+    bootEnvironment: ubuntu-minimal-cloud-amd64
+    build:
+      type: packer-qemu-cloud-image
+      source:
+        url: https://images.example.test/source.qcow2
+        checksum: sha256:abc
+        format: qcow2
+      aptPackages:
+        - linux-image-generic
+      curtinKernelPackage: linux-image-generic
+`)
+	entries, err := LoadCatalog(context.Background(), LoadOptions{
+		CatalogFile:     catalog,
+		ReplaceExternal: true,
+	})
+	if err != nil {
+		t.Fatalf("load catalog: %v", err)
+	}
+	return entries
+}
+
+func writeTemplate(t *testing.T, dir string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Join(dir, "seed"), 0o755); err != nil {
+		t.Fatalf("create seed dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "seed", "user-data.yaml"), []byte("#cloud-config\n"), 0o644); err != nil {
+		t.Fatalf("write user-data: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "cloud-image.pkr.hcl"), []byte("packer {}\n"), 0o644); err != nil {
+		t.Fatalf("write template: %v", err)
+	}
+}
+
+type fakeCommandRunner struct {
+	calls []commandCall
+}
+
+type commandCall struct {
+	env  []string
+	name string
+	args []string
+}
+
+func (r *fakeCommandRunner) Run(_ context.Context, env []string, name string, args ...string) error {
+	r.calls = append(r.calls, commandCall{env: append([]string{}, env...), name: name, args: append([]string{}, args...)})
+	switch name {
+	case "cloud-localds":
+		return os.WriteFile(args[0], []byte("seed"), 0o644)
+	case "packer":
+		if len(args) > 0 && args[0] == "build" {
+			varFile := argAfter(args, "-var-file")
+			raw, err := os.ReadFile(varFile)
+			if err != nil {
+				return err
+			}
+			var vars packerVars
+			if err := json.Unmarshal(raw, &vars); err != nil {
+				return err
+			}
+			if err := os.MkdirAll(vars.OutputDirectory, 0o755); err != nil {
+				return err
+			}
+			return os.WriteFile(filepath.Join(vars.OutputDirectory, vars.ImageName+".qcow2"), []byte("qcow2"), 0o644)
+		}
+	case "qemu-img":
+		return os.WriteFile(args[len(args)-1], []byte("raw"), 0o644)
+	case "zstd":
+		return os.WriteFile(argAfter(args, "-o"), []byte("zstd"), 0o644)
+	}
+	return nil
+}
+
+func (r *fakeCommandRunner) commandLabels() []string {
+	out := make([]string, 0, len(r.calls))
+	for _, call := range r.calls {
+		label := call.name
+		if (call.name == "packer" || call.name == "qemu-img") && len(call.args) > 0 {
+			label += " " + call.args[0]
+		}
+		out = append(out, label)
+	}
+	return out
+}
+
+func argAfter(args []string, flag string) string {
+	for i, arg := range args {
+		if arg == flag && i+1 < len(args) {
+			return args[i+1]
 		}
 	}
+	return ""
 }
 
 func writeCatalog(t *testing.T, body string) string {

@@ -17,7 +17,7 @@ Depends:
  adduser,
  ca-certificates,
  grub-efi-amd64-bin,
- ipxe (>= 2.0.0+dfsg),
+ ipxe,
  systemd,
  ${misc:Depends}
 Description: GOMI - Go Machine Installer

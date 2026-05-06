@@ -140,6 +140,63 @@ func TestBuildEntriesExcludeURLOnlyEntries(t *testing.T) {
 	}
 }
 
+func TestCatalogSchemaRejectsUnknownFields(t *testing.T) {
+	path := writeCatalog(t, `
+entries:
+  - name: invalid-image
+    osFamily: custom
+    osVersion: "1"
+    arch: amd64
+    variant: baremetal
+    format: raw
+    sourceFormat: raw
+    sourceCompression: zstd
+    url: invalid.raw.zst
+    bootEnvironment: ubuntu-minimal-cloud-amd64
+    unexpected: value
+`)
+	_, err := Load(context.Background(), LoadOptions{
+		CatalogFile:     path,
+		ReplaceExternal: true,
+	})
+	if err == nil || !strings.Contains(err.Error(), "validate OS catalog schema") {
+		t.Fatalf("expected schema validation error for unknown field, got %v", err)
+	}
+}
+
+func TestCatalogSemanticValidationRejectsDuplicateNames(t *testing.T) {
+	path := writeCatalog(t, `
+entries:
+  - name: duplicate-image
+    osFamily: custom
+    osVersion: "1"
+    arch: amd64
+    variant: baremetal
+    format: raw
+    sourceFormat: raw
+    sourceCompression: zstd
+    url: first.raw.zst
+    bootEnvironment: ubuntu-minimal-cloud-amd64
+  - name: duplicate-image
+    osFamily: custom
+    osVersion: "1"
+    arch: amd64
+    variant: baremetal
+    format: raw
+    sourceFormat: raw
+    sourceCompression: zstd
+    url: second.raw.zst
+    bootEnvironment: ubuntu-minimal-cloud-amd64
+`)
+	_, err := Load(context.Background(), LoadOptions{
+		CatalogFile:     path,
+		ReplaceExternal: true,
+	})
+	if err == nil || !strings.Contains(err.Error(), "duplicate OS catalog entry") {
+		t.Fatalf("expected duplicate name error, got %v", err)
+	}
+}
+
 func writeCatalog(t *testing.T, body string) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "catalog.yaml")
