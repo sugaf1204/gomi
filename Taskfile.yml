@@ -497,6 +497,7 @@ tasks:
         ssh_cmd="${ACT_SSH_CMD:-ssh}"
         rsync_ssh="${ACT_RSYNC_SSH:-ssh}"
         extra="${ACT_EXTRA_ARGS:-}"
+        publish="${ACT_PUBLISH_RELEASES:-false}"
 
         version="$(sed -n '1s/^gomi (\([^)]*\)).*/\1/p' packages/debian/changelog)"
         test -n "$version" || { echo "ERROR: unable to read package version from packages/debian/changelog" >&2; exit 1; }
@@ -523,7 +524,11 @@ tasks:
 
         $ssh_cmd "$remote" "mkdir -p '$remote_root/src/tmp/act'"
         rsync -az -e "$rsync_ssh" tmp/act/tag-push.json "$remote:$remote_root/src/tmp/act/tag-push.json"
-        $ssh_cmd "$remote" "cd '$remote_root/src' && act push -W .github/workflows/release.yml -j deb -e tmp/act/tag-push.json --env GITHUB_REF_TYPE=tag --env GITHUB_REF_NAME='$tag' -P ubuntu-latest='$runner_image' $extra"
+        publish_args=""
+        if [ "$publish" != "true" ]; then
+          publish_args="--env ACT_SKIP_PUBLISH=true"
+        fi
+        $ssh_cmd "$remote" "cd '$remote_root/src' && act push -W .github/workflows/release.yml -j deb -e tmp/act/tag-push.json --env GITHUB_REF_TYPE=tag --env GITHUB_REF_NAME='$tag' $publish_args -P ubuntu-latest='$runner_image' $extra"
 
   act:release:bootenv:
     desc: Run the boot environment release workflow with act on the remote Linux host
