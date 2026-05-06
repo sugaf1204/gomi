@@ -209,6 +209,10 @@ func writePackerVarsJSON(path string, entry oscatalog.Entry, outputDir, ovmfCode
 	if diskSize == "" {
 		diskSize = "8G"
 	}
+	aptPackages := entry.Build.AptPackages
+	if aptPackages == nil {
+		aptPackages = []string{}
+	}
 	raw, err := json.MarshalIndent(packerVars{
 		ImageName:           entry.Name,
 		Architecture:        entry.Arch,
@@ -226,7 +230,7 @@ func writePackerVarsJSON(path string, entry oscatalog.Entry, outputDir, ovmfCode
 		SSHPassword:         "packer",
 		Timeout:             timeout,
 		CurtinKernelPackage: entry.Build.CurtinKernelPackage,
-		AptPackages:         entry.Build.AptPackages,
+		AptPackages:         aptPackages,
 	}, "", "  ")
 	if err != nil {
 		return err

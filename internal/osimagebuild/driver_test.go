@@ -152,6 +152,77 @@ func TestBuildRunsCommandsAndWritesPackerVarJSON(t *testing.T) {
 	}
 }
 
+func TestBuildWritesEmptyAptPackagesArray(t *testing.T) {
+	workDir := filepath.Join(t.TempDir(), "work")
+	outDir := filepath.Join(t.TempDir(), "out")
+	templateDir := filepath.Join(t.TempDir(), "template")
+	writeTemplate(t, templateDir)
+	ovmfCode := filepath.Join(t.TempDir(), "OVMF_CODE.fd")
+	ovmfVars := filepath.Join(t.TempDir(), "OVMF_VARS.fd")
+	if err := os.WriteFile(ovmfCode, []byte("code"), 0o644); err != nil {
+		t.Fatalf("write ovmf code: %v", err)
+	}
+	if err := os.WriteFile(ovmfVars, []byte("vars"), 0o644); err != nil {
+		t.Fatalf("write ovmf vars: %v", err)
+	}
+	t.Setenv("PACKER_OVMF_CODE", ovmfCode)
+	t.Setenv("PACKER_OVMF_VARS", ovmfVars)
+
+	catalog := writeCatalog(t, `
+entries:
+  - name: cloud
+    osFamily: custom
+    osVersion: "1"
+    arch: amd64
+    variant: cloud
+    format: raw
+    sourceFormat: raw
+    sourceCompression: zstd
+    url: cloud.raw.zst
+    bootEnvironment: ubuntu-minimal-cloud-amd64
+    build:
+      type: packer-qemu-cloud-image
+      source:
+        url: https://images.example.test/source.qcow2
+        checksum: sha256:abc
+        format: qcow2
+`)
+	entries, err := LoadCatalog(context.Background(), LoadOptions{
+		CatalogFile:     catalog,
+		ReplaceExternal: true,
+	})
+	if err != nil {
+		t.Fatalf("load catalog: %v", err)
+	}
+	_, err = Build(context.Background(), entries, BuildOptions{
+		EntryName:     "cloud",
+		OutDir:        outDir,
+		WorkDir:       workDir,
+		Template:      templateDir,
+		CommandRunner: &fakeCommandRunner{},
+	})
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	var vars packerVars
+	raw, err := os.ReadFile(filepath.Join(workDir, "build.pkrvars.json"))
+	if err != nil {
+		t.Fatalf("read var file: %v", err)
+	}
+	if err := json.Unmarshal(raw, &vars); err != nil {
+		t.Fatalf("decode var file: %v", err)
+	}
+	if vars.AptPackages == nil {
+		t.Fatalf("apt packages must be an empty array, got nil")
+	}
+	if len(vars.AptPackages) != 0 {
+		t.Fatalf("apt packages = %#v", vars.AptPackages)
+	}
+	if strings.Contains(string(raw), `"apt_packages": null`) {
+		t.Fatalf("var file must not encode apt_packages as null: %s", raw)
+	}
+}
+
 func loadBuildTestCatalog(t *testing.T) []oscatalog.Entry {
 	t.Helper()
 	catalog := writeCatalog(t, `
