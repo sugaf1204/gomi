@@ -8,8 +8,17 @@ packer {
 }
 
 variable "architecture" {
+  type = string
+}
+
+variable "apt_packages" {
+  type    = list(string)
+  default = []
+}
+
+variable "curtin_kernel_package" {
   type    = string
-  default = "amd64"
+  default = ""
 }
 
 variable "disk_size" {
@@ -26,16 +35,6 @@ variable "image_name" {
   type = string
 }
 
-variable "kernel_package" {
-  type    = string
-  default = ""
-}
-
-variable "kernel_package_resolve" {
-  type    = string
-  default = ""
-}
-
 variable "output_directory" {
   type = string
 }
@@ -45,6 +44,14 @@ variable "ovmf_code" {
 }
 
 variable "ovmf_vars" {
+  type = string
+}
+
+variable "qemu_cpu" {
+  type = string
+}
+
+variable "qemu_machine" {
   type = string
 }
 
@@ -85,17 +92,9 @@ locals {
     amd64 = "x86_64"
     arm64 = "aarch64"
   }
-  qemu_cpu = {
-    amd64 = "host"
-    arm64 = "max"
-  }
-  qemu_machine = {
-    amd64 = "accel=kvm"
-    arm64 = "virt"
-  }
 }
 
-source "qemu" "cloudimg" {
+source "qemu" "cloud_image" {
   boot_wait              = "10s"
   cpus                   = 2
   disk_image             = true
@@ -122,8 +121,8 @@ source "qemu" "cloudimg" {
   }
 
   qemuargs = [
-    ["-machine", lookup(local.qemu_machine, var.architecture, "")],
-    ["-cpu", lookup(local.qemu_cpu, var.architecture, "")],
+    ["-machine", var.qemu_machine],
+    ["-cpu", var.qemu_cpu],
     ["-device", "virtio-gpu-pci"],
     ["-drive", "if=pflash,format=raw,id=ovmf_code,readonly=on,file=${var.ovmf_code}"],
     ["-drive", "if=pflash,format=raw,id=ovmf_vars,file=${var.ovmf_vars}"],
@@ -133,13 +132,13 @@ source "qemu" "cloudimg" {
 }
 
 build {
-  sources = ["source.qemu.cloudimg"]
+  sources = ["source.qemu.cloud_image"]
 
   provisioner "shell" {
     environment_vars = [
       "DEBIAN_FRONTEND=noninteractive",
-      "GOMI_KERNEL_PACKAGE=${var.kernel_package}",
-      "GOMI_KERNEL_PACKAGE_RESOLVE=${var.kernel_package_resolve}",
+      "GOMI_APT_PACKAGES=${join(" ", var.apt_packages)}",
+      "GOMI_CURTIN_KERNEL_PACKAGE=${var.curtin_kernel_package}",
     ]
     scripts = ["${path.root}/scripts/provision.sh"]
   }

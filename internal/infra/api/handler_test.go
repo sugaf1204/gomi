@@ -7,10 +7,12 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -2343,6 +2345,55 @@ func TestOSCatalogListsSupportedImages(t *testing.T) {
 	if seen["ubuntu-22.04-amd64-baremetal"] != "ubuntu-minimal-cloud-amd64" {
 		t.Fatalf("expected ubuntu-22.04-amd64-baremetal to use ubuntu-minimal-cloud-amd64 boot environment, got %q", seen["ubuntu-22.04-amd64-baremetal"])
 	}
+}
+
+func TestOSCatalogInstallExternalURLOnlyImage(t *testing.T) {
+	imageSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte("raw-image-content"))
+	}))
+	defer imageSrv.Close()
+
+	catalogPath := filepath.Join(t.TempDir(), "catalog.yaml")
+	if err := os.WriteFile(catalogPath, []byte(fmt.Sprintf(`
+entries:
+  - name: external-url-only
+    osFamily: custom
+    osVersion: "1"
+    arch: amd64
+    variant: baremetal
+    format: raw
+    sourceFormat: raw
+    url: %s/root.raw
+    bootEnvironment: ubuntu-minimal-cloud-amd64
+`, imageSrv.URL)), 0o644); err != nil {
+		t.Fatalf("write catalog: %v", err)
+	}
+	t.Setenv("GOMI_OS_CATALOG_FILE", catalogPath)
+	t.Setenv("GOMI_OS_CATALOG_REPLACE", "true")
+	env := setupTestEnv(t)
+
+	rec := doRequest(env.echo, http.MethodGet, "/api/v1/os-catalog", nil, env.token)
+	requireStatus(t, rec, http.StatusOK)
+	body := parseBody(t, rec)
+	items := body["items"].([]any)
+	if len(items) != 1 {
+		t.Fatalf("expected one external catalog item, got %d", len(items))
+	}
+
+	rec = doRequest(env.echo, http.MethodPost, "/api/v1/os-catalog/external-url-only/install", nil, env.token)
+	requireStatus(t, rec, http.StatusAccepted)
+
+	for i := 0; i < 20; i++ {
+		rec = doRequest(env.echo, http.MethodGet, "/api/v1/os-images/external-url-only", nil, env.token)
+		if rec.Code == http.StatusOK {
+			body = parseBody(t, rec)
+			if body["ready"] == true {
+				return
+			}
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("expected external URL-only image to become ready")
 }
 
 func TestBootEnvironmentsListStartsMissing(t *testing.T) {

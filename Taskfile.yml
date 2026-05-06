@@ -423,29 +423,42 @@ tasks:
       - task: deploy:health
 
   upload-images:
-    desc: Download release/catalog raw OS image artifacts and upload them
+    desc: Install OS catalog entries through the GOMI API
     cmds:
-      - ./tools/upload-os-images.sh "$GOMI_URL" "$GOMI_OS_IMAGE_SOURCE_URL"
+      - ./tools/upload-os-images.sh "$GOMI_URL"
 
-  os-image:build-ubuntu-22.04-baremetal:
-    desc: Build the Ubuntu 22.04 bare-metal target OS image with Packer
+  os-image:catalog:validate:
+    desc: Validate the OS image catalog
     cmds:
-      - IMAGE_NAME=ubuntu-22.04-amd64-baremetal OS_FAMILY=ubuntu OS_VERSION=22.04 ARCHITECTURE=amd64 VARIANT=baremetal KERNEL_PACKAGE=linux-image-generic ./tools/osimage/build-ubuntu-cloudimg-packer.sh
+      - go run ./cmd/gomi-osimage catalog validate
 
-  os-image:build-cloudimg:
-    desc: Build one target OS image variant with Packer using IMAGE_NAME/OS_FAMILY/OS_VERSION/VARIANT
+  os-image:matrix:
+    desc: Print the OS image build matrix
     cmds:
-      - ./tools/osimage/build-ubuntu-cloudimg-packer.sh
+      - go run ./cmd/gomi-osimage catalog matrix
+
+  os-image:build:
+    desc: Build one target OS image from catalog with Packer
+    vars:
+      NAME: '{{.NAME | default .IMAGE_NAME}}'
+    cmds:
+      - |
+        test -n "{{.NAME}}" || (echo "ERROR: pass NAME=<catalog-entry>" >&2; exit 1)
+      - ./tools/osimage/build-cloud-image-packer.sh --name "{{.NAME}}"
 
   os-image:build-all:
-    desc: Build all release target OS image variants with Packer
+    desc: Build every catalog entry that defines a Packer build recipe
     cmds:
-      - IMAGE_NAME=ubuntu-22.04-amd64-cloud OS_FAMILY=ubuntu OS_VERSION=22.04 ARCHITECTURE=amd64 VARIANT=cloud KERNEL_PACKAGE= ./tools/osimage/build-ubuntu-cloudimg-packer.sh
-      - IMAGE_NAME=ubuntu-22.04-amd64-baremetal OS_FAMILY=ubuntu OS_VERSION=22.04 ARCHITECTURE=amd64 VARIANT=baremetal KERNEL_PACKAGE=linux-image-generic ./tools/osimage/build-ubuntu-cloudimg-packer.sh
-      - IMAGE_NAME=ubuntu-24.04-amd64-cloud OS_FAMILY=ubuntu OS_VERSION=24.04 ARCHITECTURE=amd64 VARIANT=cloud KERNEL_PACKAGE= ./tools/osimage/build-ubuntu-cloudimg-packer.sh
-      - IMAGE_NAME=ubuntu-24.04-amd64-baremetal OS_FAMILY=ubuntu OS_VERSION=24.04 ARCHITECTURE=amd64 VARIANT=baremetal KERNEL_PACKAGE=linux-image-generic KERNEL_PACKAGE_RESOLVE=ubuntu-generic-modules ./tools/osimage/build-ubuntu-cloudimg-packer.sh
-      - IMAGE_NAME=debian-13-amd64-cloud OS_FAMILY=debian OS_VERSION=13 ARCHITECTURE=amd64 VARIANT=cloud KERNEL_PACKAGE= ./tools/osimage/build-ubuntu-cloudimg-packer.sh
-      - IMAGE_NAME=debian-13-amd64-baremetal OS_FAMILY=debian OS_VERSION=13 ARCHITECTURE=amd64 VARIANT=baremetal KERNEL_PACKAGE=linux-image-amd64 ./tools/osimage/build-ubuntu-cloudimg-packer.sh
+      - |
+        set -euo pipefail
+        go run ./cmd/gomi-osimage catalog matrix --names | while IFS= read -r name; do
+          go run ./cmd/gomi-osimage build --name "$name"
+        done
+
+  os-image:manifest:
+    desc: Write OS image release manifest and checksums
+    cmds:
+      - go run ./cmd/gomi-osimage manifest --dir {{.DIR | default "dist/os-images"}}
 
   bootenv:validate:
     desc: Validate the GOMI boot environment spec

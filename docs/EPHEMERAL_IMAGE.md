@@ -10,29 +10,27 @@ curl -H "Authorization: Bearer $GOMI_TOKEN" \
   -X POST http://gomi.example/api/v1/os-catalog/debian-13-amd64-baremetal/install
 ```
 
-Installing a catalog entry downloads a prebuilt raw OS image artifact into GOMI
-storage and ensures the referenced boot environment exists. Release assets are
-distributed as `.raw.zst` by default and expanded to local `.raw` files during
-catalog install. Catalog entries are variant-qualified, for example
-`ubuntu-22.04-amd64-cloud` and `ubuntu-22.04-amd64-baremetal`. The `cloud`
-variant preserves the upstream cloud image package set. Every release image is
-built offline with Packer so cleanup, curtin marker creation, and release
-formatting stay in one path. The `baremetal` variant additionally preinstalls
-the distro generic kernel image package needed by physical target machines
-before publishing the release asset. Ubuntu uses `linux-image-generic`; Debian
-uses `linux-image-amd64` and the official `generic` cloud image as its source.
-This follows the same package boundary as packer-maas' cloud-image kernel
-customization flow: install the chosen kernel package and record it under
-`/curtin/CUSTOM_KERNEL`. GOMI does not copy the MAAS curtin hook stack.
-On Ubuntu 22.04, `linux-image-generic` pulls `linux-modules-extra-*` and
-`linux-firmware` as package dependencies and still fits below GitHub's
-per-asset size limit. On Ubuntu 24.04, the same meta package makes the raw zstd
-asset exceed the limit because Noble's `linux-firmware` package is much larger,
-so the builder resolves `linux-image-generic` to the current exact kernel image,
-`linux-modules-*`, and `linux-modules-extra-*` packages. That keeps the wired
-NIC drivers required for bare-metal deployment without forcing the full
-firmware package into the release asset. GOMI does not list `linux-firmware`
-separately and installs without recommended packages.
+Installing a catalog entry downloads a raw OS image artifact into GOMI storage
+and ensures the referenced boot environment exists. Catalog entries live in
+YAML, not Go code. A catalog entry can point at any HTTP(S) `.raw` or
+`.raw.zst` URL. Relative artifact URLs are resolved against
+`GOMI_OS_IMAGE_SOURCE_URL`; absolute URLs are used as-is. Operators can add or
+replace the built-in catalog with `GOMI_OS_CATALOG_FILE`,
+`GOMI_OS_CATALOG_URL`, and `GOMI_OS_CATALOG_REPLACE=true`.
+
+Packer is only an optional release build recipe attached to catalog entries
+with `build:`. Entries without `build:` are URL-only images and are not included
+in the GitHub Actions build matrix. `gomi-osimage` reads the catalog, validates
+it, generates the workflow matrix, runs Packer for buildable entries, and writes
+release manifests/checksums. OS-specific source URLs and package lists belong
+in catalog YAML, not in workflow YAML, Taskfile commands, or Go switch
+statements.
+
+The Packer template is generic cloud-image QEMU plumbing. OVMF is used only so
+Packer can boot the source cloud image as a UEFI VM while preparing the release
+artifact. GOMI auto-detects OVMF firmware paths and copies `OVMF_VARS` into the
+work directory because QEMU mutates the VM's NVRAM. `PACKER_OVMF_CODE` and
+`PACKER_OVMF_VARS` exist only as build-environment overrides.
 
 GOMI does not convert qcow2 images, mount raw disks, install packages into the
 target OS, or otherwise mutate target OS images from the API process. Catalog
@@ -47,6 +45,13 @@ For OS image catalog artifacts, override the release asset base URL with:
 
 ```sh
 GOMI_OS_IMAGE_SOURCE_URL=https://example.invalid/gomi-os-images
+```
+
+To replace the catalog entirely:
+
+```sh
+GOMI_OS_CATALOG_FILE=/etc/gomi/os-catalog.yaml
+GOMI_OS_CATALOG_REPLACE=true
 ```
 
 For boot environments, GOMI fetches `manifest.json`, verifies the declared

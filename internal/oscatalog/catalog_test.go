@@ -1,6 +1,9 @@
 package oscatalog
 
 import (
+	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -10,11 +13,15 @@ import (
 func TestListUsesRawPrebuiltArtifacts(t *testing.T) {
 	t.Setenv("GOMI_OS_IMAGE_SOURCE_URL", "https://images.example.test/gomi")
 
-	for _, entry := range List() {
+	entries, err := ListWithContext(context.Background())
+	if err != nil {
+		t.Fatalf("list catalog: %v", err)
+	}
+	for _, entry := range entries {
 		if entry.Format != osimage.FormatRAW {
 			t.Fatalf("%s format = %s, want raw", entry.Name, entry.Format)
 		}
-		if entry.SourceFormat != "" && entry.SourceFormat != osimage.FormatRAW {
+		if entry.SourceFormat != osimage.FormatRAW {
 			t.Fatalf("%s sourceFormat = %s, want raw", entry.Name, entry.SourceFormat)
 		}
 		if entry.SourceCompression != "zstd" {
@@ -29,36 +36,115 @@ func TestListUsesRawPrebuiltArtifacts(t *testing.T) {
 	}
 }
 
-func TestGetUsesConfiguredSourceBase(t *testing.T) {
-	t.Setenv("GOMI_OS_IMAGE_SOURCE_URL", "https://images.example.test/releases/latest/download/")
-
-	entry, ok := Get("ubuntu-24.04-amd64-baremetal")
-	if !ok {
-		t.Fatal("expected ubuntu-24.04-amd64-baremetal catalog entry")
+func TestExternalCatalogFileCanReplaceDefaults(t *testing.T) {
+	path := writeCatalog(t, `
+entries:
+  - name: external-image
+    osFamily: custom
+    osVersion: "1"
+    arch: amd64
+    variant: baremetal
+    format: raw
+    sourceFormat: raw
+    sourceCompression: zstd
+    url: https://images.example.test/external.raw.zst
+    bootEnvironment: ubuntu-minimal-cloud-amd64
+`)
+	entries, err := Load(context.Background(), LoadOptions{
+		CatalogFile:     path,
+		ReplaceExternal: true,
+	})
+	if err != nil {
+		t.Fatalf("load catalog: %v", err)
 	}
-	if got, want := entry.URL, "https://images.example.test/releases/latest/download/ubuntu-24.04-amd64-baremetal.raw.zst"; got != want {
-		t.Fatalf("URL = %q, want %q", got, want)
+	if len(entries) != 1 || entries[0].Name != "external-image" {
+		t.Fatalf("expected replacement catalog to contain only external-image, got %#v", entries)
+	}
+	if entries[0].URL != "https://images.example.test/external.raw.zst" {
+		t.Fatalf("absolute URL was modified: %q", entries[0].URL)
 	}
 }
 
-func TestListIncludesCloudAndBareMetalVariants(t *testing.T) {
-	t.Setenv("GOMI_OS_IMAGE_SOURCE_URL", "https://images.example.test/gomi")
+func TestExternalCatalogFileOverlaysDefaultByName(t *testing.T) {
+	path := writeCatalog(t, `
+entries:
+  - name: ubuntu-24.04-amd64-cloud
+    osFamily: ubuntu
+    osVersion: "24.04"
+    arch: amd64
+    variant: cloud
+    format: raw
+    sourceFormat: raw
+    sourceCompression: zstd
+    url: override.raw.zst
+    bootEnvironment: ubuntu-minimal-cloud-amd64
+  - name: vendor-image
+    osFamily: vendor
+    osVersion: "2026"
+    arch: amd64
+    variant: baremetal
+    format: raw
+    sourceFormat: raw
+    sourceCompression: zstd
+    url: https://vendor.example.test/root.raw.zst
+    bootEnvironment: ubuntu-minimal-cloud-amd64
+`)
 
-	want := map[string]osimage.Variant{
-		"debian-13-amd64-cloud":        osimage.VariantCloud,
-		"debian-13-amd64-baremetal":    osimage.VariantBareMetal,
-		"ubuntu-22.04-amd64-cloud":     osimage.VariantCloud,
-		"ubuntu-22.04-amd64-baremetal": osimage.VariantBareMetal,
-		"ubuntu-24.04-amd64-cloud":     osimage.VariantCloud,
-		"ubuntu-24.04-amd64-baremetal": osimage.VariantBareMetal,
+	entries, err := Load(context.Background(), LoadOptions{
+		SourceBase:  "https://release.example.test/assets",
+		CatalogFile: path,
+	})
+	if err != nil {
+		t.Fatalf("load catalog: %v", err)
 	}
-	got := map[string]osimage.Variant{}
-	for _, entry := range List() {
-		got[entry.Name] = entry.Variant
+	got := map[string]Entry{}
+	for _, entry := range entries {
+		got[entry.Name] = entry
 	}
-	for name, variant := range want {
-		if got[name] != variant {
-			t.Fatalf("%s variant = %q, want %q", name, got[name], variant)
+	if got["ubuntu-24.04-amd64-cloud"].URL != "https://release.example.test/assets/override.raw.zst" {
+		t.Fatalf("default entry was not overlaid with relative URL base resolution: %#v", got["ubuntu-24.04-amd64-cloud"])
+	}
+	if got["vendor-image"].URL != "https://vendor.example.test/root.raw.zst" {
+		t.Fatalf("absolute external URL was modified: %q", got["vendor-image"].URL)
+	}
+}
+
+func TestBuildEntriesExcludeURLOnlyEntries(t *testing.T) {
+	entries, err := Load(context.Background(), LoadOptions{})
+	if err != nil {
+		t.Fatalf("load catalog: %v", err)
+	}
+	buildEntries := BuildEntries(entries)
+	if len(buildEntries) == 0 {
+		t.Fatal("expected default catalog to include build recipes")
+	}
+	for _, entry := range buildEntries {
+		if entry.Build == nil {
+			t.Fatalf("build entry %s has nil build recipe", entry.Name)
 		}
 	}
+
+	urlOnly := Entry{
+		Name:              "url-only",
+		OSFamily:          "custom",
+		OSVersion:         "1",
+		Arch:              "amd64",
+		Format:            osimage.FormatRAW,
+		SourceFormat:      osimage.FormatRAW,
+		SourceCompression: "zstd",
+		URL:               "https://images.example.test/root.raw.zst",
+		BootEnvironment:   "ubuntu-minimal-cloud-amd64",
+	}
+	if got := BuildEntries([]Entry{urlOnly}); len(got) != 0 {
+		t.Fatalf("expected URL-only entry to be excluded from build matrix, got %#v", got)
+	}
+}
+
+func writeCatalog(t *testing.T, body string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "catalog.yaml")
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatalf("write catalog: %v", err)
+	}
+	return path
 }

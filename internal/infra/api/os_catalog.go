@@ -32,14 +32,21 @@ type osCatalogEntryResponse struct {
 func (s *Server) ListOSCatalog(c echo.Context) error {
 	ctx := c.Request().Context()
 	items := make([]osCatalogEntryResponse, 0)
-	for _, entry := range oscatalog.List() {
+	entries, err := oscatalog.ListWithContext(ctx)
+	if err != nil {
+		return c.JSON(gohttp.StatusInternalServerError, map[string]string{"error": err.Error()})
+	}
+	for _, entry := range entries {
 		items = append(items, s.osCatalogStatus(ctx, entry))
 	}
 	return c.JSON(gohttp.StatusOK, map[string]any{"items": items})
 }
 
 func (s *Server) InstallOSCatalogEntry(c echo.Context) error {
-	entry, ok := oscatalog.Get(c.Param("name"))
+	entry, ok, err := oscatalog.GetWithContext(c.Request().Context(), c.Param("name"))
+	if err != nil {
+		return c.JSON(gohttp.StatusInternalServerError, map[string]string{"error": err.Error()})
+	}
 	if !ok {
 		return c.JSON(gohttp.StatusNotFound, map[string]string{"error": "catalog entry not found"})
 	}
