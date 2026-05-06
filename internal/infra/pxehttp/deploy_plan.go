@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/labstack/echo/v4"
+	"gopkg.in/yaml.v3"
 
 	apiinventory "github.com/sugaf1204/gomi/api/inventory"
 	"github.com/sugaf1204/gomi/internal/hwinfo"
@@ -429,42 +430,63 @@ func (h *Handler) buildCurtinInstallConfig(ctx context.Context, c echo.Context, 
 		`sed -i 's/discard,errors=remount-ro/defaults,errors=remount-ro/g' "$TARGET_MOUNT_POINT/etc/fstab" 2>/dev/null || true; sed -i -E 's/(root=[^ ]+) ro /\1 rw /g' "$TARGET_MOUNT_POINT/boot/grub/grub.cfg" 2>/dev/null || true`,
 	}
 
-	var b strings.Builder
-	b.WriteString("install:\n")
-	b.WriteString("  log_file: /tmp/curtin-install.log\n")
-	b.WriteString("  save_install_config: /root/gomi-curtin.yaml\n")
-	b.WriteString("  save_install_log: /var/log/gomi-curtin-install.log\n")
+	type curtinInstall struct {
+		LogFile           string `yaml:"log_file"`
+		SaveInstallConfig string `yaml:"save_install_config"`
+		SaveInstallLog    string `yaml:"save_install_log"`
+	}
+	type curtinAptMirrors struct {
+		UbuntuArchive  string `yaml:"ubuntu_archive,omitempty"`
+		UbuntuSecurity string `yaml:"ubuntu_security,omitempty"`
+	}
+	type curtinBlockMeta struct {
+		Devices []string `yaml:"devices"`
+	}
+	type curtinSource struct {
+		Type string `yaml:"type"`
+		URI  string `yaml:"uri"`
+	}
+	type curtinConfig struct {
+		Install      curtinInstall           `yaml:"install"`
+		AptMirrors   *curtinAptMirrors       `yaml:"apt_mirrors,omitempty"`
+		BlockMeta    curtinBlockMeta         `yaml:"block-meta"`
+		Sources      map[string]curtinSource `yaml:"sources"`
+		Stages       []string                `yaml:"stages"`
+		LateCommands map[string][]string     `yaml:"late_commands"`
+	}
+
+	cfg := curtinConfig{
+		Install: curtinInstall{
+			LogFile:           "/tmp/curtin-install.log",
+			SaveInstallConfig: "/root/gomi-curtin.yaml",
+			SaveInstallLog:    "/var/log/gomi-curtin-install.log",
+		},
+		BlockMeta: curtinBlockMeta{
+			Devices: []string{targetDisk},
+		},
+		Sources: map[string]curtinSource{
+			"00-root": {
+				Type: "dd-raw",
+				URI:  sourceURI,
+			},
+		},
+		Stages:       []string{"early", "partitioning", "network", "extract", "late"},
+		LateCommands: make(map[string][]string, len(lateCommands)),
+	}
 	if ubuntuMirror := strings.TrimRight(strings.TrimSpace(os.Getenv("GOMI_CURTIN_UBUNTU_MIRROR")), "/"); ubuntuMirror != "" && strings.EqualFold(strings.TrimSpace(img.OSFamily), "ubuntu") {
-		b.WriteString("apt_mirrors:\n")
-		b.WriteString("  ubuntu_archive: " + yamlQuote(ubuntuMirror) + "\n")
-		b.WriteString("  ubuntu_security: " + yamlQuote(ubuntuMirror) + "\n")
+		cfg.AptMirrors = &curtinAptMirrors{
+			UbuntuArchive:  ubuntuMirror,
+			UbuntuSecurity: ubuntuMirror,
+		}
 	}
-	b.WriteString("block-meta:\n")
-	b.WriteString("  devices:\n")
-	b.WriteString("    - " + yamlQuote(targetDisk) + "\n")
-	b.WriteString("sources:\n")
-	b.WriteString("  00-root:\n")
-	b.WriteString("    type: dd-raw\n")
-	b.WriteString("    uri: " + yamlQuote(sourceURI) + "\n")
-	b.WriteString("stages:\n")
-	b.WriteString("  - early\n")
-	b.WriteString("  - partitioning\n")
-	b.WriteString("  - network\n")
-	b.WriteString("  - extract\n")
-	b.WriteString("  - late\n")
-	b.WriteString("late_commands:\n")
 	for i, cmd := range lateCommands {
-		b.WriteString(fmt.Sprintf("  %02d-gomi-late: %s\n", i+10, yamlShellCommand(cmd)))
+		cfg.LateCommands[fmt.Sprintf("%02d-gomi-late", i+10)] = []string{"sh", "-c", cmd}
 	}
-	return b.String(), nil
-}
-
-func yamlQuote(value string) string {
-	return strconv.Quote(value)
-}
-
-func yamlShellCommand(command string) string {
-	return "[" + yamlQuote("sh") + ", " + yamlQuote("-c") + ", " + yamlQuote(command) + "]"
+	raw, err := yaml.Marshal(cfg)
+	if err != nil {
+		return "", err
+	}
+	return string(raw), nil
 }
 
 func (h *Handler) artifactURL(base string, img osimage.OSImage, rel string) (string, error) {

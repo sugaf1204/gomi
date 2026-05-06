@@ -14,6 +14,9 @@ func ValidateSubnet(s Subnet) error {
 	if strings.TrimSpace(s.Spec.CIDR) == "" {
 		return errors.New("spec.cidr is required")
 	}
+	if len(s.Spec.DNSServers) == 0 {
+		return errors.New("spec.dnsServers is required")
+	}
 	_, _, err := net.ParseCIDR(s.Spec.CIDR)
 	if err != nil {
 		return fmt.Errorf("spec.cidr is invalid: %w", err)
