@@ -128,6 +128,56 @@ func TestBuildArtifacts_NoSSHKeysWhenRefsUnspecified(t *testing.T) {
 	}
 }
 
+func TestBuildArtifacts_SelectedSSHKeysDefaultToOSUser(t *testing.T) {
+	_, installCfg, err := provision.BuildArtifacts(machine.Machine{
+		Name:       "bm-default-key",
+		Hostname:   "bm-default-key",
+		Firmware:   machine.FirmwareUEFI,
+		SSHKeyRefs: []string{"alice"},
+	}, "http://boot.local/pxe", []sshkey.SSHKey{
+		{Name: "alice", PublicKey: "ssh-ed25519 AAAA test"},
+	})
+	if err != nil {
+		t.Fatalf("BuildArtifacts: %v", err)
+	}
+	cfg := parseCloudConfig(t, installCfg)
+	keys, ok := cfg["ssh_authorized_keys"].([]any)
+	if !ok || len(keys) != 1 || keys[0] != "ssh-ed25519 AAAA test" {
+		t.Fatalf("top-level ssh_authorized_keys = %#v, want selected key", cfg["ssh_authorized_keys"])
+	}
+}
+
+func TestBuildArtifacts_SelectedSSHKeysTargetLoginUserOnly(t *testing.T) {
+	_, installCfg, err := provision.BuildArtifacts(machine.Machine{
+		Name:       "bm-login-key",
+		Hostname:   "bm-login-key",
+		Firmware:   machine.FirmwareUEFI,
+		SSHKeyRefs: []string{"alice"},
+		LoginUser:  &machine.LoginUserSpec{Username: "admin"},
+	}, "http://boot.local/pxe", []sshkey.SSHKey{
+		{Name: "alice", PublicKey: "ssh-ed25519 AAAA test"},
+	})
+	if err != nil {
+		t.Fatalf("BuildArtifacts: %v", err)
+	}
+	cfg := parseCloudConfig(t, installCfg)
+	if _, has := cfg["ssh_authorized_keys"]; has {
+		t.Fatalf("top-level ssh_authorized_keys must be absent when loginUser is set:\n%s", installCfg)
+	}
+	users, ok := cfg["users"].([]any)
+	if !ok || len(users) != 2 {
+		t.Fatalf("users = %#v, want default plus login user", cfg["users"])
+	}
+	entry, ok := users[1].(map[string]any)
+	if !ok {
+		t.Fatalf("users[1] = %#v, want map", users[1])
+	}
+	keys, ok := entry["ssh_authorized_keys"].([]any)
+	if !ok || len(keys) != 1 || keys[0] != "ssh-ed25519 AAAA test" {
+		t.Fatalf("login user ssh_authorized_keys = %#v, want selected key", entry["ssh_authorized_keys"])
+	}
+}
+
 func TestBuildArtifacts_LoginUserPasswordEnablesSSHPWAuth(t *testing.T) {
 	_, installCfg, err := provision.BuildArtifacts(machine.Machine{
 		Name:     "bm-password",
@@ -172,4 +222,14 @@ func TestBuildCloudInitUsers_RendersValidYAML(t *testing.T) {
 	if strings.Contains(out, "- name: default") {
 		t.Errorf("yaml must NOT contain '- name: default' (would create a literal 'default' user):\n%s", out)
 	}
+}
+
+func parseCloudConfig(t *testing.T, raw string) map[string]any {
+	t.Helper()
+	raw = strings.TrimPrefix(raw, "#cloud-config\n")
+	var cfg map[string]any
+	if err := yaml.Unmarshal([]byte(raw), &cfg); err != nil {
+		t.Fatalf("yaml.Unmarshal: %v\n%s", err, raw)
+	}
+	return cfg
 }

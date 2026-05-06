@@ -40,12 +40,11 @@ func targetUserSpec(n node.Node) (refs []string, loginUser *machine.LoginUserSpe
 }
 
 // injectSSHKeysAndLoginUser merges the registered SSH keys (filtered by the
-// target's SSHKeyRefs when set) and the optional per-target login user into
-// the cloud-config user-data. It enables SSH password authentication only
-// when a per-target password-backed login user is configured. When
-// sshkeyStore is unavailable or yields
-// no usable keys and no extra user is configured, the input is returned as
-// is, apart from the ssh_pwauth policy above.
+// target's SSHKeyRefs when set) and optional per-target SSH login user into
+// the cloud-config user-data. Without a login user, keys are installed on the
+// distribution default user. With a login user, keys are installed only on
+// that user. It enables SSH password authentication only when a per-target
+// password-backed login user is configured.
 func (h *Handler) injectSSHKeysAndLoginUser(ctx context.Context, cloudConfig string, n node.Node) string {
 	trimmed := strings.TrimSpace(cloudConfig)
 	if trimmed == "" {
@@ -76,10 +75,12 @@ func (h *Handler) injectSSHKeysAndLoginUser(ctx context.Context, cloudConfig str
 
 	cfg["ssh_pwauth"] = provision.LoginUserPasswordConfigured(loginUser)
 
-	// Top-level ssh_authorized_keys is applied by cloud-init to the
-	// distribution's default user when `users: [default, ...]` is in effect.
-	if len(pubKeys) > 0 {
+	if len(pubKeys) > 0 && !provision.LoginUserConfigured(loginUser) {
+		// Top-level ssh_authorized_keys is applied by cloud-init to the
+		// distribution's default user when `users: [default]` is in effect.
 		cfg["ssh_authorized_keys"] = pubKeys
+	} else if provision.LoginUserConfigured(loginUser) {
+		delete(cfg, "ssh_authorized_keys")
 	}
 
 	// Only override `users:` when we actually have something to inject;

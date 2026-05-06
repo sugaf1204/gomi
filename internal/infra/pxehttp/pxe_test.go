@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/labstack/echo/v4"
+	"gopkg.in/yaml.v3"
 
 	apiinventory "github.com/sugaf1204/gomi/api/inventory"
 	"github.com/sugaf1204/gomi/internal/cloudinit"
@@ -21,6 +22,7 @@ import (
 	"github.com/sugaf1204/gomi/internal/machine"
 	"github.com/sugaf1204/gomi/internal/osimage"
 	"github.com/sugaf1204/gomi/internal/power"
+	"github.com/sugaf1204/gomi/internal/sshkey"
 	"github.com/sugaf1204/gomi/internal/subnet"
 	"github.com/sugaf1204/gomi/internal/vm"
 )
@@ -687,6 +689,116 @@ func TestPXENocloudUserData_MachineLoginUserPasswordEnablesSSHPWAuth(t *testing.
 	}
 }
 
+func TestPXENocloudUserData_SelectedSSHKeysDefaultToOSUser(t *testing.T) {
+	backend := memory.New()
+	machineSvc := machine.NewService(backend.Machines())
+	sshKeySvc := sshkey.NewService(backend.SSHKeys())
+	now := time.Now().UTC()
+	target := machine.Machine{
+		Name:       "bm-default-key",
+		Hostname:   "bm-default-key",
+		MAC:        "52:54:00:aa:bb:dd",
+		Arch:       "amd64",
+		Firmware:   machine.FirmwareUEFI,
+		SSHKeyRefs: []string{"alice"},
+		OSPreset: machine.OSPreset{
+			Family: machine.OSTypeUbuntu,
+		},
+		Phase: machine.PhaseProvisioning,
+		Provision: &machine.ProvisionProgress{
+			Active:          true,
+			CompletionToken: "token-default-key",
+		},
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	if err := backend.Machines().Upsert(context.Background(), target); err != nil {
+		t.Fatalf("upsert machine: %v", err)
+	}
+	if err := backend.SSHKeys().Upsert(context.Background(), sshkey.SSHKey{Name: "alice", PublicKey: "ssh-ed25519 AAAA test"}); err != nil {
+		t.Fatalf("upsert ssh key: %v", err)
+	}
+
+	e := echo.New()
+	req := httptest.NewRequest(http.MethodGet, "/pxe/nocloud/525400aabbdd/user-data", nil)
+	req.Host = "192.168.2.254:8080"
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+	c.SetParamNames("mac")
+	c.SetParamValues("525400aabbdd")
+
+	h := &Handler{machines: machineSvc, sshkeys: sshKeySvc}
+	if err := h.PXENocloudUserData(c); err != nil {
+		t.Fatalf("PXENocloudUserData: %v", err)
+	}
+	cfg := parseCloudConfigBody(t, rec.Body.String())
+	keys, ok := cfg["ssh_authorized_keys"].([]any)
+	if !ok || len(keys) != 1 || keys[0] != "ssh-ed25519 AAAA test" {
+		t.Fatalf("top-level ssh_authorized_keys = %#v, want selected key", cfg["ssh_authorized_keys"])
+	}
+}
+
+func TestPXENocloudUserData_SelectedSSHKeysTargetLoginUserOnly(t *testing.T) {
+	backend := memory.New()
+	machineSvc := machine.NewService(backend.Machines())
+	sshKeySvc := sshkey.NewService(backend.SSHKeys())
+	now := time.Now().UTC()
+	target := machine.Machine{
+		Name:       "bm-login-key",
+		Hostname:   "bm-login-key",
+		MAC:        "52:54:00:aa:bb:ee",
+		Arch:       "amd64",
+		Firmware:   machine.FirmwareUEFI,
+		SSHKeyRefs: []string{"alice"},
+		LoginUser:  &machine.LoginUserSpec{Username: "admin"},
+		OSPreset: machine.OSPreset{
+			Family: machine.OSTypeUbuntu,
+		},
+		Phase: machine.PhaseProvisioning,
+		Provision: &machine.ProvisionProgress{
+			Active:          true,
+			CompletionToken: "token-login-key",
+		},
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	if err := backend.Machines().Upsert(context.Background(), target); err != nil {
+		t.Fatalf("upsert machine: %v", err)
+	}
+	if err := backend.SSHKeys().Upsert(context.Background(), sshkey.SSHKey{Name: "alice", PublicKey: "ssh-ed25519 AAAA test"}); err != nil {
+		t.Fatalf("upsert ssh key: %v", err)
+	}
+
+	e := echo.New()
+	req := httptest.NewRequest(http.MethodGet, "/pxe/nocloud/525400aabbee/user-data", nil)
+	req.Host = "192.168.2.254:8080"
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+	c.SetParamNames("mac")
+	c.SetParamValues("525400aabbee")
+
+	h := &Handler{machines: machineSvc, sshkeys: sshKeySvc}
+	if err := h.PXENocloudUserData(c); err != nil {
+		t.Fatalf("PXENocloudUserData: %v", err)
+	}
+	cfg := parseCloudConfigBody(t, rec.Body.String())
+	if _, has := cfg["ssh_authorized_keys"]; has {
+		t.Fatalf("top-level ssh_authorized_keys must be absent when loginUser is set:\n%s", rec.Body.String())
+	}
+	users, ok := cfg["users"].([]any)
+	if !ok || len(users) != 2 {
+		t.Fatalf("users = %#v, want default plus login user", cfg["users"])
+	}
+	entry, ok := users[1].(map[string]any)
+	if !ok {
+		t.Fatalf("users[1] = %#v, want map", users[1])
+	}
+	keys, ok := entry["ssh_authorized_keys"].([]any)
+	if !ok || len(keys) != 1 || keys[0] != "ssh-ed25519 AAAA test" {
+		t.Fatalf("login user ssh_authorized_keys = %#v, want selected key", entry["ssh_authorized_keys"])
+	}
+}
+
 func TestPXENocloudVendorData(t *testing.T) {
 	e := echo.New()
 	req := httptest.NewRequest(http.MethodGet, "/pxe/nocloud/525400445566/vendor-data", nil)
@@ -706,6 +818,16 @@ func TestPXENocloudVendorData(t *testing.T) {
 	if !strings.Contains(body, "#cloud-config") {
 		t.Fatalf("expected cloud-config vendor-data, got: %s", body)
 	}
+}
+
+func parseCloudConfigBody(t *testing.T, raw string) map[string]any {
+	t.Helper()
+	raw = strings.TrimPrefix(raw, "#cloud-config\n")
+	var cfg map[string]any
+	if err := yaml.Unmarshal([]byte(raw), &cfg); err != nil {
+		t.Fatalf("yaml.Unmarshal: %v\n%s", err, raw)
+	}
+	return cfg
 }
 
 func TestPXENocloudMetaData_UsesVMName(t *testing.T) {

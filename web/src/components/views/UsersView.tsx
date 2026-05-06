@@ -56,8 +56,8 @@ export function UsersView({ sshKeys, onRefresh }: UsersViewProps) {
       <h2 className="text-[1.4rem]">SSH Keys</h2>
       <p className="m-0 text-ink-soft text-[0.84rem]">
         Registered keys are available to attach to a Machine or VM at deploy time. They are
-        installed for the OS distribution's default user (e.g. <code>ubuntu</code>, <code>debian</code>),
-        and for any extra login user you configure on the target.
+        installed for the OS distribution's default user (e.g. <code>ubuntu</code>, <code>debian</code>)
+        unless an SSH login user is configured on the target.
       </p>
 
       <form onSubmit={(e) => void handleCreate(e)} className="grid gap-[0.5rem] border border-line bg-panel p-[0.75rem]">

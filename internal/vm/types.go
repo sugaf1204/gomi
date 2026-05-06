@@ -82,9 +82,8 @@ type InstallConfig struct {
 	Inline string            `json:"inline,omitempty"`
 }
 
-// LoginUserSpec describes an extra OS user to provision in addition to the
-// distribution's default cloud-init user. SSH keys registered separately are
-// granted to both the default user and this extra user when present.
+// LoginUserSpec describes the OS user that receives selected SSH keys. When
+// unset, keys are installed on the distribution's default cloud-init user.
 type LoginUserSpec struct {
 	Username string `json:"username"`
 	// Password is a plaintext password. Empty means no password (key-only).

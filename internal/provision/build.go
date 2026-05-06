@@ -59,14 +59,11 @@ func collectPublicKeys(keys []sshkey.SSHKey) []string {
 	return out
 }
 
-// BuildCloudInitUsers builds the cloud-config `users:` list for the given
-// optional extra login user. The first entry is the YAML scalar `default`,
-// which is cloud-init's magic token to materialise the distribution's
-// stock user (ubuntu/debian/fedora/...). When loginUser is set, an extra
-// account is appended carrying the SSH keys and an optional plaintext
-// password. The keys for the default user are NOT included here; callers
-// should set top-level `ssh_authorized_keys` instead — cloud-init applies
-// that field to the default user automatically.
+// BuildCloudInitUsers builds the cloud-config `users:` list for the optional
+// SSH login user. The first entry is the YAML scalar `default`, which is
+// cloud-init's magic token to materialise the distribution's stock user
+// (ubuntu/debian/fedora/...). When loginUser is set, an extra account is
+// appended carrying the SSH keys and an optional plaintext password.
 //
 // Pure function: callers can reuse it for both physical machine and VM
 // cloud-init generation, keeping the two surfaces symmetric.
@@ -98,6 +95,10 @@ func LoginUserPasswordConfigured(loginUser *machine.LoginUserSpec) bool {
 	return loginUser != nil && strings.TrimSpace(loginUser.Password) != ""
 }
 
+func LoginUserConfigured(loginUser *machine.LoginUserSpec) bool {
+	return loginUser != nil && strings.TrimSpace(loginUser.Username) != ""
+}
+
 func buildLinuxCloudInit(m machine.Machine, sshKeys []sshkey.SSHKey) string {
 	selected := SelectKeysForRefs(sshKeys, m.SSHKeyRefs)
 	pubKeys := collectPublicKeys(selected)
@@ -116,7 +117,7 @@ func buildLinuxCloudInit(m machine.Machine, sshKeys []sshkey.SSHKey) string {
 			"systemctl enable serial-getty@ttyS0.service || true",
 		},
 	}
-	if len(pubKeys) > 0 {
+	if len(pubKeys) > 0 && !LoginUserConfigured(m.LoginUser) {
 		// Top-level ssh_authorized_keys are applied by cloud-init to the
 		// distribution's default user (the YAML `default` token in users[0]).
 		cfg["ssh_authorized_keys"] = pubKeys

@@ -291,9 +291,9 @@ func (h *Handler) PXENocloudUserData(c echo.Context) error {
 
 	result := injectCloudConfigCompletion(body, completeURL, hostname)
 
-	// Inject the registered SSH keys and any per-target login user. Both the
-	// distribution's default user (created by `users: [default]`) and the
-	// optional extra user receive the keys; password SSH stays disabled.
+	// Inject registered SSH keys and any per-target login user. Without a
+	// login user, keys go to the distribution default user; with one, only
+	// that user receives the keys.
 	result = h.injectSSHKeysAndLoginUser(ctx, result, target.node)
 
 	if m, ok := target.node.(*machine.Machine); ok {

@@ -66,8 +66,8 @@ export function SSHAccessFieldset({ sshKeys, value, onChange, onRefresh }: SSHAc
       <div className="grid gap-[0.45rem] p-[0.7rem]">
         <div className="flex items-start justify-between gap-[0.6rem]">
           <p className="m-0 text-[0.76rem] text-ink-soft">
-            Selected keys are installed on the OS distribution's default user (e.g. <code>ubuntu</code>) and
-            on the optional extra login user below. Password SSH login is disabled.
+            Selected keys are installed on the OS distribution's default user (e.g. <code>ubuntu</code>) unless
+            an SSH login user is specified below. When specified, only that user receives the keys.
           </p>
           <button
             type="button"
@@ -169,7 +169,7 @@ export function SSHAccessFieldset({ sshKeys, value, onChange, onRefresh }: SSHAc
 
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-[0.4rem]">
           <label className="text-[0.84rem]">
-            Extra login user (optional)
+            SSH login user (optional)
             <input
               placeholder="e.g. admin"
               value={value.loginUserUsername}
