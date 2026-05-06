@@ -1,9 +1,13 @@
 name: Release
 
 on:
+  pull_request:
   push:
+    branches:
+      - "**"
     tags:
       - "v*"
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -63,7 +67,7 @@ jobs:
           printf 'sha256=%s.sha256\n' "${debs[0]}" >> "$GITHUB_OUTPUT"
 
       - name: Publish release assets
-        if: env.ACT_SKIP_PUBLISH != 'true'
+        if: startsWith(github.ref, 'refs/tags/') && env.ACT_SKIP_PUBLISH != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.ref_name }}
