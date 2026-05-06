@@ -103,3 +103,28 @@ https://google.aip.dev/). Priority issues identified:
   path parameters with stable UUIDs to prevent URL breakage if names change.
 - **Deduplicate actions**: `reinstall` and `redeploy` are identical on both
   `/machines` and `/virtual-machines`; consolidate to a single endpoint.
+
+## 21. Target OS rootfs and hardware bundle deployment
+
+Reduce target OS image size without losing bare-metal driver support. Do not mix
+the PXE runtime OS with the installed target OS.
+
+- Keep the PXE OS minimal: deploy runner, curtin, inventory collection, and
+  artifact download/apply logic only.
+- Store target OS hardware support as versioned GOMI artifacts instead of
+  baking everything into the target image or PXE rootfs.
+- Treat firmware and kernel modules differently:
+  - Firmware can be selected by hardware inventory and copied into the target
+    rootfs when needed.
+  - Kernel modules must match the target kernel ABI, so modules are provided as
+    target-kernel-specific bundles.
+- Extend OS image manifests to describe the target kernel and available hardware
+  bundles, including module names, firmware paths, checksums, and sizes.
+- During deploy, use hardware inventory to select only the required bundles,
+  download them from the GOMI server, and inject them into curtin's target rootfs
+  after extract.
+- After injection, run target-side `depmod` and `update-initramfs` for the target
+  kernel so NIC/storage drivers are available after reboot.
+- Keep Packer optional. Standard GOMI usage should work with catalog images plus
+  manifest-driven hardware bundles, without requiring users to build images on
+  the GOMI server.
