@@ -139,7 +139,7 @@ func Defaults() Config {
 	return Config{
 		DBDriver:              "sqlite",
 		DBDsn:                 "",
-		ListenAddr:            ":8080",
+		ListenAddr:            "0.0.0.0:8080",
 		DataDir:               dataDir,
 		SessionTTL:            12 * time.Hour,
 		BackgroundSyncEnabled: true,

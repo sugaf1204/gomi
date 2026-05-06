@@ -11,6 +11,9 @@ func TestFromEnvDNSDefaults(t *testing.T) {
 	clearConfigEnv(t)
 
 	cfg := FromEnv()
+	if cfg.ListenAddr != "0.0.0.0:8080" {
+		t.Fatalf("expected listen addr 0.0.0.0:8080, got %q", cfg.ListenAddr)
+	}
 	if cfg.DNSMode != DNSModeOff {
 		t.Fatalf("expected DNSMode off, got %q", cfg.DNSMode)
 	}

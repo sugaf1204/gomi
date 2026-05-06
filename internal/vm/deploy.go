@@ -5,10 +5,12 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"net"
 	"path/filepath"
 	"strings"
 
 	"github.com/sugaf1204/gomi/internal/hypervisor"
+	"github.com/sugaf1204/gomi/internal/infra/netdetect"
 	"github.com/sugaf1204/gomi/internal/libvirt"
 	"github.com/sugaf1204/gomi/internal/osimage"
 	"github.com/sugaf1204/gomi/internal/resource"
@@ -21,7 +23,10 @@ type Deployer struct {
 	OSImages    *osimage.Service
 	VMs         *Service
 	PXEBaseURL  string
+	ListenAddr  string
 }
+
+type primaryIPDetector func() (string, error)
 
 func (d *Deployer) Deploy(ctx context.Context, created *VirtualMachine, pxeNoCloudFn func(base string, installType InstallConfigType, mac string) string) error {
 	hv, err := d.Hypervisors.Get(ctx, created.HypervisorRef)
@@ -29,6 +34,14 @@ func (d *Deployer) Deploy(ctx context.Context, created *VirtualMachine, pxeNoClo
 		log.Printf("deploy vm %s: resolve hypervisor %s: %v", created.Name, created.HypervisorRef, err)
 		d.updatePhaseOnError(ctx, created, "resolve-hypervisor", err)
 		return fmt.Errorf("resolve hypervisor %s: %w", created.HypervisorRef, err)
+	}
+
+	installType := resolveInstallType(*created)
+	pxeBaseURL, err := d.resolvePXEBaseURL(hv, installType)
+	if err != nil {
+		log.Printf("deploy vm %s: resolve pxe base url: %v", created.Name, err)
+		d.updatePhaseOnError(ctx, created, "resolve-pxe-base-url", err)
+		return fmt.Errorf("resolve pxe base url: %w", err)
 	}
 
 	cfg := BuildLibvirtConfig(hv)
@@ -40,7 +53,6 @@ func (d *Deployer) Deploy(ctx context.Context, created *VirtualMachine, pxeNoClo
 	}
 	defer exec.Close()
 
-	installType := resolveInstallType(*created)
 	diskFormat := "qcow2"
 	bootDev := "network"
 
@@ -65,7 +77,7 @@ func (d *Deployer) Deploy(ctx context.Context, created *VirtualMachine, pxeNoClo
 		}
 	}
 
-	domainCfg := BuildDomainConfig(*created, created.Name, bootDev, d.PXEBaseURL, pxeNoCloudFn)
+	domainCfg := BuildDomainConfig(*created, created.Name, bootDev, pxeBaseURL, pxeNoCloudFn)
 	domainCfg.DiskFormat = diskFormat
 	applyInstallStorageOverrides(&domainCfg, installType)
 
@@ -118,19 +130,23 @@ func (d *Deployer) Redeploy(ctx context.Context, v VirtualMachine, pxeNoCloudFn 
 		return fmt.Errorf("resolve hypervisor %s: %w", v.HypervisorRef, err)
 	}
 
-	cfg := BuildLibvirtConfig(hv)
-	exec, err := libvirt.NewExecutor(cfg)
+	installType := resolveInstallType(v)
+	pxeBaseURL, err := d.resolvePXEBaseURL(hv, installType)
 	if err != nil {
-		return fmt.Errorf("connect to hypervisor %s: %w", hv.Name, err)
+		return fmt.Errorf("resolve pxe base url for %s: %w", v.Name, err)
 	}
-	defer exec.Close()
 
 	domainName := strings.TrimSpace(v.LibvirtDomain)
 	if domainName == "" {
 		domainName = v.Name
 	}
 
-	installType := resolveInstallType(v)
+	cfg := BuildLibvirtConfig(hv)
+	exec, err := libvirt.NewExecutor(cfg)
+	if err != nil {
+		return fmt.Errorf("connect to hypervisor %s: %w", hv.Name, err)
+	}
+	defer exec.Close()
 
 	if err := exec.DestroyDomain(ctx, domainName); err != nil && !IsIgnorableDestroyError(err) {
 		return fmt.Errorf("stop domain %s: %w", domainName, err)
@@ -155,7 +171,7 @@ func (d *Deployer) Redeploy(ctx context.Context, v VirtualMachine, pxeNoCloudFn 
 		bootDev = "hd"
 	}
 
-	domainCfg := BuildDomainConfig(v, domainName, bootDev, d.PXEBaseURL, pxeNoCloudFn)
+	domainCfg := BuildDomainConfig(v, domainName, bootDev, pxeBaseURL, pxeNoCloudFn)
 	applyInstallStorageOverrides(&domainCfg, installType)
 	if err := exec.DefineDomain(ctx, domainCfg); err != nil {
 		return fmt.Errorf("define domain %s for pxe redeploy: %w", domainName, err)
@@ -203,6 +219,87 @@ func (d *Deployer) resolveCloudImageBacking(ctx context.Context, osImageRef stri
 	}
 	backingPath := filepath.Join(hypervisorImageDir, img.Name+"."+backingFormat)
 	return backingPath, backingFormat, nil
+}
+
+func (d *Deployer) resolvePXEBaseURL(hv hypervisor.Hypervisor, installType InstallConfigType) (string, error) {
+	if base := strings.TrimSpace(d.PXEBaseURL); base != "" {
+		return strings.TrimRight(base, "/"), nil
+	}
+	base, err := resolvePXEBaseURLFromListen(d.ListenAddr, detectPrimaryIP)
+	if err != nil && installType == InstallConfigCurtin {
+		return "", err
+	}
+	return base, nil
+}
+
+func resolvePXEBaseURLFromListen(listenAddr string, detect primaryIPDetector) (string, error) {
+	host, port, err := splitListenAddr(listenAddr)
+	if err != nil {
+		return "", err
+	}
+	if port == "" {
+		port = "8080"
+	}
+	if host == "" || isUnspecifiedHost(host) {
+		primaryIP, err := detect()
+		if err != nil {
+			return "", fmt.Errorf("detect primary IP for pxe.http_base_url: %w", err)
+		}
+		host = primaryIP
+	}
+	if isLoopbackHost(host) {
+		return "", fmt.Errorf("pxe.http_base_url is required when listen_addr %q is loopback-only", listenAddr)
+	}
+	return "http://" + net.JoinHostPort(host, port) + "/pxe", nil
+}
+
+func detectPrimaryIP() (string, error) {
+	detected, err := netdetect.Detect()
+	if err != nil {
+		return "", err
+	}
+	if detected == nil || strings.TrimSpace(detected.IPAddress) == "" {
+		return "", errors.New("primary IPv4 address not found")
+	}
+	return strings.TrimSpace(detected.IPAddress), nil
+}
+
+func splitListenAddr(addr string) (string, string, error) {
+	trimmed := strings.TrimSpace(addr)
+	if trimmed == "" {
+		return "", "8080", nil
+	}
+	if strings.HasPrefix(trimmed, ":") {
+		return "", strings.TrimPrefix(trimmed, ":"), nil
+	}
+	host, port, err := net.SplitHostPort(trimmed)
+	if err == nil {
+		return strings.Trim(host, "[]"), port, nil
+	}
+	if strings.Contains(trimmed, ":") {
+		return "", "", fmt.Errorf("invalid listen_addr %q: %w", listenAddrForError(trimmed), err)
+	}
+	return strings.Trim(trimmed, "[]"), "8080", nil
+}
+
+func isUnspecifiedHost(host string) bool {
+	ip := net.ParseIP(strings.Trim(host, "[]"))
+	return ip != nil && ip.IsUnspecified()
+}
+
+func isLoopbackHost(host string) bool {
+	if strings.EqualFold(strings.Trim(host, "[]"), "localhost") {
+		return true
+	}
+	ip := net.ParseIP(strings.Trim(host, "[]"))
+	return ip != nil && ip.IsLoopback()
+}
+
+func listenAddrForError(addr string) string {
+	if addr == "" {
+		return "<empty>"
+	}
+	return addr
 }
 
 func (d *Deployer) updatePhaseOnError(ctx context.Context, created *VirtualMachine, action string, deployErr error) {

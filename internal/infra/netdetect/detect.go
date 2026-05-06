@@ -11,6 +11,7 @@ import (
 
 type DetectedNetwork struct {
 	InterfaceName string
+	IPAddress     string
 	CIDR          string
 	Gateway       string
 	DNSServers    []string
@@ -44,6 +45,7 @@ func Detect() (*DetectedNetwork, error) {
 				continue
 			}
 			result.InterfaceName = iface.Name
+			result.IPAddress = ipNet.IP.To4().String()
 			ones, bits := ipNet.Mask.Size()
 			result.CIDR = ipNet.IP.Mask(ipNet.Mask).String() + "/" + itoa(ones, bits)
 			break

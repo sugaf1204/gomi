@@ -164,6 +164,7 @@ func (r *Runtime) StartServer(ctx context.Context) error {
 		OSImages:    r.osimageSvc,
 		VMs:         r.vmSvc,
 		PXEBaseURL:  pxeBaseURL,
+		ListenAddr:  r.Config.ListenAddr,
 	}
 	vmRuntimeSyncer := &vm.RuntimeSyncer{
 		Hypervisors: r.hypervisorSvc,
