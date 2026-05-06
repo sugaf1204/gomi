@@ -1360,6 +1360,11 @@ func TestPXECurtinConfig_UsesInventoryAndRawArtifact(t *testing.T) {
 		"00-root:",
 		"type: dd-raw",
 		"uri: http://192.168.2.254:8080/pxe/artifacts/os-images/debian-13-amd64/root.raw",
+		"reporting:",
+		"/pxe/deploy-events?",
+		"attempt_id=attempt-plan",
+		"token=token-plan",
+		"source=curtin",
 		"late_commands:",
 		"var/lib/cloud/seed/nocloud",
 	} {
@@ -1983,6 +1988,67 @@ func TestPXEDeployEventsStoresFailureLogTail(t *testing.T) {
 	}
 	if got := stored.Provision.Artifacts[provisionArtifactFailureLogTail]; got != "missing wget" {
 		t.Fatalf("expected failure log tail, got %q", got)
+	}
+}
+
+func TestPXEDeployEventsStoresTiming(t *testing.T) {
+	backend := memory.New()
+	machineSvc := machine.NewService(backend.Machines())
+	now := time.Now().UTC()
+	target := machine.Machine{
+		Name:     "bm-timing",
+		Hostname: "bm-timing",
+		MAC:      "52:54:00:44:55:88",
+		Arch:     "amd64",
+		Firmware: machine.FirmwareUEFI,
+		Phase:    machine.PhaseProvisioning,
+		Provision: &machine.ProvisionProgress{
+			Active:          true,
+			AttemptID:       "attempt-timing",
+			CompletionToken: "token-timing",
+			Message:         "running curtin install",
+		},
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	if err := backend.Machines().Upsert(context.Background(), target); err != nil {
+		t.Fatalf("upsert machine: %v", err)
+	}
+
+	e := echo.New()
+	form := "type=timing&source=runner&name=runner.dhcp&message=waiting+for+DHCP&result=success&startedAt=2026-05-06T01:02:03Z&finishedAt=2026-05-06T01:02:04.500Z&durationMs=1500"
+	req := httptest.NewRequest(http.MethodPost, "/pxe/deploy-events?token=token-timing&attempt_id=attempt-timing", strings.NewReader(form))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+
+	h := &Handler{machines: machineSvc}
+	if err := h.PXEDeployEvents(c); err != nil {
+		t.Fatalf("PXEDeployEvents: %v", err)
+	}
+	if rec.Code != http.StatusOK {
+		t.Fatalf("unexpected status: %d body=%s", rec.Code, rec.Body.String())
+	}
+
+	stored, err := backend.Machines().Get(context.Background(), target.Name)
+	if err != nil {
+		t.Fatalf("get machine: %v", err)
+	}
+	if stored.Provision.Message != "running curtin install" {
+		t.Fatalf("timing event should not overwrite provision message, got %q", stored.Provision.Message)
+	}
+	if len(stored.Provision.Timings) != 1 {
+		t.Fatalf("expected one timing event, got %#v", stored.Provision.Timings)
+	}
+	timing := stored.Provision.Timings[0]
+	if timing.Source != "runner" || timing.Name != "runner.dhcp" || timing.Result != "success" {
+		t.Fatalf("unexpected timing metadata: %#v", timing)
+	}
+	if timing.DurationMillis != 1500 {
+		t.Fatalf("expected 1500ms duration, got %d", timing.DurationMillis)
+	}
+	if timing.StartedAt == nil || timing.FinishedAt == nil {
+		t.Fatalf("expected started/finished timestamps: %#v", timing)
 	}
 }
 

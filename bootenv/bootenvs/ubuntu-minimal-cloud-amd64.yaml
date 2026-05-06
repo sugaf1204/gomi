@@ -29,6 +29,58 @@ spec:
       - dhcpcd5
       - curtin
     files:
+      - path: /etc/initramfs-tools/scripts/init-top/gomi-timing
+        mode: "0755"
+        contents: |
+          #!/bin/sh
+          PREREQ=""
+          prereqs() { echo "$PREREQ"; }
+          case "$1" in
+            prereqs) prereqs; exit 0 ;;
+          esac
+          mkdir -p /run/gomi
+          uptime_s="$(cut -d' ' -f1 /proc/uptime 2>/dev/null || echo 0)"
+          printf '{"source":"initramfs","name":"initramfs.init_top","eventType":"marker","message":"initramfs init-top reached","monotonicSeconds":%s}\n' "$uptime_s" >> /run/gomi/timing.ndjson
+      - path: /etc/initramfs-tools/scripts/local-top/00-gomi-timing
+        mode: "0755"
+        contents: |
+          #!/bin/sh
+          PREREQ=""
+          prereqs() { echo "$PREREQ"; }
+          case "$1" in
+            prereqs) prereqs; exit 0 ;;
+          esac
+          mkdir -p /run/gomi
+          uptime_s="$(cut -d' ' -f1 /proc/uptime 2>/dev/null || echo 0)"
+          printf '{"source":"initramfs","name":"initramfs.local_top","eventType":"marker","message":"initramfs local-top reached before root fetch","monotonicSeconds":%s}\n' "$uptime_s" >> /run/gomi/timing.ndjson
+      - path: /etc/initramfs-tools/scripts/local-bottom/gomi-timing
+        mode: "0755"
+        contents: |
+          #!/bin/sh
+          PREREQ=""
+          prereqs() { echo "$PREREQ"; }
+          case "$1" in
+            prereqs) prereqs; exit 0 ;;
+          esac
+          mkdir -p /run/gomi
+          uptime_s="$(cut -d' ' -f1 /proc/uptime 2>/dev/null || echo 0)"
+          printf '{"source":"initramfs","name":"initramfs.local_bottom","eventType":"marker","message":"initramfs local-bottom reached after root mount","monotonicSeconds":%s}\n' "$uptime_s" >> /run/gomi/timing.ndjson
+      - path: /etc/initramfs-tools/scripts/init-bottom/gomi-timing
+        mode: "0755"
+        contents: |
+          #!/bin/sh
+          PREREQ=""
+          prereqs() { echo "$PREREQ"; }
+          case "$1" in
+            prereqs) prereqs; exit 0 ;;
+          esac
+          mkdir -p /run/gomi
+          uptime_s="$(cut -d' ' -f1 /proc/uptime 2>/dev/null || echo 0)"
+          printf '{"source":"initramfs","name":"initramfs.init_bottom","eventType":"marker","message":"initramfs init-bottom reached before switch-root","monotonicSeconds":%s}\n' "$uptime_s" >> /run/gomi/timing.ndjson
+          if [ -n "$rootmnt" ] && [ -d "$rootmnt" ]; then
+            mkdir -p "$rootmnt/run/gomi"
+            cp /run/gomi/timing.ndjson "$rootmnt/run/gomi/timing.ndjson" 2>/dev/null || true
+          fi
       - path: /etc/initramfs-tools/conf.d/gomi-netboot
         mode: "0644"
         contents: |
