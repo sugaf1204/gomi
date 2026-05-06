@@ -41,7 +41,7 @@ type deployEventRequest struct {
 func (h *Handler) PXEInventory(c echo.Context) error {
 	token := strings.TrimSpace(c.QueryParam("token"))
 	if token == "" {
-		return c.JSON(gohttp.StatusBadRequest, map[string]string{"error": "token is required"})
+		return c.JSON(gohttp.StatusBadRequest, jsonError("token is required"))
 	}
 
 	ctx := c.Request().Context()
@@ -51,29 +51,29 @@ func (h *Handler) PXEInventory(c echo.Context) error {
 		if err == resource.ErrNotFound {
 			status = gohttp.StatusNotFound
 		}
-		return c.JSON(status, map[string]string{"error": err.Error()})
+		return c.JSON(status, jsonErrorErr(err))
 	}
 
 	attemptID := strings.TrimSpace(target.Provision.AttemptID)
 	if attemptID == "" {
-		return c.JSON(gohttp.StatusConflict, map[string]string{"error": "provisioning attempt id is required"})
+		return c.JSON(gohttp.StatusConflict, jsonError("provisioning attempt id is required"))
 	}
 	var info hwinfo.HardwareInfo
 	if strings.HasPrefix(c.Request().Header.Get("Content-Type"), "text/plain") {
 		body, err := io.ReadAll(c.Request().Body)
 		if err != nil {
-			return c.JSON(gohttp.StatusBadRequest, map[string]string{"error": "invalid body"})
+			return c.JSON(gohttp.StatusBadRequest, jsonError("invalid body"))
 		}
 		info = parseTextInventory(string(body))
 	} else {
 		body, err := io.ReadAll(c.Request().Body)
 		if err != nil {
-			return c.JSON(gohttp.StatusBadRequest, map[string]string{"error": "invalid body"})
+			return c.JSON(gohttp.StatusBadRequest, jsonError("invalid body"))
 		}
 		var payload apiinventory.HardwareInventory
 		if err := json.Unmarshal(body, &payload); err != nil {
 			if legacyErr := json.Unmarshal(body, &info); legacyErr != nil {
-				return c.JSON(gohttp.StatusBadRequest, map[string]string{"error": "invalid body"})
+				return c.JSON(gohttp.StatusBadRequest, jsonError("invalid body"))
 			}
 		} else {
 			info = hwinfo.FromInventory(payload)
@@ -84,7 +84,7 @@ func (h *Handler) PXEInventory(c echo.Context) error {
 	info.AttemptID = attemptID
 	if h.hwinfo != nil {
 		if _, err := h.hwinfo.Upsert(ctx, info); err != nil {
-			return c.JSON(gohttp.StatusInternalServerError, map[string]string{"error": err.Error()})
+			return c.JSON(gohttp.StatusInternalServerError, jsonErrorErr(err))
 		}
 	}
 
@@ -97,21 +97,21 @@ func (h *Handler) PXEInventory(c echo.Context) error {
 		m.Provision.LastSignalAt = timePtr(time.Now().UTC())
 		m.Provision.Message = "hardware inventory received"
 	}); err != nil {
-		return c.JSON(gohttp.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return c.JSON(gohttp.StatusInternalServerError, jsonErrorErr(err))
 	}
 
 	base := h.resolvePXEBaseURL(c)
-	return c.JSON(gohttp.StatusOK, map[string]string{
-		"attemptId":       attemptID,
-		"curtinConfigUrl": buildPXECurtinConfigURL(base, token, attemptID),
-		"eventsUrl":       buildPXEDeployEventsURL(base, token, attemptID),
+	return c.JSON(gohttp.StatusOK, inventoryResponse{
+		AttemptID:       attemptID,
+		CurtinConfigURL: buildPXECurtinConfigURL(base, token, attemptID),
+		EventsURL:       buildPXEDeployEventsURL(base, token, attemptID),
 	})
 }
 
 func (h *Handler) PXECurtinConfig(c echo.Context) error {
 	token := strings.TrimSpace(c.QueryParam("token"))
 	if token == "" {
-		return c.JSON(gohttp.StatusBadRequest, map[string]string{"error": "token is required"})
+		return c.JSON(gohttp.StatusBadRequest, jsonError("token is required"))
 	}
 	queryAttemptID := strings.TrimSpace(c.QueryParam("attempt_id"))
 	ctx := c.Request().Context()
@@ -121,29 +121,29 @@ func (h *Handler) PXECurtinConfig(c echo.Context) error {
 		if err == resource.ErrNotFound {
 			status = gohttp.StatusNotFound
 		}
-		return c.JSON(status, map[string]string{"error": err.Error()})
+		return c.JSON(status, jsonErrorErr(err))
 	}
 	if err := validateAttemptParam(target, queryAttemptID); err != nil {
-		return c.JSON(gohttp.StatusConflict, map[string]string{"error": err.Error()})
+		return c.JSON(gohttp.StatusConflict, jsonErrorErr(err))
 	}
 	if h.osimages == nil {
-		return c.JSON(gohttp.StatusInternalServerError, map[string]string{"error": "os image service not available"})
+		return c.JSON(gohttp.StatusInternalServerError, jsonError("os image service not available"))
 	}
 	imageRef := strings.TrimSpace(target.OSPreset.ImageRef)
 	if imageRef == "" {
-		return c.JSON(gohttp.StatusBadRequest, map[string]string{"error": "machine has no image reference"})
+		return c.JSON(gohttp.StatusBadRequest, jsonError("machine has no image reference"))
 	}
 	img, err := h.osimages.Get(ctx, imageRef)
 	if err != nil {
-		return c.JSON(gohttp.StatusNotFound, map[string]string{"error": fmt.Sprintf("os image %q not found: %v", imageRef, err)})
+		return c.JSON(gohttp.StatusNotFound, jsonError(fmt.Sprintf("os image %q not found: %v", imageRef, err)))
 	}
 	info, _ := h.hardwareInfo(ctx, target.Name)
 	if err := validateAttemptInventory(target, info); err != nil {
-		return c.JSON(gohttp.StatusConflict, map[string]string{"error": err.Error()})
+		return c.JSON(gohttp.StatusConflict, jsonErrorErr(err))
 	}
 	config, err := h.buildCurtinInstallConfig(ctx, c, target, img, info)
 	if err != nil {
-		return c.JSON(gohttp.StatusConflict, map[string]string{"error": err.Error()})
+		return c.JSON(gohttp.StatusConflict, jsonErrorErr(err))
 	}
 	configJSON, _ := json.Marshal(config)
 	_ = h.updateProvisionProgress(ctx, target.Name, func(m *machine.Machine) {
@@ -161,7 +161,7 @@ func (h *Handler) PXECurtinConfig(c echo.Context) error {
 func (h *Handler) PXEDeployEvents(c echo.Context) error {
 	token := strings.TrimSpace(c.QueryParam("token"))
 	if token == "" {
-		return c.JSON(gohttp.StatusBadRequest, map[string]string{"error": "token is required"})
+		return c.JSON(gohttp.StatusBadRequest, jsonError("token is required"))
 	}
 	queryAttemptID := strings.TrimSpace(c.QueryParam("attempt_id"))
 	ctx := c.Request().Context()
@@ -171,7 +171,7 @@ func (h *Handler) PXEDeployEvents(c echo.Context) error {
 		if err == resource.ErrNotFound {
 			status = gohttp.StatusNotFound
 		}
-		return c.JSON(status, map[string]string{"error": err.Error()})
+		return c.JSON(status, jsonErrorErr(err))
 	}
 	var req deployEventRequest
 	if strings.HasPrefix(c.Request().Header.Get("Content-Type"), "application/x-www-form-urlencoded") {
@@ -181,20 +181,20 @@ func (h *Handler) PXEDeployEvents(c echo.Context) error {
 		req.LogTail = c.FormValue("logTail")
 		req.AttemptID = c.FormValue("attemptId")
 	} else if err := c.Bind(&req); err != nil {
-		return c.JSON(gohttp.StatusBadRequest, map[string]string{"error": "invalid body"})
+		return c.JSON(gohttp.StatusBadRequest, jsonError("invalid body"))
 	}
 	eventType := strings.ToLower(strings.TrimSpace(req.Type))
 	if eventType == "" {
-		return c.JSON(gohttp.StatusBadRequest, map[string]string{"error": "type is required"})
+		return c.JSON(gohttp.StatusBadRequest, jsonError("type is required"))
 	}
 	if req.AttemptID != "" && queryAttemptID != "" && strings.TrimSpace(req.AttemptID) != queryAttemptID {
-		return c.JSON(gohttp.StatusConflict, map[string]string{"error": "attempt_id query and body mismatch"})
+		return c.JSON(gohttp.StatusConflict, jsonError("attempt_id query and body mismatch"))
 	}
 	if queryAttemptID == "" {
 		queryAttemptID = strings.TrimSpace(req.AttemptID)
 	}
 	if err := validateAttemptParam(target, queryAttemptID); err != nil {
-		return c.JSON(gohttp.StatusConflict, map[string]string{"error": err.Error()})
+		return c.JSON(gohttp.StatusConflict, jsonErrorErr(err))
 	}
 	now := time.Now().UTC()
 	if err := h.updateProvisionProgress(ctx, target.Name, func(m *machine.Machine) {
@@ -225,9 +225,9 @@ func (h *Handler) PXEDeployEvents(c echo.Context) error {
 			m.Provision.Message = h.configureBIOSBootOrder(ctx, *m, message)
 		}
 	}); err != nil {
-		return c.JSON(gohttp.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return c.JSON(gohttp.StatusInternalServerError, jsonErrorErr(err))
 	}
-	return c.JSON(gohttp.StatusOK, map[string]string{"status": "ok"})
+	return c.JSON(gohttp.StatusOK, statusResponse{Status: "ok"})
 }
 
 func trimLogTail(value string, maxLen int) string {
@@ -343,34 +343,34 @@ func validateAttemptParam(target *machine.Machine, attemptID string) error {
 
 func (h *Handler) PXEArtifact(c echo.Context) error {
 	if h.osimages == nil {
-		return c.JSON(gohttp.StatusInternalServerError, map[string]string{"error": "os image service not available"})
+		return c.JSON(gohttp.StatusInternalServerError, jsonError("os image service not available"))
 	}
 	name := c.Param("name")
 	raw := strings.TrimPrefix(c.Param("*"), "/")
 	rel, err := sanitizePXEPath(raw)
 	if err != nil {
-		return c.JSON(gohttp.StatusBadRequest, map[string]string{"error": "invalid artifact path"})
+		return c.JSON(gohttp.StatusBadRequest, jsonError("invalid artifact path"))
 	}
 	img, err := h.osimages.Get(c.Request().Context(), name)
 	if err != nil {
-		return c.JSON(gohttp.StatusNotFound, map[string]string{"error": "os image not found"})
+		return c.JSON(gohttp.StatusNotFound, jsonError("os image not found"))
 	}
 	if !artifactPathAllowed(img.Manifest, rel) {
-		return c.JSON(gohttp.StatusNotFound, map[string]string{"error": "artifact not found"})
+		return c.JSON(gohttp.StatusNotFound, jsonError("artifact not found"))
 	}
 	base, err := artifactBaseDir(img)
 	if err != nil {
-		return c.JSON(gohttp.StatusNotFound, map[string]string{"error": err.Error()})
+		return c.JSON(gohttp.StatusNotFound, jsonErrorErr(err))
 	}
 	full, err := safeArtifactFilePath(base, rel)
 	if err != nil {
-		return c.JSON(gohttp.StatusNotFound, map[string]string{"error": "artifact not found"})
+		return c.JSON(gohttp.StatusNotFound, jsonError("artifact not found"))
 	}
 	if _, err := os.Stat(full); err != nil {
 		if os.IsNotExist(err) {
-			return c.JSON(gohttp.StatusNotFound, map[string]string{"error": "artifact not found"})
+			return c.JSON(gohttp.StatusNotFound, jsonError("artifact not found"))
 		}
-		return c.JSON(gohttp.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return c.JSON(gohttp.StatusInternalServerError, jsonErrorErr(err))
 	}
 	return c.File(full)
 }

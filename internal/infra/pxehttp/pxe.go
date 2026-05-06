@@ -227,7 +227,7 @@ func (h *Handler) PXEBootScript(c echo.Context) error {
 	rawMAC := c.QueryParam("mac")
 	target, provisioning, err := h.resolvePXETarget(c.Request().Context(), rawMAC)
 	if err != nil {
-		return c.JSON(gohttp.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return c.JSON(gohttp.StatusInternalServerError, jsonErrorErr(err))
 	}
 
 	if !provisioning {
@@ -246,7 +246,7 @@ func (h *Handler) PXEPreseed(c echo.Context) error {
 	rawMAC := c.QueryParam("mac")
 	target, _, err := h.resolvePXETarget(c.Request().Context(), rawMAC)
 	if err != nil {
-		return c.JSON(gohttp.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return c.JSON(gohttp.StatusInternalServerError, jsonErrorErr(err))
 	}
 
 	base := h.resolvePXEBaseURL(c)
@@ -255,7 +255,7 @@ func (h *Handler) PXEPreseed(c echo.Context) error {
 
 	var body string
 	if inline, found, err := h.resolvePXEInstallInline(c.Request().Context(), rawMAC, vm.InstallConfigPreseed); err != nil {
-		return c.JSON(gohttp.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return c.JSON(gohttp.StatusInternalServerError, jsonErrorErr(err))
 	} else if found {
 		body = inline
 	} else {
@@ -271,7 +271,7 @@ func (h *Handler) PXENocloudUserData(c echo.Context) error {
 	ctx := c.Request().Context()
 	target, _, err := h.resolvePXETarget(ctx, rawMAC)
 	if err != nil {
-		return c.JSON(gohttp.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return c.JSON(gohttp.StatusInternalServerError, jsonErrorErr(err))
 	}
 
 	base := h.resolvePXEBaseURL(c)
@@ -282,7 +282,7 @@ func (h *Handler) PXENocloudUserData(c echo.Context) error {
 
 	var body string
 	if inline, found, err := h.resolvePXEInstallInline(ctx, rawMAC, sourceType); err != nil {
-		return c.JSON(gohttp.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return c.JSON(gohttp.StatusInternalServerError, jsonErrorErr(err))
 	} else if found {
 		body = inline
 	} else {
@@ -303,7 +303,7 @@ func (h *Handler) PXENocloudUserData(c echo.Context) error {
 	if m, ok := target.node.(*machine.Machine); ok && m.Role == machine.RoleHypervisor {
 		registrationToken, err := h.ensureHypervisorRegistrationToken(ctx, m)
 		if err != nil {
-			return c.JSON(gohttp.StatusInternalServerError, map[string]string{"error": err.Error()})
+			return c.JSON(gohttp.StatusInternalServerError, jsonErrorErr(err))
 		}
 		result = injectHypervisorSetup(result, base, m.Name, registrationToken)
 	}
@@ -614,7 +614,7 @@ func (h *Handler) PXEInstallComplete(c echo.Context) error {
 	if c.Request().ContentLength > 0 {
 		var req pxeInstallCompleteReq
 		if err := c.Bind(&req); err != nil {
-			return c.JSON(gohttp.StatusBadRequest, map[string]string{"error": "invalid body"})
+			return c.JSON(gohttp.StatusBadRequest, jsonError("invalid body"))
 		}
 		if token == "" {
 			token = strings.TrimSpace(req.Token)
@@ -629,26 +629,23 @@ func (h *Handler) PXEInstallComplete(c echo.Context) error {
 		}
 	}
 	if token == "" {
-		return c.JSON(gohttp.StatusBadRequest, map[string]string{"error": "token is required"})
+		return c.JSON(gohttp.StatusBadRequest, jsonError("token is required"))
 	}
 	source = normalizeCompletionSource(source)
 
 	targetVM, err := h.findVirtualMachineByProvisionToken(c.Request().Context(), token)
 	if err != nil {
-		return c.JSON(gohttp.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return c.JSON(gohttp.StatusInternalServerError, jsonErrorErr(err))
 	}
 	if targetVM != nil {
 		if strings.TrimSpace(targetVM.Provisioning.CompletionToken) != token {
-			return c.JSON(gohttp.StatusNotFound, map[string]string{"error": "provisioning token not found"})
+			return c.JSON(gohttp.StatusNotFound, jsonError("provisioning token not found"))
 		}
 		if !targetVM.Provisioning.Active {
 			if targetVM.Provisioning.CompletedAt == nil {
-				return c.JSON(gohttp.StatusConflict, map[string]string{"error": "provisioning token is expired"})
+				return c.JSON(gohttp.StatusConflict, jsonError("provisioning token is expired"))
 			}
-			return c.JSON(gohttp.StatusOK, map[string]any{
-				"status": "already-finalized",
-				"vm":     targetVM,
-			})
+			return c.JSON(gohttp.StatusOK, installCompleteVMResponse{Status: "already-finalized", VM: *targetVM})
 		}
 
 		now := time.Now().UTC()
@@ -661,7 +658,7 @@ func (h *Handler) PXEInstallComplete(c echo.Context) error {
 		updated.UpdatedAt = now
 		updated.ApplyInstallCompleteReport(report)
 		if err := h.vms.Store().Upsert(c.Request().Context(), updated); err != nil {
-			return c.JSON(gohttp.StatusInternalServerError, map[string]string{"error": err.Error()})
+			return c.JSON(gohttp.StatusInternalServerError, jsonErrorErr(err))
 		}
 		if h.vmRuntimeSyncer != nil {
 			leaseIPByMAC, leaseErr := h.leaseIPsByMAC(c.Request().Context())
@@ -676,7 +673,7 @@ func (h *Handler) PXEInstallComplete(c echo.Context) error {
 			updated.Phase = vm.PhaseRunning
 			updated.UpdatedAt = now
 			if err := h.vms.Store().Upsert(c.Request().Context(), updated); err != nil {
-				return c.JSON(gohttp.StatusInternalServerError, map[string]string{"error": err.Error()})
+				return c.JSON(gohttp.StatusInternalServerError, jsonErrorErr(err))
 			}
 		}
 
@@ -685,30 +682,24 @@ func (h *Handler) PXEInstallComplete(c echo.Context) error {
 				"source": source,
 			})
 		}
-		return c.JSON(gohttp.StatusOK, map[string]any{
-			"status": "ok",
-			"vm":     updated,
-		})
+		return c.JSON(gohttp.StatusOK, installCompleteVMResponse{Status: "ok", VM: updated})
 	}
 
 	targetMachine, err := h.findMachineByProvisionToken(c.Request().Context(), token)
 	if err != nil {
-		return c.JSON(gohttp.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return c.JSON(gohttp.StatusInternalServerError, jsonErrorErr(err))
 	}
 	if targetMachine == nil {
-		return c.JSON(gohttp.StatusNotFound, map[string]string{"error": "provisioning token not found"})
+		return c.JSON(gohttp.StatusNotFound, jsonError("provisioning token not found"))
 	}
 	if targetMachine.Provision == nil || strings.TrimSpace(targetMachine.Provision.CompletionToken) != token {
-		return c.JSON(gohttp.StatusNotFound, map[string]string{"error": "provisioning token not found"})
+		return c.JSON(gohttp.StatusNotFound, jsonError("provisioning token not found"))
 	}
 	if !targetMachine.Provision.Active {
 		if targetMachine.Provision.CompletedAt == nil {
-			return c.JSON(gohttp.StatusConflict, map[string]string{"error": "provisioning token is expired"})
+			return c.JSON(gohttp.StatusConflict, jsonError("provisioning token is expired"))
 		}
-		return c.JSON(gohttp.StatusOK, map[string]any{
-			"status":  "already-finalized",
-			"machine": targetMachine,
-		})
+		return c.JSON(gohttp.StatusOK, installCompleteMachineResponse{Status: "already-finalized", Machine: *targetMachine})
 	}
 
 	now := time.Now().UTC()
@@ -727,7 +718,7 @@ func (h *Handler) PXEInstallComplete(c echo.Context) error {
 	updatedMachine.ApplyInstallCompleteReport(report)
 	updatedMachine.Provision.Message = h.finalizeBIOSBootOrder(c.Request().Context(), updatedMachine)
 	if err := h.machines.Store().Upsert(c.Request().Context(), updatedMachine); err != nil {
-		return c.JSON(gohttp.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return c.JSON(gohttp.StatusInternalServerError, jsonErrorErr(err))
 	}
 	// Auto-create Hypervisor entity when a hypervisor-role machine finishes provisioning.
 	if updatedMachine.Role == machine.RoleHypervisor && h.hypervisors != nil {
@@ -768,10 +759,7 @@ func (h *Handler) PXEInstallComplete(c echo.Context) error {
 			"source": source,
 		})
 	}
-	return c.JSON(gohttp.StatusOK, map[string]any{
-		"status":  "ok",
-		"machine": updatedMachine,
-	})
+	return c.JSON(gohttp.StatusOK, installCompleteMachineResponse{Status: "ok", Machine: updatedMachine})
 }
 
 func (h *Handler) finalizeBIOSBootOrder(ctx context.Context, m machine.Machine) string {
@@ -809,20 +797,20 @@ func (h *Handler) PXEFile(c echo.Context) error {
 		root = strings.TrimSpace(h.pxeTFTPRoot)
 	}
 	if root == "" {
-		return c.JSON(gohttp.StatusNotFound, map[string]string{"error": "pxe file root is not configured"})
+		return c.JSON(gohttp.StatusNotFound, jsonError("pxe file root is not configured"))
 	}
 
 	raw := strings.TrimPrefix(c.Param("*"), "/")
 	rel, err := sanitizePXEPath(raw)
 	if err != nil {
-		return c.JSON(gohttp.StatusBadRequest, map[string]string{"error": "invalid pxe asset path"})
+		return c.JSON(gohttp.StatusBadRequest, jsonError("invalid pxe asset path"))
 	}
 	full := filepath.Join(root, filepath.FromSlash(rel))
 	if _, err := os.Stat(full); err != nil {
 		if os.IsNotExist(err) {
-			return c.JSON(gohttp.StatusNotFound, map[string]string{"error": "pxe asset not found"})
+			return c.JSON(gohttp.StatusNotFound, jsonError("pxe asset not found"))
 		}
-		return c.JSON(gohttp.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return c.JSON(gohttp.StatusInternalServerError, jsonErrorErr(err))
 	}
 	return c.File(full)
 }

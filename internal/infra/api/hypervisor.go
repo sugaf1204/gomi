@@ -14,11 +14,11 @@ import (
 func (s *Server) CreateHypervisor(c echo.Context) error {
 	var h hypervisor.Hypervisor
 	if err := c.Bind(&h); err != nil {
-		return c.JSON(gohttp.StatusBadRequest, map[string]string{"error": "invalid body"})
+		return c.JSON(gohttp.StatusBadRequest, jsonError("invalid body"))
 	}
 	created, err := s.hypervisors.Create(c.Request().Context(), h)
 	if err != nil {
-		return c.JSON(gohttp.StatusBadRequest, map[string]string{"error": err.Error()})
+		return c.JSON(gohttp.StatusBadRequest, jsonErrorErr(err))
 	}
 	httputil.CreateAudit(c, s.authStore, created.Name, "create-hypervisor", "success", "hypervisor created", nil)
 	return c.JSON(gohttp.StatusCreated, created)
@@ -27,9 +27,9 @@ func (s *Server) CreateHypervisor(c echo.Context) error {
 func (s *Server) ListHypervisors(c echo.Context) error {
 	items, err := s.hypervisors.List(c.Request().Context())
 	if err != nil {
-		return c.JSON(gohttp.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return c.JSON(gohttp.StatusInternalServerError, jsonErrorErr(err))
 	}
-	return c.JSON(gohttp.StatusOK, map[string]any{"items": items})
+	return c.JSON(gohttp.StatusOK, itemsResponse[hypervisor.Hypervisor]{Items: items})
 }
 
 func (s *Server) GetHypervisor(c echo.Context) error {
@@ -37,9 +37,9 @@ func (s *Server) GetHypervisor(c echo.Context) error {
 	h, err := s.hypervisors.Get(c.Request().Context(), name)
 	if err != nil {
 		if errors.Is(err, resource.ErrNotFound) {
-			return c.JSON(gohttp.StatusNotFound, map[string]string{"error": "not found"})
+			return c.JSON(gohttp.StatusNotFound, jsonError("not found"))
 		}
-		return c.JSON(gohttp.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return c.JSON(gohttp.StatusInternalServerError, jsonErrorErr(err))
 	}
 	return c.JSON(gohttp.StatusOK, h)
 }
@@ -48,9 +48,9 @@ func (s *Server) DeleteHypervisor(c echo.Context) error {
 	name := c.Param("name")
 	if err := s.hypervisors.Delete(c.Request().Context(), name); err != nil {
 		if errors.Is(err, resource.ErrNotFound) {
-			return c.JSON(gohttp.StatusNotFound, map[string]string{"error": "not found"})
+			return c.JSON(gohttp.StatusNotFound, jsonError("not found"))
 		}
-		return c.JSON(gohttp.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return c.JSON(gohttp.StatusInternalServerError, jsonErrorErr(err))
 	}
 	httputil.CreateAudit(c, s.authStore, name, "delete-hypervisor", "success", "hypervisor deleted", nil)
 	return c.NoContent(gohttp.StatusNoContent)
@@ -59,7 +59,7 @@ func (s *Server) DeleteHypervisor(c echo.Context) error {
 func (s *Server) CreateRegistrationToken(c echo.Context) error {
 	token, err := s.hypervisors.CreateToken(c.Request().Context())
 	if err != nil {
-		return c.JSON(gohttp.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return c.JSON(gohttp.StatusInternalServerError, jsonErrorErr(err))
 	}
 	httputil.CreateAudit(c, s.authStore, "", "create-registration-token", "success", "registration token created", nil)
 	return c.JSON(gohttp.StatusCreated, token)
@@ -68,12 +68,12 @@ func (s *Server) CreateRegistrationToken(c echo.Context) error {
 func (s *Server) RegisterHypervisor(c echo.Context) error {
 	var req hypervisor.RegisterRequest
 	if err := c.Bind(&req); err != nil {
-		return c.JSON(gohttp.StatusBadRequest, map[string]string{"error": "invalid body"})
+		return c.JSON(gohttp.StatusBadRequest, jsonError("invalid body"))
 	}
 
 	h, agentToken, err := s.hypervisors.Register(c.Request().Context(), req)
 	if err != nil {
-		return c.JSON(gohttp.StatusBadRequest, map[string]string{"error": err.Error()})
+		return c.JSON(gohttp.StatusBadRequest, jsonErrorErr(err))
 	}
 
 	return c.JSON(gohttp.StatusCreated, hypervisor.RegisterResponse{Hypervisor: h, AgentToken: agentToken})
@@ -84,12 +84,12 @@ func (s *Server) CreateAgentToken(c echo.Context) error {
 	token, err := s.hypervisors.CreateAgentToken(c.Request().Context(), name)
 	if err != nil {
 		if errors.Is(err, resource.ErrNotFound) {
-			return c.JSON(gohttp.StatusNotFound, map[string]string{"error": "not found"})
+			return c.JSON(gohttp.StatusNotFound, jsonError("not found"))
 		}
-		return c.JSON(gohttp.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return c.JSON(gohttp.StatusInternalServerError, jsonErrorErr(err))
 	}
 	httputil.CreateAudit(c, s.authStore, name, "create-agent-token", "success", "agent token created", nil)
-	return c.JSON(gohttp.StatusCreated, map[string]string{"token": token})
+	return c.JSON(gohttp.StatusCreated, tokenResponse{Token: token})
 }
 
 func (s *Server) SetupAndRegisterScript(c echo.Context) error {

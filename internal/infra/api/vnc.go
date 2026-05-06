@@ -22,12 +22,12 @@ func (s *Server) VNCProxy(c echo.Context) error {
 	m, err := s.machines.Get(c.Request().Context(), name)
 	if err != nil {
 		if errors.Is(err, resource.ErrNotFound) {
-			return c.JSON(gohttp.StatusNotFound, map[string]string{"error": "machine not found"})
+			return c.JSON(gohttp.StatusNotFound, jsonError("machine not found"))
 		}
-		return c.JSON(gohttp.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return c.JSON(gohttp.StatusInternalServerError, jsonErrorErr(err))
 	}
 	if m.IP == "" {
-		return c.JSON(gohttp.StatusBadRequest, map[string]string{"error": "machine has no IP address"})
+		return c.JSON(gohttp.StatusBadRequest, jsonError("machine has no IP address"))
 	}
 
 	vncAddr := fmt.Sprintf("%s:5900", m.IP)
@@ -42,24 +42,24 @@ func (s *Server) VMVNCProxy(c echo.Context) error {
 	v, err := s.vms.Get(ctx, name)
 	if err != nil {
 		if errors.Is(err, resource.ErrNotFound) {
-			return c.JSON(gohttp.StatusNotFound, map[string]string{"error": "vm not found"})
+			return c.JSON(gohttp.StatusNotFound, jsonError("vm not found"))
 		}
-		return c.JSON(gohttp.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return c.JSON(gohttp.StatusInternalServerError, jsonErrorErr(err))
 	}
 	if v.Phase != "Running" && v.Phase != "Provisioning" {
-		return c.JSON(gohttp.StatusBadRequest, map[string]string{"error": "vm is not running"})
+		return c.JSON(gohttp.StatusBadRequest, jsonError("vm is not running"))
 	}
 
 	// Resolve the hypervisor to get libvirt connection info.
 	hv, err := s.hypervisors.Get(ctx, v.HypervisorRef)
 	if err != nil {
-		return c.JSON(gohttp.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("resolve hypervisor: %v", err)})
+		return c.JSON(gohttp.StatusInternalServerError, jsonError(fmt.Sprintf("resolve hypervisor: %v", err)))
 	}
 
 	cfg := vm.BuildLibvirtConfig(hv)
 	exec, err := libvirt.NewExecutor(cfg)
 	if err != nil {
-		return c.JSON(gohttp.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("connect to hypervisor: %v", err)})
+		return c.JSON(gohttp.StatusInternalServerError, jsonError(fmt.Sprintf("connect to hypervisor: %v", err)))
 	}
 	defer exec.Close()
 
@@ -70,7 +70,7 @@ func (s *Server) VMVNCProxy(c echo.Context) error {
 
 	graphics, err := exec.DomainGraphicsInfo(ctx, domainName)
 	if err != nil {
-		return c.JSON(gohttp.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("get vnc info: %v", err)})
+		return c.JSON(gohttp.StatusInternalServerError, jsonError(fmt.Sprintf("get vnc info: %v", err)))
 	}
 
 	vncAddr := fmt.Sprintf("%s:%d", hv.Connection.Host, graphics.Port)

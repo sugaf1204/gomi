@@ -146,10 +146,10 @@ func NewServer(cfg ServerConfig) *Server {
 	e.GET("/healthz", func(c echo.Context) error {
 		if healthFn != nil {
 			if err := healthFn(c.Request().Context()); err != nil {
-				return c.JSON(gohttp.StatusServiceUnavailable, map[string]string{"status": "unhealthy", "error": err.Error()})
+				return c.JSON(gohttp.StatusServiceUnavailable, healthResponse{Status: "unhealthy", Error: err.Error()})
 			}
 		}
-		return c.JSON(gohttp.StatusOK, map[string]string{"status": "ok"})
+		return c.JSON(gohttp.StatusOK, healthResponse{Status: "ok"})
 	})
 
 	v1 := e.Group("/api/v1")

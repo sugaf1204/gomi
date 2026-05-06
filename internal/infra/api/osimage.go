@@ -23,11 +23,11 @@ import (
 func (s *Server) CreateOSImage(c echo.Context) error {
 	var img osimage.OSImage
 	if err := c.Bind(&img); err != nil {
-		return c.JSON(gohttp.StatusBadRequest, map[string]string{"error": "invalid body"})
+		return c.JSON(gohttp.StatusBadRequest, jsonError("invalid body"))
 	}
 	created, err := s.osimages.Create(c.Request().Context(), img)
 	if err != nil {
-		return c.JSON(gohttp.StatusBadRequest, map[string]string{"error": err.Error()})
+		return c.JSON(gohttp.StatusBadRequest, jsonErrorErr(err))
 	}
 	if created.Source == osimage.SourceURL {
 		created = s.downloadURLImage(c, created)
@@ -39,9 +39,9 @@ func (s *Server) CreateOSImage(c echo.Context) error {
 func (s *Server) ListOSImages(c echo.Context) error {
 	items, err := s.osimages.List(c.Request().Context())
 	if err != nil {
-		return c.JSON(gohttp.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return c.JSON(gohttp.StatusInternalServerError, jsonErrorErr(err))
 	}
-	return c.JSON(gohttp.StatusOK, map[string]any{"items": items})
+	return c.JSON(gohttp.StatusOK, itemsResponse[osimage.OSImage]{Items: items})
 }
 
 func (s *Server) GetOSImage(c echo.Context) error {
@@ -49,9 +49,9 @@ func (s *Server) GetOSImage(c echo.Context) error {
 	img, err := s.osimages.Get(c.Request().Context(), name)
 	if err != nil {
 		if errors.Is(err, resource.ErrNotFound) {
-			return c.JSON(gohttp.StatusNotFound, map[string]string{"error": "not found"})
+			return c.JSON(gohttp.StatusNotFound, jsonError("not found"))
 		}
-		return c.JSON(gohttp.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return c.JSON(gohttp.StatusInternalServerError, jsonErrorErr(err))
 	}
 	return c.JSON(gohttp.StatusOK, img)
 }
@@ -62,17 +62,17 @@ func (s *Server) UploadOSImage(c echo.Context) error {
 	img, err := s.osimages.Get(c.Request().Context(), name)
 	if err != nil {
 		if errors.Is(err, resource.ErrNotFound) {
-			return c.JSON(gohttp.StatusNotFound, map[string]string{"error": "not found"})
+			return c.JSON(gohttp.StatusNotFound, jsonError("not found"))
 		}
-		return c.JSON(gohttp.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return c.JSON(gohttp.StatusInternalServerError, jsonErrorErr(err))
 	}
 	if img.Source != osimage.SourceUpload {
-		return c.JSON(gohttp.StatusBadRequest, map[string]string{"error": "image source is not 'upload'"})
+		return c.JSON(gohttp.StatusBadRequest, jsonError("image source is not 'upload'"))
 	}
 
 	file, err := c.FormFile("file")
 	if err != nil {
-		return c.JSON(gohttp.StatusBadRequest, map[string]string{"error": "file is required"})
+		return c.JSON(gohttp.StatusBadRequest, jsonError("file is required"))
 	}
 
 	ext := filepath.Ext(file.Filename)
@@ -93,32 +93,32 @@ func (s *Server) UploadOSImage(c echo.Context) error {
 		storageDir = "data/images"
 	}
 	if err := os.MkdirAll(storageDir, 0o755); err != nil {
-		return c.JSON(gohttp.StatusInternalServerError, map[string]string{"error": "failed to create storage directory"})
+		return c.JSON(gohttp.StatusInternalServerError, jsonError("failed to create storage directory"))
 	}
 
 	localPath := filepath.Join(storageDir, name+ext)
 	dst, err := os.Create(localPath)
 	if err != nil {
-		return c.JSON(gohttp.StatusInternalServerError, map[string]string{"error": "failed to create file"})
+		return c.JSON(gohttp.StatusInternalServerError, jsonError("failed to create file"))
 	}
 	defer dst.Close()
 
 	src, err := file.Open()
 	if err != nil {
-		return c.JSON(gohttp.StatusInternalServerError, map[string]string{"error": "failed to open upload"})
+		return c.JSON(gohttp.StatusInternalServerError, jsonError("failed to open upload"))
 	}
 	defer src.Close()
 
 	if _, err := io.Copy(dst, src); err != nil {
-		return c.JSON(gohttp.StatusInternalServerError, map[string]string{"error": "failed to save file"})
+		return c.JSON(gohttp.StatusInternalServerError, jsonError("failed to save file"))
 	}
 	if err := s.publishOSImageFile(localPath); err != nil {
-		return c.JSON(gohttp.StatusInternalServerError, map[string]string{"error": "failed to publish image file"})
+		return c.JSON(gohttp.StatusInternalServerError, jsonError("failed to publish image file"))
 	}
 
 	updated, err := s.osimages.UpdateStatus(c.Request().Context(), name, true, localPath, "")
 	if err != nil {
-		return c.JSON(gohttp.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return c.JSON(gohttp.StatusInternalServerError, jsonErrorErr(err))
 	}
 	httputil.CreateAudit(c, s.authStore, name, "upload-os-image", "success", "os image uploaded", nil)
 	return c.JSON(gohttp.StatusOK, updated)
@@ -290,15 +290,15 @@ func (s *Server) UpdateOSImageStatus(c echo.Context) error {
 		Error     string `json:"error"`
 	}
 	if err := c.Bind(&body); err != nil {
-		return c.JSON(gohttp.StatusBadRequest, map[string]string{"error": "invalid body"})
+		return c.JSON(gohttp.StatusBadRequest, jsonError("invalid body"))
 	}
 
 	img, err := s.osimages.Get(c.Request().Context(), name)
 	if err != nil {
 		if errors.Is(err, resource.ErrNotFound) {
-			return c.JSON(gohttp.StatusNotFound, map[string]string{"error": "not found"})
+			return c.JSON(gohttp.StatusNotFound, jsonError("not found"))
 		}
-		return c.JSON(gohttp.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return c.JSON(gohttp.StatusInternalServerError, jsonErrorErr(err))
 	}
 
 	ready := img.Ready
@@ -312,7 +312,7 @@ func (s *Server) UpdateOSImageStatus(c echo.Context) error {
 
 	updated, err := s.osimages.UpdateStatus(c.Request().Context(), name, ready, localPath, body.Error)
 	if err != nil {
-		return c.JSON(gohttp.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return c.JSON(gohttp.StatusInternalServerError, jsonErrorErr(err))
 	}
 	httputil.CreateAudit(c, s.authStore, name, "update-os-image-status", "success", "os image status updated", nil)
 	return c.JSON(gohttp.StatusOK, updated)
@@ -323,15 +323,15 @@ func (s *Server) DownloadOSImage(c echo.Context) error {
 	img, err := s.osimages.Get(c.Request().Context(), name)
 	if err != nil {
 		if errors.Is(err, resource.ErrNotFound) {
-			return c.JSON(gohttp.StatusNotFound, map[string]string{"error": "not found"})
+			return c.JSON(gohttp.StatusNotFound, jsonError("not found"))
 		}
-		return c.JSON(gohttp.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return c.JSON(gohttp.StatusInternalServerError, jsonErrorErr(err))
 	}
 	if !img.Ready || img.LocalPath == "" {
-		return c.JSON(gohttp.StatusNotFound, map[string]string{"error": "image not ready or no local file"})
+		return c.JSON(gohttp.StatusNotFound, jsonError("image not ready or no local file"))
 	}
 	if _, err := os.Stat(img.LocalPath); err != nil {
-		return c.JSON(gohttp.StatusNotFound, map[string]string{"error": "image file not found on disk: " + img.LocalPath})
+		return c.JSON(gohttp.StatusNotFound, jsonError("image file not found on disk: "+img.LocalPath))
 	}
 	return c.File(img.LocalPath)
 }
@@ -340,9 +340,9 @@ func (s *Server) DeleteOSImage(c echo.Context) error {
 	name := c.Param("name")
 	if err := s.osimages.Delete(c.Request().Context(), name); err != nil {
 		if errors.Is(err, resource.ErrNotFound) {
-			return c.JSON(gohttp.StatusNotFound, map[string]string{"error": "not found"})
+			return c.JSON(gohttp.StatusNotFound, jsonError("not found"))
 		}
-		return c.JSON(gohttp.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return c.JSON(gohttp.StatusInternalServerError, jsonErrorErr(err))
 	}
 	httputil.CreateAudit(c, s.authStore, name, "delete-os-image", "success", "os image deleted", nil)
 	return c.NoContent(gohttp.StatusNoContent)
