@@ -373,6 +373,199 @@ tasks:
       - task: check
       - task: build:deb
 
+  act:doctor:
+    desc: Check remote Linux prerequisites for running GitHub Actions with act
+    cmds:
+      - |
+        set -eu
+        remote="${ACT_REMOTE_HOST:-}"
+        test -n "$remote" || { echo "ERROR: ACT_REMOTE_HOST is required" >&2; exit 1; }
+        ssh_cmd="${ACT_SSH_CMD:-ssh}"
+
+        echo "==> Checking remote act runner prerequisites on $remote"
+        $ssh_cmd "$remote" '
+          set -eu
+          for cmd in act docker git rsync; do
+            if command -v "$cmd" >/dev/null 2>&1; then
+              printf "ok: %s -> %s\n" "$cmd" "$(command -v "$cmd")"
+            else
+              printf "missing: %s\n" "$cmd" >&2
+              exit 1
+            fi
+          done
+
+          docker info >/dev/null
+          echo "ok: docker daemon is reachable"
+
+          if [ -e /dev/kvm ]; then
+            if [ -r /dev/kvm ] && [ -w /dev/kvm ]; then
+              echo "ok: /dev/kvm is available"
+            else
+              echo "warning: /dev/kvm exists but is not readable/writable by this user" >&2
+            fi
+          else
+            echo "warning: /dev/kvm is not present; OS image builds may be slow or fail" >&2
+          fi
+        '
+
+  act:sync:
+    desc: Sync this working tree to the remote Linux act workspace
+    cmds:
+      - |
+        set -eu
+        remote="${ACT_REMOTE_HOST:-}"
+        test -n "$remote" || { echo "ERROR: ACT_REMOTE_HOST is required" >&2; exit 1; }
+        remote_root="${ACT_REMOTE_WORK:-/tmp/gomi-act}"
+        case "$remote_root" in
+          ""|"/"|".") echo "ERROR: invalid ACT_REMOTE_WORK: $remote_root" >&2; exit 1 ;;
+          *"'"*) echo "ERROR: ACT_REMOTE_WORK must not contain single quotes" >&2; exit 1 ;;
+        esac
+        ssh_cmd="${ACT_SSH_CMD:-ssh}"
+        rsync_ssh="${ACT_RSYNC_SSH:-ssh}"
+
+        mkdir -p tmp/act
+        git bundle create tmp/act/repo.bundle --all --tags >/dev/null
+
+        echo "==> Preparing remote act workspace: $remote:$remote_root/src"
+        $ssh_cmd "$remote" "mkdir -p '$remote_root'"
+        rsync -az -e "$rsync_ssh" tmp/act/repo.bundle "$remote:$remote_root/repo.bundle"
+        $ssh_cmd "$remote" "
+          set -eu
+          if [ -d '$remote_root/src/.git' ]; then
+            git -C '$remote_root/src' fetch --tags '$remote_root/repo.bundle' '+refs/heads/*:refs/remotes/act-local/*'
+          else
+            rm -rf '$remote_root/src'
+            git clone '$remote_root/repo.bundle' '$remote_root/src'
+          fi
+        "
+
+        rsync -az --delete -e "$rsync_ssh" \
+          --exclude '.git/' \
+          --exclude '.git' \
+          --exclude '.task/' \
+          --exclude '.env' \
+          --exclude '.env.*' \
+          --exclude 'bin/' \
+          --exclude 'data/' \
+          --exclude 'tmp/' \
+          --exclude 'web/node_modules/' \
+          --exclude 'web/dist/' \
+          --exclude 'web/*.tsbuildinfo' \
+          --exclude 'packages/deb/' \
+          --exclude 'packages/debian/.debhelper/' \
+          --exclude 'packages/debian/build/' \
+          --exclude 'packages/debian/prebuilt/' \
+          --exclude 'packages/debian/gomi/' \
+          --exclude 'packages/debian/files' \
+          --exclude 'packages/debian/*.substvars' \
+          --exclude 'packages/debian/debhelper-build-stamp' \
+          --exclude 'bootenv/.cache/' \
+          --exclude 'bootenv/dist/' \
+          --exclude 'bootenv/tmp/' \
+          ./ "$remote:$remote_root/src/"
+        echo "==> Remote act workspace is ready: $remote:$remote_root/src"
+
+  act:list:
+    desc: List GitHub Actions workflows and jobs with act on the remote Linux host
+    deps:
+      - act:sync
+    cmds:
+      - |
+        set -eu
+        remote="${ACT_REMOTE_HOST:-}"
+        remote_root="${ACT_REMOTE_WORK:-/tmp/gomi-act}"
+        runner_image="${ACT_RUNNER_IMAGE:-catthehacker/ubuntu:full-latest}"
+        case "$remote_root" in *"'"*) echo "ERROR: ACT_REMOTE_WORK must not contain single quotes" >&2; exit 1 ;; esac
+        case "$runner_image" in *"'"*) echo "ERROR: ACT_RUNNER_IMAGE must not contain single quotes" >&2; exit 1 ;; esac
+        ssh_cmd="${ACT_SSH_CMD:-ssh}"
+        extra="${ACT_EXTRA_ARGS:-}"
+
+        $ssh_cmd "$remote" "cd '$remote_root/src' && act -l -P ubuntu-latest='$runner_image' $extra"
+
+  act:release:deb:
+    desc: Run the Debian release workflow with act on the remote Linux host
+    deps:
+      - act:sync
+    cmds:
+      - |
+        set -eu
+        remote="${ACT_REMOTE_HOST:-}"
+        remote_root="${ACT_REMOTE_WORK:-/tmp/gomi-act}"
+        runner_image="${ACT_RUNNER_IMAGE:-catthehacker/ubuntu:full-latest}"
+        case "$remote_root" in *"'"*) echo "ERROR: ACT_REMOTE_WORK must not contain single quotes" >&2; exit 1 ;; esac
+        case "$runner_image" in *"'"*) echo "ERROR: ACT_RUNNER_IMAGE must not contain single quotes" >&2; exit 1 ;; esac
+        ssh_cmd="${ACT_SSH_CMD:-ssh}"
+        rsync_ssh="${ACT_RSYNC_SSH:-ssh}"
+        extra="${ACT_EXTRA_ARGS:-}"
+
+        version="$(sed -n '1s/^gomi (\([^)]*\)).*/\1/p' packages/debian/changelog)"
+        test -n "$version" || { echo "ERROR: unable to read package version from packages/debian/changelog" >&2; exit 1; }
+        upstream="${version#*:}"
+        upstream="${upstream%-*}"
+        tag="${ACT_TAG:-v$upstream}"
+        case "$tag" in *"'"*) echo "ERROR: ACT_TAG must not contain single quotes" >&2; exit 1 ;; esac
+
+        mkdir -p tmp/act
+        cat > tmp/act/tag-push.json <<EOF
+        {
+          "ref": "refs/tags/$tag",
+          "ref_type": "tag",
+          "ref_name": "$tag",
+          "repository": {
+            "full_name": "sugaf1204/gomi",
+            "name": "gomi",
+            "owner": {
+              "login": "sugaf1204"
+            }
+          }
+        }
+        EOF
+
+        $ssh_cmd "$remote" "mkdir -p '$remote_root/src/tmp/act'"
+        rsync -az -e "$rsync_ssh" tmp/act/tag-push.json "$remote:$remote_root/src/tmp/act/tag-push.json"
+        $ssh_cmd "$remote" "cd '$remote_root/src' && act push -W .github/workflows/release.yml -j deb -e tmp/act/tag-push.json --env GITHUB_REF_TYPE=tag --env GITHUB_REF_NAME='$tag' -P ubuntu-latest='$runner_image' $extra"
+
+  act:release:bootenv:
+    desc: Run the boot environment release workflow with act on the remote Linux host
+    deps:
+      - act:sync
+    cmds:
+      - |
+        set -eu
+        remote="${ACT_REMOTE_HOST:-}"
+        remote_root="${ACT_REMOTE_WORK:-/tmp/gomi-act}"
+        runner_image="${ACT_RUNNER_IMAGE:-catthehacker/ubuntu:full-latest}"
+        case "$remote_root" in *"'"*) echo "ERROR: ACT_REMOTE_WORK must not contain single quotes" >&2; exit 1 ;; esac
+        case "$runner_image" in *"'"*) echo "ERROR: ACT_RUNNER_IMAGE must not contain single quotes" >&2; exit 1 ;; esac
+        ssh_cmd="${ACT_SSH_CMD:-ssh}"
+        extra="${ACT_EXTRA_ARGS:-}"
+
+        $ssh_cmd "$remote" "cd '$remote_root/src' && act workflow_dispatch -W .github/workflows/bootenv-release.yml -j build -P ubuntu-latest='$runner_image' $extra"
+
+  act:release:os-images:
+    desc: Run the OS image release workflow with act on the remote Linux host
+    deps:
+      - act:sync
+    cmds:
+      - |
+        set -eu
+        remote="${ACT_REMOTE_HOST:-}"
+        remote_root="${ACT_REMOTE_WORK:-/tmp/gomi-act}"
+        runner_image="${ACT_RUNNER_IMAGE:-catthehacker/ubuntu:full-latest}"
+        case "$remote_root" in *"'"*) echo "ERROR: ACT_REMOTE_WORK must not contain single quotes" >&2; exit 1 ;; esac
+        case "$runner_image" in *"'"*) echo "ERROR: ACT_RUNNER_IMAGE must not contain single quotes" >&2; exit 1 ;; esac
+        ssh_cmd="${ACT_SSH_CMD:-ssh}"
+        extra="${ACT_EXTRA_ARGS:-}"
+
+        $ssh_cmd "$remote" "cd '$remote_root/src' && act workflow_dispatch -W .github/workflows/os-image-release.yml -P ubuntu-latest='$runner_image' $extra"
+
+  act:release:all:
+    desc: Run all release workflows with act on the remote Linux host
+    cmds:
+      - task: act:release:deb
+      - task: act:release:bootenv
+      - task: act:release:os-images
+
   env:check:
     desc: Validate deploy environment variables
     cmds:
