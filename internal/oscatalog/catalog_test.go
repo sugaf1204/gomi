@@ -17,12 +17,14 @@ func TestListUsesPrebuiltArtifacts(t *testing.T) {
 	if err != nil {
 		t.Fatalf("list catalog: %v", err)
 	}
+	seen := map[string]struct{}{}
 	for _, entry := range entries {
-		if !strings.HasPrefix(entry.URL, "https://images.example.test/gomi/") {
-			t.Fatalf("%s URL = %q, want configured source base", entry.Name, entry.URL)
-		}
+		seen[entry.Name] = struct{}{}
 		switch entry.Name {
 		case "ubuntu-22.04-amd64-baremetal":
+			if !strings.HasPrefix(entry.URL, "https://images.example.test/gomi/") {
+				t.Fatalf("%s URL = %q, want configured source base", entry.Name, entry.URL)
+			}
 			if entry.Format != osimage.FormatSquashFS || entry.SourceFormat != osimage.FormatSquashFS {
 				t.Fatalf("%s formats = %s/%s, want squashfs", entry.Name, entry.Format, entry.SourceFormat)
 			}
@@ -33,6 +35,9 @@ func TestListUsesPrebuiltArtifacts(t *testing.T) {
 				t.Fatalf("%s URL = %q, want prebuilt .rootfs.squashfs artifact", entry.Name, entry.URL)
 			}
 		default:
+			if !strings.HasPrefix(entry.URL, "https://github.com/sugaf1204/gomi/releases/download/v0.0.2/") {
+				t.Fatalf("%s URL = %q, want fixed legacy release asset URL", entry.Name, entry.URL)
+			}
 			if entry.Format != osimage.FormatRAW || entry.SourceFormat != osimage.FormatRAW {
 				t.Fatalf("%s formats = %s/%s, want raw", entry.Name, entry.Format, entry.SourceFormat)
 			}
@@ -42,6 +47,21 @@ func TestListUsesPrebuiltArtifacts(t *testing.T) {
 			if !strings.HasSuffix(entry.URL, ".raw.zst") {
 				t.Fatalf("%s URL = %q, want prebuilt .raw.zst artifact", entry.Name, entry.URL)
 			}
+			if !strings.HasPrefix(entry.Checksum, "sha256:") {
+				t.Fatalf("%s checksum = %q, want sha256 release asset checksum", entry.Name, entry.Checksum)
+			}
+		}
+	}
+	for _, name := range []string{
+		"debian-13-amd64-baremetal",
+		"debian-13-amd64-cloud",
+		"ubuntu-22.04-amd64-baremetal",
+		"ubuntu-22.04-amd64-cloud",
+		"ubuntu-24.04-amd64-baremetal",
+		"ubuntu-24.04-amd64-cloud",
+	} {
+		if _, ok := seen[name]; !ok {
+			t.Fatalf("default catalog missing %s", name)
 		}
 	}
 }

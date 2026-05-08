@@ -3,6 +3,8 @@ package api
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -13,6 +15,7 @@ import (
 
 	"github.com/klauspost/compress/zstd"
 
+	"github.com/sugaf1204/gomi/internal/infra/memory"
 	"github.com/sugaf1204/gomi/internal/oscatalog"
 	"github.com/sugaf1204/gomi/internal/osimage"
 )
@@ -60,6 +63,7 @@ func TestDownloadCatalogRawArtifactDecompressesZstdToRaw(t *testing.T) {
 	if err := zw.Close(); err != nil {
 		t.Fatalf("close zstd writer: %v", err)
 	}
+	compressedSum := sha256.Sum256(compressed.Bytes())
 
 	restore := stubCatalogHTTPClient(t, func(req *http.Request) (*http.Response, error) {
 		return httpResponse(200, compressed.Bytes()), nil
@@ -74,10 +78,11 @@ func TestDownloadCatalogRawArtifactDecompressesZstdToRaw(t *testing.T) {
 		SourceFormat:      osimage.FormatRAW,
 		SourceCompression: "zstd",
 		URL:               "https://images.example.test/ubuntu-24.04-amd64.raw.zst",
+		Checksum:          "sha256:" + hex.EncodeToString(compressedSum[:]),
 	}
 	img := entry.OSImage()
 
-	localPath, err := s.downloadCatalogRawArtifact(context.Background(), entry, img)
+	localPath, localChecksum, err := s.downloadCatalogRawArtifact(context.Background(), entry, img)
 	if err != nil {
 		t.Fatalf("download catalog raw artifact: %v", err)
 	}
@@ -90,6 +95,74 @@ func TestDownloadCatalogRawArtifactDecompressesZstdToRaw(t *testing.T) {
 	}
 	if !bytes.Equal(got, raw) {
 		t.Fatalf("raw payload = %q, want %q", got, raw)
+	}
+	rawSum := sha256.Sum256(raw)
+	if localChecksum != hex.EncodeToString(rawSum[:]) {
+		t.Fatalf("local checksum = %q, want decompressed raw checksum", localChecksum)
+	}
+}
+
+func TestRunCatalogInstallStoresDecompressedRawChecksum(t *testing.T) {
+	raw := []byte("raw-disk-image")
+	var compressed bytes.Buffer
+	zw, err := zstd.NewWriter(&compressed)
+	if err != nil {
+		t.Fatalf("create zstd writer: %v", err)
+	}
+	if _, err := zw.Write(raw); err != nil {
+		t.Fatalf("write zstd payload: %v", err)
+	}
+	if err := zw.Close(); err != nil {
+		t.Fatalf("close zstd writer: %v", err)
+	}
+	compressedSum := sha256.Sum256(compressed.Bytes())
+	rawSum := sha256.Sum256(raw)
+
+	restore := stubCatalogHTTPClient(t, func(req *http.Request) (*http.Response, error) {
+		return httpResponse(200, compressed.Bytes()), nil
+	})
+	defer restore()
+
+	backend := memory.New()
+	osImages := osimage.NewService(backend.OSImages())
+	entry := oscatalog.Entry{
+		Name:              "legacy-raw",
+		OSFamily:          "ubuntu",
+		OSVersion:         "22.04",
+		Arch:              "amd64",
+		Variant:           osimage.VariantCloud,
+		Format:            osimage.FormatRAW,
+		SourceFormat:      osimage.FormatRAW,
+		SourceCompression: "zstd",
+		URL:               "https://images.example.test/legacy.raw.zst",
+		Checksum:          "sha256:" + hex.EncodeToString(compressedSum[:]),
+	}
+	if _, err := osImages.Create(context.Background(), entry.OSImage()); err != nil {
+		t.Fatalf("create os image: %v", err)
+	}
+	s := &Server{
+		imageStorageDir: t.TempDir(),
+		osimages:        osImages,
+	}
+
+	s.runCatalogInstall(entry)
+
+	img, err := osImages.Get(context.Background(), entry.Name)
+	if err != nil {
+		t.Fatalf("get installed image: %v", err)
+	}
+	if !img.Ready {
+		t.Fatalf("image ready = false, error = %q", img.Error)
+	}
+	if img.Checksum != "sha256:"+hex.EncodeToString(rawSum[:]) {
+		t.Fatalf("checksum = %q, want decompressed raw checksum", img.Checksum)
+	}
+	got, err := os.ReadFile(img.LocalPath)
+	if err != nil {
+		t.Fatalf("read installed raw image: %v", err)
+	}
+	if !bytes.Equal(got, raw) {
+		t.Fatalf("installed raw payload = %q, want %q", got, raw)
 	}
 }
 
@@ -110,7 +183,7 @@ func TestDownloadCatalogSquashFSArtifactStoresDirectoryLayout(t *testing.T) {
 	}
 	img := entry.OSImage()
 
-	localPath, err := s.downloadCatalogArtifact(context.Background(), entry, img)
+	localPath, _, err := s.downloadCatalogArtifact(context.Background(), entry, img)
 	if err != nil {
 		t.Fatalf("download catalog squashfs artifact: %v", err)
 	}

@@ -82,6 +82,20 @@ func TestServiceUpdateStatus(t *testing.T) {
 	}
 }
 
+func TestServiceUpdateChecksum(t *testing.T) {
+	svc := newTestService()
+	ctx := context.Background()
+	_, _ = svc.Create(ctx, testImage())
+
+	updated, err := svc.UpdateChecksum(ctx, "ubuntu-test", "sha256:abc")
+	if err != nil {
+		t.Fatalf("UpdateChecksum: %v", err)
+	}
+	if updated.Checksum != "sha256:abc" {
+		t.Fatalf("checksum = %q", updated.Checksum)
+	}
+}
+
 func TestServiceUpdateStatusWithError(t *testing.T) {
 	svc := newTestService()
 	ctx := context.Background()

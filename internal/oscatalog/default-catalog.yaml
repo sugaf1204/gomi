@@ -1,4 +1,28 @@
 entries:
+  - name: debian-13-amd64-baremetal
+    osFamily: debian
+    osVersion: "13"
+    arch: amd64
+    variant: baremetal
+    format: raw
+    sourceFormat: raw
+    sourceCompression: zstd
+    url: https://github.com/sugaf1204/gomi/releases/download/v0.0.2/debian-13-amd64-baremetal.raw.zst
+    checksum: sha256:824417308379cf1d4b24516835040006dca54cb9b618949301381e38f43ffa29
+    description: Debian 13 amd64 bare-metal raw image with expanded kernel modules
+    bootEnvironment: ubuntu-minimal-cloud-amd64
+  - name: debian-13-amd64-cloud
+    osFamily: debian
+    osVersion: "13"
+    arch: amd64
+    variant: cloud
+    format: raw
+    sourceFormat: raw
+    sourceCompression: zstd
+    url: https://github.com/sugaf1204/gomi/releases/download/v0.0.2/debian-13-amd64-cloud.raw.zst
+    checksum: sha256:d1b5857652935a01420284f2a689591560058cd9e49ca92ea02663bdad1f6b85
+    description: Debian 13 amd64 cloud raw image
+    bootEnvironment: ubuntu-minimal-cloud-amd64
   - name: ubuntu-22.04-amd64-baremetal
     osFamily: ubuntu
     osVersion: "22.04"
@@ -8,4 +32,40 @@ entries:
     sourceFormat: squashfs
     url: ubuntu-22.04-amd64-baremetal.rootfs.squashfs
     description: Ubuntu 22.04 LTS amd64 bare-metal rootfs SquashFS image with generic kernel modules
+    bootEnvironment: ubuntu-minimal-cloud-amd64
+  - name: ubuntu-22.04-amd64-cloud
+    osFamily: ubuntu
+    osVersion: "22.04"
+    arch: amd64
+    variant: cloud
+    format: raw
+    sourceFormat: raw
+    sourceCompression: zstd
+    url: https://github.com/sugaf1204/gomi/releases/download/v0.0.2/ubuntu-22.04-amd64-cloud.raw.zst
+    checksum: sha256:49b3f88ab5cf6d12a305455f622b515fa3cf4f400601b1ee21d32d6a11fbc351
+    description: Ubuntu 22.04 LTS amd64 cloud raw image
+    bootEnvironment: ubuntu-minimal-cloud-amd64
+  - name: ubuntu-24.04-amd64-baremetal
+    osFamily: ubuntu
+    osVersion: "24.04"
+    arch: amd64
+    variant: baremetal
+    format: raw
+    sourceFormat: raw
+    sourceCompression: zstd
+    url: https://github.com/sugaf1204/gomi/releases/download/v0.0.2/ubuntu-24.04-amd64-baremetal.raw.zst
+    checksum: sha256:cd4c5fddae9163cda87c1da52a9b67a3b620ca55fcdb8dca45688de30418d002
+    description: Ubuntu 24.04 LTS amd64 bare-metal raw image with generic kernel modules
+    bootEnvironment: ubuntu-minimal-cloud-amd64
+  - name: ubuntu-24.04-amd64-cloud
+    osFamily: ubuntu
+    osVersion: "24.04"
+    arch: amd64
+    variant: cloud
+    format: raw
+    sourceFormat: raw
+    sourceCompression: zstd
+    url: https://github.com/sugaf1204/gomi/releases/download/v0.0.2/ubuntu-24.04-amd64-cloud.raw.zst
+    checksum: sha256:9dc92caa2312245ab472a45f4ae1ac439dd4f9aad210b6c670a936fe1a38f22c
+    description: Ubuntu 24.04 LTS amd64 cloud raw image
     bootEnvironment: ubuntu-minimal-cloud-amd64

@@ -2,6 +2,8 @@ package api
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -21,6 +23,19 @@ import (
 )
 
 var catalogHTTPClient = gohttp.DefaultClient
+
+func fileSHA256(path string) (string, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(h.Sum(nil)), nil
+}
 
 type osCatalogEntryResponse struct {
 	Entry           oscatalog.Entry `json:"entry"`
@@ -93,10 +108,17 @@ func (s *Server) runCatalogInstall(entry oscatalog.Entry) {
 		_, _ = s.osimages.UpdateStatus(ctx, img.Name, false, "", err.Error())
 		return
 	}
-	localPath, err := s.downloadCatalogArtifact(ctx, entry, img)
+	localPath, localChecksum, err := s.downloadCatalogArtifact(ctx, entry, img)
 	if err != nil {
 		_, _ = s.osimages.UpdateStatus(ctx, img.Name, false, "", err.Error())
 		return
+	}
+	if localChecksum != "" {
+		img.Checksum = "sha256:" + localChecksum
+		if _, err := s.osimages.UpdateChecksum(ctx, img.Name, img.Checksum); err != nil {
+			_, _ = s.osimages.UpdateStatus(ctx, img.Name, false, "", err.Error())
+			return
+		}
 	}
 	if _, err := s.osimages.UpdateStatus(ctx, img.Name, true, localPath, ""); err != nil {
 		return
@@ -134,25 +156,25 @@ func validateCatalogArtifact(entry oscatalog.Entry) error {
 	return nil
 }
 
-func (s *Server) downloadCatalogArtifact(ctx context.Context, entry oscatalog.Entry, img osimage.OSImage) (string, error) {
+func (s *Server) downloadCatalogArtifact(ctx context.Context, entry oscatalog.Entry, img osimage.OSImage) (string, string, error) {
 	switch entry.Format {
 	case osimage.FormatRAW:
 		return s.downloadCatalogRawArtifact(ctx, entry, img)
 	case osimage.FormatSquashFS:
 		return s.downloadCatalogSquashFSArtifact(ctx, entry, img)
 	default:
-		return "", fmt.Errorf("unsupported catalog image format: %s", entry.Format)
+		return "", "", fmt.Errorf("unsupported catalog image format: %s", entry.Format)
 	}
 }
 
-func (s *Server) downloadCatalogRawArtifact(ctx context.Context, entry oscatalog.Entry, img osimage.OSImage) (string, error) {
+func (s *Server) downloadCatalogRawArtifact(ctx context.Context, entry oscatalog.Entry, img osimage.OSImage) (string, string, error) {
 	rawURL := strings.TrimSpace(entry.URL)
 	parsed, err := url.Parse(rawURL)
 	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
-		return "", fmt.Errorf("invalid catalog image URL")
+		return "", "", fmt.Errorf("invalid catalog image URL")
 	}
 	if parsed.Scheme != "http" && parsed.Scheme != "https" {
-		return "", fmt.Errorf("unsupported catalog image URL scheme: %s", parsed.Scheme)
+		return "", "", fmt.Errorf("unsupported catalog image URL scheme: %s", parsed.Scheme)
 	}
 
 	storageDir := s.imageStorageDir
@@ -160,58 +182,77 @@ func (s *Server) downloadCatalogRawArtifact(ctx context.Context, entry oscatalog
 		storageDir = "data/images"
 	}
 	if err := os.MkdirAll(storageDir, 0o755); err != nil {
-		return "", fmt.Errorf("create image storage directory: %w", err)
+		return "", "", fmt.Errorf("create image storage directory: %w", err)
 	}
 	localPath := filepath.Join(storageDir, img.Name+".raw")
 
 	req, err := gohttp.NewRequestWithContext(ctx, gohttp.MethodGet, rawURL, nil)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	resp, err := catalogHTTPClient.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("download image: %w", err)
+		return "", "", fmt.Errorf("download image: %w", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != gohttp.StatusOK {
 		io.Copy(io.Discard, resp.Body)
-		return "", fmt.Errorf("download image: status %d", resp.StatusCode)
-	}
-
-	var reader io.Reader = resp.Body
-	var zstdReader *zstd.Decoder
-	if strings.TrimSpace(entry.SourceCompression) == "zstd" {
-		zstdReader, err = zstd.NewReader(resp.Body)
-		if err != nil {
-			return "", fmt.Errorf("open zstd image stream: %w", err)
-		}
-		defer zstdReader.Close()
-		reader = zstdReader
+		return "", "", fmt.Errorf("download image: status %d", resp.StatusCode)
 	}
 
 	tmpPath := localPath + ".download"
-	if err := writeImageFileWithChecksum(tmpPath, reader, img.Checksum); err != nil {
+	if strings.TrimSpace(entry.SourceCompression) == "zstd" {
+		compressedPath := tmpPath + ".zst"
+		if err := writeImageFileWithChecksum(compressedPath, resp.Body, img.Checksum); err != nil {
+			_ = os.Remove(compressedPath)
+			return "", "", err
+		}
+		defer os.Remove(compressedPath)
+
+		compressedFile, err := os.Open(compressedPath)
+		if err != nil {
+			_ = os.Remove(tmpPath)
+			return "", "", fmt.Errorf("open downloaded zstd image: %w", err)
+		}
+		defer compressedFile.Close()
+		zstdReader, err := zstd.NewReader(compressedFile)
+		if err != nil {
+			_ = os.Remove(tmpPath)
+			return "", "", fmt.Errorf("open zstd image stream: %w", err)
+		}
+		defer zstdReader.Close()
+
+		if err := writeImageFileWithChecksum(tmpPath, zstdReader, ""); err != nil {
+			_ = os.Remove(tmpPath)
+			return "", "", err
+		}
+	} else if err := writeImageFileWithChecksum(tmpPath, resp.Body, img.Checksum); err != nil {
 		_ = os.Remove(tmpPath)
-		return "", err
+		return "", "", err
+	}
+	localChecksum, err := fileSHA256(tmpPath)
+	if err != nil {
+		_ = os.Remove(tmpPath)
+		return "", "", err
 	}
 	if err := os.Rename(tmpPath, localPath); err != nil {
 		_ = os.Remove(tmpPath)
-		return "", fmt.Errorf("publish image file: %w", err)
+		return "", "", fmt.Errorf("publish image file: %w", err)
 	}
 	if err := s.publishOSImageFile(localPath); err != nil {
-		return "", err
+		return "", "", err
 	}
-	return localPath, nil
+	return localPath, localChecksum, nil
 }
 
-func (s *Server) downloadCatalogSquashFSArtifact(ctx context.Context, entry oscatalog.Entry, img osimage.OSImage) (string, error) {
+func (s *Server) downloadCatalogSquashFSArtifact(ctx context.Context, entry oscatalog.Entry, img osimage.OSImage) (string, string, error) {
 	rawURL := strings.TrimSpace(entry.URL)
 	parsed, err := url.Parse(rawURL)
 	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
-		return "", fmt.Errorf("invalid catalog image URL")
+		return "", "", fmt.Errorf("invalid catalog image URL")
 	}
 	if parsed.Scheme != "http" && parsed.Scheme != "https" {
-		return "", fmt.Errorf("unsupported catalog image URL scheme: %s", parsed.Scheme)
+		return "", "", fmt.Errorf("unsupported catalog image URL scheme: %s", parsed.Scheme)
 	}
 
 	storageDir := s.imageStorageDir
@@ -220,34 +261,39 @@ func (s *Server) downloadCatalogSquashFSArtifact(ctx context.Context, entry osca
 	}
 	localDir := filepath.Join(storageDir, img.Name)
 	if err := os.MkdirAll(localDir, 0o755); err != nil {
-		return "", fmt.Errorf("create image storage directory: %w", err)
+		return "", "", fmt.Errorf("create image storage directory: %w", err)
 	}
 	localPath := filepath.Join(localDir, "rootfs.squashfs")
 
 	req, err := gohttp.NewRequestWithContext(ctx, gohttp.MethodGet, rawURL, nil)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	resp, err := catalogHTTPClient.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("download image: %w", err)
+		return "", "", fmt.Errorf("download image: %w", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != gohttp.StatusOK {
 		io.Copy(io.Discard, resp.Body)
-		return "", fmt.Errorf("download image: status %d", resp.StatusCode)
+		return "", "", fmt.Errorf("download image: status %d", resp.StatusCode)
 	}
 
 	tmpPath := localPath + ".download"
 	if err := writeImageFileWithChecksum(tmpPath, resp.Body, img.Checksum); err != nil {
 		_ = os.Remove(tmpPath)
-		return "", err
+		return "", "", err
+	}
+	localChecksum, err := fileSHA256(tmpPath)
+	if err != nil {
+		_ = os.Remove(tmpPath)
+		return "", "", err
 	}
 	if err := os.Rename(tmpPath, localPath); err != nil {
 		_ = os.Remove(tmpPath)
-		return "", fmt.Errorf("publish image file: %w", err)
+		return "", "", fmt.Errorf("publish image file: %w", err)
 	}
-	return localDir, nil
+	return localDir, localChecksum, nil
 }
 
 func (s *Server) osCatalogStatus(ctx context.Context, entry oscatalog.Entry) osCatalogEntryResponse {
