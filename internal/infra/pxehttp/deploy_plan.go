@@ -679,6 +679,9 @@ func (h *Handler) buildCurtinInstallConfig(ctx context.Context, c echo.Context, 
 	imageURL := ""
 	imageFormat := string(img.Format)
 	imageCompression := ""
+	if !img.Ready {
+		return "", fmt.Errorf("os image %q is not ready", img.Name)
+	}
 	if img.Manifest != nil && strings.TrimSpace(img.Manifest.Root.Path) != "" {
 		imageURL, err = h.artifactURL(base, img, img.Manifest.Root.Path)
 		if err != nil {
@@ -689,9 +692,6 @@ func (h *Handler) buildCurtinInstallConfig(ctx context.Context, c echo.Context, 
 		}
 		imageCompression = strings.ToLower(strings.TrimSpace(img.Manifest.Root.Compression))
 	} else {
-		if !img.Ready {
-			return "", fmt.Errorf("os image %q is not ready", img.Name)
-		}
 		imageURL, err = imageFileURL(base, img)
 		if err != nil {
 			return "", err

@@ -32,6 +32,38 @@
       "type": "object",
       "required": ["name", "osFamily", "osVersion", "arch", "format", "url", "bootEnvironment"],
       "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "format": { "const": "raw" }
+            },
+            "required": ["format"]
+          },
+          "then": {
+            "properties": {
+              "sourceCompression": {
+                "enum": ["zstd", ""]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "format": { "const": "squashfs" }
+            },
+            "required": ["format"]
+          },
+          "then": {
+            "properties": {
+              "sourceCompression": {
+                "const": ""
+              }
+            }
+          }
+        }
+      ],
       "properties": {
         "name": {
           "type": "string",
@@ -60,7 +92,7 @@
           "enum": ["raw", "squashfs"]
         },
         "sourceCompression": {
-          "enum": ["zstd", ""]
+          "type": "string"
         },
         "variant": {
           "type": "string",

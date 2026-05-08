@@ -1644,6 +1644,64 @@ func TestPXECurtinConfig_SquashFSImageUsesFSImageAndStorageConfig(t *testing.T) 
 	}
 }
 
+func TestBuildCurtinInstallConfigRejectsNotReadyManifestImage(t *testing.T) {
+	now := time.Now().UTC()
+	img := osimage.OSImage{
+		Name:      "ubuntu-22.04-amd64-baremetal",
+		OSFamily:  "ubuntu",
+		OSVersion: "22.04",
+		Arch:      "amd64",
+		Format:    osimage.FormatSquashFS,
+		Source:    osimage.SourceURL,
+		Ready:     false,
+		Manifest: &osimage.Manifest{
+			Root: osimage.RootArtifact{
+				Format: osimage.FormatSquashFS,
+				Path:   "rootfs.squashfs",
+			},
+		},
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	target := &machine.Machine{
+		Name:     "bm-squashfs-not-ready",
+		Hostname: "bm-squashfs-not-ready",
+		MAC:      "52:54:00:aa:bb:14",
+		Arch:     "amd64",
+		Firmware: machine.FirmwareUEFI,
+		Phase:    machine.PhaseProvisioning,
+		Provision: &machine.ProvisionProgress{
+			Active:          true,
+			AttemptID:       "attempt-squashfs-not-ready",
+			CompletionToken: "token-squashfs-not-ready",
+		},
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	info := &hwinfo.HardwareInfo{
+		MachineName: target.Name,
+		AttemptID:   "attempt-squashfs-not-ready",
+		Disks: []hwinfo.DiskInfo{
+			{
+				Name:   "vda",
+				Path:   "/dev/vda",
+				Type:   "disk",
+				SizeMB: 32768,
+			},
+		},
+	}
+	e := echo.New()
+	req := httptest.NewRequest(http.MethodGet, "/pxe/curtin-config?token=token-squashfs-not-ready&attempt_id=attempt-squashfs-not-ready", nil)
+	req.Host = "192.168.2.254:8080"
+	c := e.NewContext(req, httptest.NewRecorder())
+
+	h := &Handler{}
+	_, err := h.buildCurtinInstallConfig(context.Background(), c, target, img, info)
+	if err == nil || !strings.Contains(err.Error(), `os image "ubuntu-22.04-amd64-baremetal" is not ready`) {
+		t.Fatalf("expected not-ready error for manifest image, got %v", err)
+	}
+}
+
 func TestPXEInventory_StoresHardwareInfoAndReturnsPlanURLs(t *testing.T) {
 	backend := memory.New()
 	machineSvc := machine.NewService(backend.Machines())
