@@ -54,10 +54,10 @@
           "pattern": "\\S"
         },
         "format": {
-          "enum": ["raw", "qcow2", "iso", "squashfs"]
+          "enum": ["raw", "squashfs"]
         },
         "sourceFormat": {
-          "enum": ["raw", "qcow2", "iso", "squashfs"]
+          "enum": ["raw", "squashfs"]
         },
         "sourceCompression": {
           "enum": ["zstd", ""]

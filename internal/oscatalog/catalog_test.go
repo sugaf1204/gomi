@@ -217,6 +217,28 @@ entries:
 	}
 }
 
+func TestCatalogSchemaRejectsUnsupportedInstallFormat(t *testing.T) {
+	path := writeCatalog(t, `
+entries:
+  - name: qcow2-image
+    osFamily: custom
+    osVersion: "1"
+    arch: amd64
+    variant: cloud
+    format: qcow2
+    sourceFormat: qcow2
+    url: invalid.qcow2
+    bootEnvironment: ubuntu-minimal-cloud-amd64
+`)
+	_, err := Load(context.Background(), LoadOptions{
+		CatalogFile:     path,
+		ReplaceExternal: true,
+	})
+	if err == nil || !strings.Contains(err.Error(), "validate OS catalog schema") {
+		t.Fatalf("expected schema validation error for unsupported install format, got %v", err)
+	}
+}
+
 func TestCatalogSemanticValidationRejectsDuplicateNames(t *testing.T) {
 	path := writeCatalog(t, `
 entries:
