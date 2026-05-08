@@ -54,10 +54,10 @@
           "pattern": "\\S"
         },
         "format": {
-          "const": "raw"
+          "enum": ["raw", "qcow2", "iso", "squashfs"]
         },
         "sourceFormat": {
-          "const": "raw"
+          "enum": ["raw", "qcow2", "iso", "squashfs"]
         },
         "sourceCompression": {
           "enum": ["zstd", ""]
@@ -82,58 +82,6 @@
           "type": "string",
           "minLength": 1,
           "pattern": "\\S"
-        },
-        "build": {
-          "$ref": "#/$defs/build"
-        }
-      }
-    },
-    "build": {
-      "type": "object",
-      "required": ["type", "source"],
-      "additionalProperties": false,
-      "properties": {
-        "type": {
-          "const": "packer-qemu-cloud-image"
-        },
-        "source": {
-          "$ref": "#/$defs/buildSource"
-        },
-        "aptPackages": {
-          "type": "array",
-          "items": {
-            "type": "string",
-            "minLength": 1
-          }
-        },
-        "curtinKernelPackage": {
-          "type": "string"
-        },
-        "packerTemplate": {
-          "type": "string"
-        },
-        "diskSize": {
-          "type": "string"
-        }
-      }
-    },
-    "buildSource": {
-      "type": "object",
-      "required": ["url", "checksum", "format"],
-      "additionalProperties": false,
-      "properties": {
-        "url": {
-          "type": "string",
-          "minLength": 1,
-          "pattern": "\\S"
-        },
-        "checksum": {
-          "type": "string",
-          "minLength": 1,
-          "pattern": "\\S"
-        },
-        "format": {
-          "enum": ["qcow2", "raw"]
         }
       }
     }

@@ -20,6 +20,8 @@ import (
 	"github.com/sugaf1204/gomi/internal/resource"
 )
 
+var catalogHTTPClient = gohttp.DefaultClient
+
 type osCatalogEntryResponse struct {
 	Entry           oscatalog.Entry `json:"entry"`
 	Installed       bool            `json:"installed"`
@@ -87,11 +89,11 @@ func (s *Server) runCatalogInstall(entry oscatalog.Entry) {
 
 	ctx := context.Background()
 	img := entry.OSImage()
-	if err := validateCatalogRawArtifact(entry); err != nil {
+	if err := validateCatalogArtifact(entry); err != nil {
 		_, _ = s.osimages.UpdateStatus(ctx, img.Name, false, "", err.Error())
 		return
 	}
-	localPath, err := s.downloadCatalogRawArtifact(ctx, entry, img)
+	localPath, err := s.downloadCatalogArtifact(ctx, entry, img)
 	if err != nil {
 		_, _ = s.osimages.UpdateStatus(ctx, img.Name, false, "", err.Error())
 		return
@@ -104,25 +106,43 @@ func (s *Server) runCatalogInstall(entry oscatalog.Entry) {
 	}
 }
 
-func validateCatalogRawArtifact(entry oscatalog.Entry) error {
-	if entry.Format != osimage.FormatRAW {
-		return fmt.Errorf("unsupported catalog image format: %s; only raw prebuilt artifacts are supported", entry.Format)
+func validateCatalogArtifact(entry oscatalog.Entry) error {
+	if entry.Format != osimage.FormatRAW && entry.Format != osimage.FormatSquashFS {
+		return fmt.Errorf("unsupported catalog image format: %s; only raw and squashfs prebuilt artifacts are supported", entry.Format)
 	}
 	sourceFormat := entry.SourceFormat
 	if sourceFormat == "" {
 		sourceFormat = entry.Format
 	}
-	if sourceFormat != osimage.FormatRAW {
-		return fmt.Errorf("unsupported catalog image source format: %s; catalog sources must be raw", sourceFormat)
+	if sourceFormat != entry.Format {
+		return fmt.Errorf("unsupported catalog image source format: %s; catalog source must match artifact format %s", sourceFormat, entry.Format)
 	}
 	if strings.TrimSpace(entry.URL) == "" {
-		return fmt.Errorf("catalog raw artifact URL is required")
+		return fmt.Errorf("catalog artifact URL is required")
 	}
 	compression := strings.TrimSpace(entry.SourceCompression)
-	if compression != "" && compression != "zstd" {
-		return fmt.Errorf("unsupported catalog image source compression: %s", compression)
+	switch entry.Format {
+	case osimage.FormatRAW:
+		if compression != "" && compression != "zstd" {
+			return fmt.Errorf("unsupported catalog image source compression: %s", compression)
+		}
+	case osimage.FormatSquashFS:
+		if compression != "" {
+			return fmt.Errorf("unsupported squashfs catalog source compression: %s", compression)
+		}
 	}
 	return nil
+}
+
+func (s *Server) downloadCatalogArtifact(ctx context.Context, entry oscatalog.Entry, img osimage.OSImage) (string, error) {
+	switch entry.Format {
+	case osimage.FormatRAW:
+		return s.downloadCatalogRawArtifact(ctx, entry, img)
+	case osimage.FormatSquashFS:
+		return s.downloadCatalogSquashFSArtifact(ctx, entry, img)
+	default:
+		return "", fmt.Errorf("unsupported catalog image format: %s", entry.Format)
+	}
 }
 
 func (s *Server) downloadCatalogRawArtifact(ctx context.Context, entry oscatalog.Entry, img osimage.OSImage) (string, error) {
@@ -148,7 +168,7 @@ func (s *Server) downloadCatalogRawArtifact(ctx context.Context, entry oscatalog
 	if err != nil {
 		return "", err
 	}
-	resp, err := gohttp.DefaultClient.Do(req)
+	resp, err := catalogHTTPClient.Do(req)
 	if err != nil {
 		return "", fmt.Errorf("download image: %w", err)
 	}
@@ -182,6 +202,52 @@ func (s *Server) downloadCatalogRawArtifact(ctx context.Context, entry oscatalog
 		return "", err
 	}
 	return localPath, nil
+}
+
+func (s *Server) downloadCatalogSquashFSArtifact(ctx context.Context, entry oscatalog.Entry, img osimage.OSImage) (string, error) {
+	rawURL := strings.TrimSpace(entry.URL)
+	parsed, err := url.Parse(rawURL)
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		return "", fmt.Errorf("invalid catalog image URL")
+	}
+	if parsed.Scheme != "http" && parsed.Scheme != "https" {
+		return "", fmt.Errorf("unsupported catalog image URL scheme: %s", parsed.Scheme)
+	}
+
+	storageDir := s.imageStorageDir
+	if storageDir == "" {
+		storageDir = "data/images"
+	}
+	localDir := filepath.Join(storageDir, img.Name)
+	if err := os.MkdirAll(localDir, 0o755); err != nil {
+		return "", fmt.Errorf("create image storage directory: %w", err)
+	}
+	localPath := filepath.Join(localDir, "rootfs.squashfs")
+
+	req, err := gohttp.NewRequestWithContext(ctx, gohttp.MethodGet, rawURL, nil)
+	if err != nil {
+		return "", err
+	}
+	resp, err := catalogHTTPClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("download image: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != gohttp.StatusOK {
+		io.Copy(io.Discard, resp.Body)
+		return "", fmt.Errorf("download image: status %d", resp.StatusCode)
+	}
+
+	tmpPath := localPath + ".download"
+	if err := writeImageFileWithChecksum(tmpPath, resp.Body, img.Checksum); err != nil {
+		_ = os.Remove(tmpPath)
+		return "", err
+	}
+	if err := os.Rename(tmpPath, localPath); err != nil {
+		_ = os.Remove(tmpPath)
+		return "", fmt.Errorf("publish image file: %w", err)
+	}
+	return localDir, nil
 }
 
 func (s *Server) osCatalogStatus(ctx context.Context, entry oscatalog.Entry) osCatalogEntryResponse {

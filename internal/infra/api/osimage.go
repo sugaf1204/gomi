@@ -10,6 +10,7 @@ import (
 	gohttp "net/http"
 	"net/url"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 
@@ -83,21 +84,22 @@ func (s *Server) UploadOSImage(c echo.Context) error {
 			ext = ".iso"
 		case osimage.FormatRAW:
 			ext = ".img"
+		case osimage.FormatSquashFS:
+			ext = ".squashfs"
 		default:
 			ext = ".qcow2"
 		}
 	}
 
-	storageDir := s.imageStorageDir
-	if storageDir == "" {
-		storageDir = "data/images"
+	localPath, payloadPath, err := s.imageWritePaths(img, ext)
+	if err != nil {
+		return c.JSON(gohttp.StatusBadRequest, jsonErrorErr(err))
 	}
-	if err := os.MkdirAll(storageDir, 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(payloadPath), 0o755); err != nil {
 		return c.JSON(gohttp.StatusInternalServerError, jsonError("failed to create storage directory"))
 	}
 
-	localPath := filepath.Join(storageDir, name+ext)
-	dst, err := os.Create(localPath)
+	dst, err := os.Create(payloadPath)
 	if err != nil {
 		return c.JSON(gohttp.StatusInternalServerError, jsonError("failed to create file"))
 	}
@@ -157,15 +159,13 @@ func (s *Server) downloadURLImageFile(ctx context.Context, img osimage.OSImage) 
 		return "", fmt.Errorf("unsupported image URL scheme: %s", parsed.Scheme)
 	}
 
-	storageDir := s.imageStorageDir
-	if storageDir == "" {
-		storageDir = "data/images"
+	localPath, payloadPath, err := s.imageWritePaths(img, imageExtension(img, parsed.Path))
+	if err != nil {
+		return "", err
 	}
-	if err := os.MkdirAll(storageDir, 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(payloadPath), 0o755); err != nil {
 		return "", fmt.Errorf("create image storage directory: %w", err)
 	}
-
-	localPath := filepath.Join(storageDir, img.Name+imageExtension(img, parsed.Path))
 	req, err := gohttp.NewRequestWithContext(ctx, gohttp.MethodGet, rawURL, nil)
 	if err != nil {
 		return "", err
@@ -180,12 +180,12 @@ func (s *Server) downloadURLImageFile(ctx context.Context, img osimage.OSImage) 
 		return "", fmt.Errorf("download image: status %d", resp.StatusCode)
 	}
 
-	tmpPath := localPath + ".download"
+	tmpPath := payloadPath + ".download"
 	if err := writeImageFileWithChecksum(tmpPath, resp.Body, img.Checksum); err != nil {
 		_ = os.Remove(tmpPath)
 		return "", err
 	}
-	if err := os.Rename(tmpPath, localPath); err != nil {
+	if err := os.Rename(tmpPath, payloadPath); err != nil {
 		_ = os.Remove(tmpPath)
 		return "", fmt.Errorf("publish image file: %w", err)
 	}
@@ -193,6 +193,36 @@ func (s *Server) downloadURLImageFile(ctx context.Context, img osimage.OSImage) 
 		return "", err
 	}
 	return localPath, nil
+}
+
+func (s *Server) imageWritePaths(img osimage.OSImage, ext string) (localPath, payloadPath string, err error) {
+	storageDir := s.imageStorageDir
+	if storageDir == "" {
+		storageDir = "data/images"
+	}
+	if rel, ok, err := manifestRootPath(img); err != nil {
+		return "", "", err
+	} else if ok {
+		localPath = filepath.Join(storageDir, img.Name)
+		return localPath, filepath.Join(localPath, filepath.FromSlash(rel)), nil
+	}
+	localPath = filepath.Join(storageDir, img.Name+ext)
+	return localPath, localPath, nil
+}
+
+func manifestRootPath(img osimage.OSImage) (string, bool, error) {
+	if img.Manifest == nil || strings.TrimSpace(img.Manifest.Root.Path) == "" {
+		return "", false, nil
+	}
+	raw := strings.TrimSpace(img.Manifest.Root.Path)
+	if strings.Contains(raw, "\\") || path.IsAbs(raw) {
+		return "", false, fmt.Errorf("invalid manifest root path: %s", raw)
+	}
+	clean := path.Clean(raw)
+	if clean == "." || clean == ".." || strings.HasPrefix(clean, "../") {
+		return "", false, fmt.Errorf("invalid manifest root path: %s", raw)
+	}
+	return clean, true, nil
 }
 
 func (s *Server) publishOSImageFile(localPath string) error {
@@ -237,7 +267,7 @@ func (s *Server) publishOSImageFile(localPath string) error {
 func imageExtension(img osimage.OSImage, rawPath string) string {
 	ext := strings.ToLower(filepath.Ext(rawPath))
 	switch ext {
-	case ".qcow2", ".raw", ".img", ".iso":
+	case ".qcow2", ".raw", ".img", ".iso", ".squashfs":
 		return ext
 	}
 	switch img.Format {
@@ -245,6 +275,8 @@ func imageExtension(img osimage.OSImage, rawPath string) string {
 		return ".iso"
 	case osimage.FormatRAW:
 		return ".raw"
+	case osimage.FormatSquashFS:
+		return ".squashfs"
 	default:
 		return ".qcow2"
 	}
@@ -330,10 +362,16 @@ func (s *Server) DownloadOSImage(c echo.Context) error {
 	if !img.Ready || img.LocalPath == "" {
 		return c.JSON(gohttp.StatusNotFound, jsonError("image not ready or no local file"))
 	}
-	if _, err := os.Stat(img.LocalPath); err != nil {
+	localPath := img.LocalPath
+	if st, err := os.Stat(localPath); err == nil && st.IsDir() && img.Manifest != nil && strings.TrimSpace(img.Manifest.Root.Path) != "" {
+		localPath = filepath.Join(localPath, filepath.FromSlash(strings.TrimSpace(img.Manifest.Root.Path)))
+	} else if err != nil {
 		return c.JSON(gohttp.StatusNotFound, jsonError("image file not found on disk: "+img.LocalPath))
 	}
-	return c.File(img.LocalPath)
+	if _, err := os.Stat(localPath); err != nil {
+		return c.JSON(gohttp.StatusNotFound, jsonError("image file not found on disk: "+img.LocalPath))
+	}
+	return c.File(localPath)
 }
 
 func (s *Server) DeleteOSImage(c echo.Context) error {

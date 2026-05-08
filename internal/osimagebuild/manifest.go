@@ -13,14 +13,14 @@ import (
 )
 
 func WriteManifest(dir string) error {
-	if dir == "" {
+	if strings.TrimSpace(dir) == "" {
 		dir = filepath.Join("dist", "os-images")
 	}
 	metadataPaths, err := filepath.Glob(filepath.Join(dir, "*.json"))
 	if err != nil {
 		return err
 	}
-	entries := make([]ImageMetadata, 0)
+	entries := make([]ImageMetadata, 0, len(metadataPaths))
 	for _, path := range metadataPaths {
 		if filepath.Base(path) == "manifest-os-images.json" {
 			continue
@@ -44,13 +44,13 @@ func WriteManifest(dir string) error {
 		return err
 	}
 
-	zstPaths, err := filepath.Glob(filepath.Join(dir, "*.raw.zst"))
+	artifacts, err := filepath.Glob(filepath.Join(dir, "*.rootfs.squashfs"))
 	if err != nil {
 		return err
 	}
-	sort.Strings(zstPaths)
+	sort.Strings(artifacts)
 	var checksums strings.Builder
-	for _, path := range zstPaths {
+	for _, path := range artifacts {
 		sum, err := sha256File(path)
 		if err != nil {
 			return err

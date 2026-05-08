@@ -22,7 +22,7 @@ func ValidateOSImage(img OSImage) error {
 	if strings.TrimSpace(img.OSVersion) == "" {
 		return ErrInvalidOSVersion
 	}
-	if img.Format != "" && img.Format != FormatQCOW2 && img.Format != FormatRAW && img.Format != FormatISO {
+	if img.Format != "" && img.Format != FormatQCOW2 && img.Format != FormatRAW && img.Format != FormatISO && img.Format != FormatSquashFS {
 		return fmt.Errorf("unsupported format: %s", img.Format)
 	}
 	if img.Source != "" && img.Source != SourceUpload && img.Source != SourceURL {

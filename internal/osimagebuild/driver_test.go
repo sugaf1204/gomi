@@ -2,7 +2,11 @@ package osimagebuild
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -10,62 +14,173 @@ import (
 	"testing"
 
 	"github.com/sugaf1204/gomi/internal/oscatalog"
+	"github.com/sugaf1204/gomi/internal/osimage"
 )
 
-func TestMatrixUsesBuildRecipesOnly(t *testing.T) {
-	catalog := writeCatalog(t, `
-entries:
-  - name: buildable
-    osFamily: custom
-    osVersion: "1"
-    arch: amd64
-    variant: baremetal
-    format: raw
-    sourceFormat: raw
-    sourceCompression: zstd
-    url: buildable.raw.zst
-    bootEnvironment: ubuntu-minimal-cloud-amd64
-    build:
-      type: packer-qemu-cloud-image
-      source:
-        url: https://images.example.test/source.qcow2
-        checksum: sha256:abc
-        format: qcow2
-  - name: url-only
-    osFamily: custom
-    osVersion: "1"
-    arch: amd64
-    variant: baremetal
-    format: raw
-    sourceFormat: raw
-    sourceCompression: zstd
-    url: https://images.example.test/root.raw.zst
-    bootEnvironment: ubuntu-minimal-cloud-amd64
-`)
-	entries, err := LoadCatalog(context.Background(), LoadOptions{
-		CatalogFile:     catalog,
-		ReplaceExternal: true,
-	})
+func TestBuildMatrixUsesBuildConfigOnly(t *testing.T) {
+	entries := []oscatalog.Entry{
+		{
+			Name:            "buildable",
+			OSFamily:        "custom",
+			OSVersion:       "1",
+			Arch:            "amd64",
+			Variant:         osimage.VariantBareMetal,
+			Format:          osimage.FormatSquashFS,
+			SourceFormat:    osimage.FormatSquashFS,
+			URL:             "https://images.example.test/buildable.rootfs.squashfs",
+			BootEnvironment: "ubuntu-minimal-cloud-amd64",
+		},
+		{
+			Name:            "url-only",
+			OSFamily:        "custom",
+			OSVersion:       "1",
+			Arch:            "amd64",
+			Variant:         osimage.VariantBareMetal,
+			Format:          osimage.FormatSquashFS,
+			SourceFormat:    osimage.FormatSquashFS,
+			URL:             "https://images.example.test/url-only.rootfs.squashfs",
+			BootEnvironment: "ubuntu-minimal-cloud-amd64",
+		},
+	}
+	cfg := Config{Entries: []BuildEntry{{Name: "buildable", Source: Source{URL: "https://source.example.test/root.tar.xz", Format: "root-tar"}}}}
+	matrix, err := BuildMatrix(entries, cfg)
 	if err != nil {
-		t.Fatalf("load catalog: %v", err)
+		t.Fatalf("build matrix: %v", err)
 	}
-	matrix := BuildMatrix(entries)
-	raw, err := json.Marshal(matrix)
-	if err != nil {
-		t.Fatalf("marshal matrix: %v", err)
-	}
-	got := string(raw)
-	if !strings.Contains(got, "buildable") {
-		t.Fatalf("expected buildable entry in matrix, got %s", got)
-	}
-	if strings.Contains(got, "url-only") {
-		t.Fatalf("expected URL-only entry to be excluded, got %s", got)
+	if !reflect.DeepEqual(matrix.Include, []MatrixEntry{{Name: "buildable"}}) {
+		t.Fatalf("matrix = %#v", matrix)
 	}
 }
 
-func TestWriteManifest(t *testing.T) {
+func TestBuildRunsRootFSSquashFSSteps(t *testing.T) {
+	sourceBytes := []byte("tarball")
+	sourceSum := sha256.Sum256(sourceBytes)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/root.tar.xz" {
+			http.NotFound(w, r)
+			return
+		}
+		_, _ = w.Write(sourceBytes)
+	}))
+	defer server.Close()
+
+	workDir := filepath.Join(t.TempDir(), "work")
+	outDir := filepath.Join(t.TempDir(), "out")
+	runner := &fakeCommandRunner{}
+	meta, err := Build(context.Background(), []oscatalog.Entry{{
+		Name:            "buildable",
+		OSFamily:        "ubuntu",
+		OSVersion:       "22.04",
+		Arch:            "amd64",
+		Variant:         osimage.VariantBareMetal,
+		Format:          osimage.FormatSquashFS,
+		SourceFormat:    osimage.FormatSquashFS,
+		URL:             "https://images.example.test/buildable.rootfs.squashfs",
+		BootEnvironment: "ubuntu-minimal-cloud-amd64",
+	}}, Config{Entries: []BuildEntry{{
+		Name: "buildable",
+		Source: Source{
+			URL:         server.URL + "/root.tar.xz",
+			Checksum:    "sha256:" + hex.EncodeToString(sourceSum[:]),
+			Format:      "root-tar",
+			Compression: "xz",
+		},
+		PackageManager: "apt",
+		Packages:       []string{"linux-image-generic", "grub-pc"},
+		VerifyModules:  []string{"igc", "r8169"},
+		SquashFS:       SquashFS{Compression: "xz", BlockSize: "1M"},
+	}}}, BuildOptions{
+		EntryName:     "buildable",
+		OutDir:        outDir,
+		WorkDir:       workDir,
+		Processors:    1,
+		CommandRunner: runner,
+	})
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	if meta.Artifact != "buildable.rootfs.squashfs" || meta.RootPath != "rootfs.squashfs" || meta.SizeBytes == 0 {
+		t.Fatalf("metadata = %#v", meta)
+	}
+
+	gotCommands := runner.commandLabels()
+	wantCommands := []string{
+		"tar -xJf",
+		"mount --bind",
+		"mount --bind",
+		"mount --bind",
+		"mount --bind",
+		"mount -t",
+		"chroot apt-get update",
+		"chroot apt-get install",
+		"umount",
+		"umount",
+		"umount",
+		"umount",
+		"umount",
+		"mksquashfs",
+	}
+	if !reflect.DeepEqual(gotCommands, wantCommands) {
+		t.Fatalf("commands = %#v, want %#v", gotCommands, wantCommands)
+	}
+
+	mksquashfs := runner.lastCall("mksquashfs")
+	if !reflect.DeepEqual(mksquashfs.args, []string{
+		filepath.Join(workDir, "rootfs"),
+		filepath.Join(outDir, "buildable.rootfs.squashfs"),
+		"-noappend", "-comp", "xz", "-b", "1M", "-processors", "1", "-all-root",
+	}) {
+		t.Fatalf("mksquashfs args = %#v", mksquashfs.args)
+	}
+	if _, err := os.Stat(filepath.Join(outDir, "manifest-os-images.json")); err != nil {
+		t.Fatalf("manifest was not written: %v", err)
+	}
+	if got, err := os.ReadFile(filepath.Join(workDir, "rootfs", "etc", "machine-id")); err != nil || len(got) != 0 {
+		t.Fatalf("machine-id cleanup failed: len=%d err=%v", len(got), err)
+	}
+	if _, err := os.Stat(filepath.Join(workDir, "rootfs", "etc", "ssh", "ssh_host_ed25519_key")); !os.IsNotExist(err) {
+		t.Fatalf("ssh host key cleanup failed: %v", err)
+	}
+}
+
+func TestCleanupRootFSRejectsEscapingCleanupPaths(t *testing.T) {
+	rootfsDir := filepath.Join(t.TempDir(), "rootfs")
+	outsideDir := filepath.Join(t.TempDir(), "outside")
+	if err := os.MkdirAll(rootfsDir, 0o755); err != nil {
+		t.Fatalf("create rootfs: %v", err)
+	}
+	if err := os.MkdirAll(outsideDir, 0o755); err != nil {
+		t.Fatalf("create outside dir: %v", err)
+	}
+	outsideFile := filepath.Join(outsideDir, "keep")
+	if err := os.WriteFile(outsideFile, []byte("keep"), 0o644); err != nil {
+		t.Fatalf("write outside file: %v", err)
+	}
+
+	err := cleanupRootFS(BuildEntry{CleanupPaths: []string{"../" + filepath.Base(outsideDir)}}, rootfsDir)
+	if err == nil {
+		t.Fatal("expected escaping cleanup path to be rejected")
+	}
+	if _, statErr := os.Stat(outsideFile); statErr != nil {
+		t.Fatalf("outside file should remain: %v", statErr)
+	}
+}
+
+func TestCleanupRootFSRejectsEscapingCleanupGlobs(t *testing.T) {
+	rootfsDir := filepath.Join(t.TempDir(), "rootfs")
+	if err := os.MkdirAll(rootfsDir, 0o755); err != nil {
+		t.Fatalf("create rootfs: %v", err)
+	}
+
+	err := cleanupRootFS(BuildEntry{CleanupGlobs: []string{"../outside/*"}}, rootfsDir)
+	if err == nil {
+		t.Fatal("expected escaping cleanup glob to be rejected")
+	}
+}
+
+func TestWriteManifestIncludesSquashFSArtifacts(t *testing.T) {
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "sample.raw.zst"), []byte("zstd-bytes"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "sample.rootfs.squashfs"), []byte("squashfs-bytes"), 0o644); err != nil {
 		t.Fatalf("write artifact: %v", err)
 	}
 	if err := os.WriteFile(filepath.Join(dir, "sample.json"), []byte(`{
@@ -74,9 +189,11 @@ func TestWriteManifest(t *testing.T) {
   "osVersion": "1",
   "arch": "amd64",
   "variant": "baremetal",
-  "artifact": "sample.raw.zst",
+  "format": "squashfs",
+  "artifact": "sample.rootfs.squashfs",
+  "rootPath": "rootfs.squashfs",
   "sha256": "old",
-  "sizeBytes": 10
+  "sizeBytes": 14
 }`), 0o644); err != nil {
 		t.Fatalf("write metadata: %v", err)
 	}
@@ -87,186 +204,19 @@ func TestWriteManifest(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read manifest: %v", err)
 	}
-	if !strings.Contains(string(manifest), `"name": "sample"`) {
-		t.Fatalf("manifest does not include sample metadata: %s", manifest)
+	var entries []ImageMetadata
+	if err := json.Unmarshal(manifest, &entries); err != nil {
+		t.Fatalf("parse manifest: %v", err)
+	}
+	if len(entries) != 1 || entries[0].Artifact != "sample.rootfs.squashfs" || entries[0].RootPath != "rootfs.squashfs" {
+		t.Fatalf("manifest entries = %#v", entries)
 	}
 	checksums, err := os.ReadFile(filepath.Join(dir, "checksums-os-images.txt"))
 	if err != nil {
 		t.Fatalf("read checksums: %v", err)
 	}
-	if !strings.Contains(string(checksums), "sample.raw.zst") {
+	if !strings.Contains(string(checksums), "sample.rootfs.squashfs") {
 		t.Fatalf("checksums do not include artifact: %s", checksums)
-	}
-}
-
-func TestBuildRunsCommandsAndWritesPackerVarJSON(t *testing.T) {
-	workDir := filepath.Join(t.TempDir(), "work")
-	outDir := filepath.Join(t.TempDir(), "out")
-	templateDir := filepath.Join(t.TempDir(), "template")
-	writeTemplate(t, templateDir)
-	ovmfCode := filepath.Join(t.TempDir(), "OVMF_CODE.fd")
-	ovmfVars := filepath.Join(t.TempDir(), "OVMF_VARS.fd")
-	if err := os.WriteFile(ovmfCode, []byte("code"), 0o644); err != nil {
-		t.Fatalf("write ovmf code: %v", err)
-	}
-	if err := os.WriteFile(ovmfVars, []byte("vars"), 0o644); err != nil {
-		t.Fatalf("write ovmf vars: %v", err)
-	}
-	t.Setenv("PACKER_OVMF_CODE", ovmfCode)
-	t.Setenv("PACKER_OVMF_VARS", ovmfVars)
-
-	runner := &fakeCommandRunner{}
-	meta, err := Build(context.Background(), loadBuildTestCatalog(t), BuildOptions{
-		EntryName:     "buildable",
-		OutDir:        outDir,
-		WorkDir:       workDir,
-		Template:      templateDir,
-		CommandRunner: runner,
-	})
-	if err != nil {
-		t.Fatalf("build: %v", err)
-	}
-	if meta.Artifact != "buildable.raw.zst" || meta.SizeBytes == 0 {
-		t.Fatalf("metadata = %#v", meta)
-	}
-	gotCommands := runner.commandLabels()
-	wantCommands := []string{"cloud-localds", "packer init", "packer build", "qemu-img convert", "zstd"}
-	if !reflect.DeepEqual(gotCommands, wantCommands) {
-		t.Fatalf("commands = %#v, want %#v", gotCommands, wantCommands)
-	}
-
-	var vars packerVars
-	varPath := filepath.Join(workDir, "build.pkrvars.json")
-	raw, err := os.ReadFile(varPath)
-	if err != nil {
-		t.Fatalf("read var file: %v", err)
-	}
-	if err := json.Unmarshal(raw, &vars); err != nil {
-		t.Fatalf("decode var file: %v", err)
-	}
-	if vars.ImageName != "buildable" || vars.OutputDirectory == "" || vars.SeedISO == "" {
-		t.Fatalf("vars = %#v", vars)
-	}
-	if !reflect.DeepEqual(vars.AptPackages, []string{"linux-image-generic"}) {
-		t.Fatalf("apt packages = %#v", vars.AptPackages)
-	}
-}
-
-func TestBuildWritesEmptyAptPackagesArray(t *testing.T) {
-	workDir := filepath.Join(t.TempDir(), "work")
-	outDir := filepath.Join(t.TempDir(), "out")
-	templateDir := filepath.Join(t.TempDir(), "template")
-	writeTemplate(t, templateDir)
-	ovmfCode := filepath.Join(t.TempDir(), "OVMF_CODE.fd")
-	ovmfVars := filepath.Join(t.TempDir(), "OVMF_VARS.fd")
-	if err := os.WriteFile(ovmfCode, []byte("code"), 0o644); err != nil {
-		t.Fatalf("write ovmf code: %v", err)
-	}
-	if err := os.WriteFile(ovmfVars, []byte("vars"), 0o644); err != nil {
-		t.Fatalf("write ovmf vars: %v", err)
-	}
-	t.Setenv("PACKER_OVMF_CODE", ovmfCode)
-	t.Setenv("PACKER_OVMF_VARS", ovmfVars)
-
-	catalog := writeCatalog(t, `
-entries:
-  - name: cloud
-    osFamily: custom
-    osVersion: "1"
-    arch: amd64
-    variant: cloud
-    format: raw
-    sourceFormat: raw
-    sourceCompression: zstd
-    url: cloud.raw.zst
-    bootEnvironment: ubuntu-minimal-cloud-amd64
-    build:
-      type: packer-qemu-cloud-image
-      source:
-        url: https://images.example.test/source.qcow2
-        checksum: sha256:abc
-        format: qcow2
-`)
-	entries, err := LoadCatalog(context.Background(), LoadOptions{
-		CatalogFile:     catalog,
-		ReplaceExternal: true,
-	})
-	if err != nil {
-		t.Fatalf("load catalog: %v", err)
-	}
-	_, err = Build(context.Background(), entries, BuildOptions{
-		EntryName:     "cloud",
-		OutDir:        outDir,
-		WorkDir:       workDir,
-		Template:      templateDir,
-		CommandRunner: &fakeCommandRunner{},
-	})
-	if err != nil {
-		t.Fatalf("build: %v", err)
-	}
-	var vars packerVars
-	raw, err := os.ReadFile(filepath.Join(workDir, "build.pkrvars.json"))
-	if err != nil {
-		t.Fatalf("read var file: %v", err)
-	}
-	if err := json.Unmarshal(raw, &vars); err != nil {
-		t.Fatalf("decode var file: %v", err)
-	}
-	if vars.AptPackages == nil {
-		t.Fatalf("apt packages must be an empty array, got nil")
-	}
-	if len(vars.AptPackages) != 0 {
-		t.Fatalf("apt packages = %#v", vars.AptPackages)
-	}
-	if strings.Contains(string(raw), `"apt_packages": null`) {
-		t.Fatalf("var file must not encode apt_packages as null: %s", raw)
-	}
-}
-
-func loadBuildTestCatalog(t *testing.T) []oscatalog.Entry {
-	t.Helper()
-	catalog := writeCatalog(t, `
-entries:
-  - name: buildable
-    osFamily: custom
-    osVersion: "1"
-    arch: amd64
-    variant: baremetal
-    format: raw
-    sourceFormat: raw
-    sourceCompression: zstd
-    url: buildable.raw.zst
-    bootEnvironment: ubuntu-minimal-cloud-amd64
-    build:
-      type: packer-qemu-cloud-image
-      source:
-        url: https://images.example.test/source.qcow2
-        checksum: sha256:abc
-        format: qcow2
-      aptPackages:
-        - linux-image-generic
-      curtinKernelPackage: linux-image-generic
-`)
-	entries, err := LoadCatalog(context.Background(), LoadOptions{
-		CatalogFile:     catalog,
-		ReplaceExternal: true,
-	})
-	if err != nil {
-		t.Fatalf("load catalog: %v", err)
-	}
-	return entries
-}
-
-func writeTemplate(t *testing.T, dir string) {
-	t.Helper()
-	if err := os.MkdirAll(filepath.Join(dir, "seed"), 0o755); err != nil {
-		t.Fatalf("create seed dir: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "seed", "user-data.yaml"), []byte("#cloud-config\n"), 0o644); err != nil {
-		t.Fatalf("write user-data: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "cloud-image.pkr.hcl"), []byte("packer {}\n"), 0o644); err != nil {
-		t.Fatalf("write template: %v", err)
 	}
 }
 
@@ -275,36 +225,29 @@ type fakeCommandRunner struct {
 }
 
 type commandCall struct {
-	env  []string
 	name string
 	args []string
 }
 
-func (r *fakeCommandRunner) Run(_ context.Context, env []string, name string, args ...string) error {
-	r.calls = append(r.calls, commandCall{env: append([]string{}, env...), name: name, args: append([]string{}, args...)})
+func (r *fakeCommandRunner) Run(_ context.Context, name string, args ...string) error {
+	r.calls = append(r.calls, commandCall{name: name, args: append([]string{}, args...)})
 	switch name {
-	case "cloud-localds":
-		return os.WriteFile(args[0], []byte("seed"), 0o644)
-	case "packer":
-		if len(args) > 0 && args[0] == "build" {
-			varFile := argAfter(args, "-var-file")
-			raw, err := os.ReadFile(varFile)
-			if err != nil {
-				return err
-			}
-			var vars packerVars
-			if err := json.Unmarshal(raw, &vars); err != nil {
-				return err
-			}
-			if err := os.MkdirAll(vars.OutputDirectory, 0o755); err != nil {
-				return err
-			}
-			return os.WriteFile(filepath.Join(vars.OutputDirectory, vars.ImageName+".qcow2"), []byte("qcow2"), 0o644)
+	case "tar":
+		rootfs := argAfter(args, "-C")
+		if err := os.MkdirAll(filepath.Join(rootfs, "lib", "modules", "test", "kernel", "drivers", "net"), 0o755); err != nil {
+			return err
 		}
-	case "qemu-img":
-		return os.WriteFile(args[len(args)-1], []byte("raw"), 0o644)
-	case "zstd":
-		return os.WriteFile(argAfter(args, "-o"), []byte("zstd"), 0o644)
+		for _, module := range []string{"igc", "r8169"} {
+			if err := os.WriteFile(filepath.Join(rootfs, "lib", "modules", "test", "kernel", "drivers", "net", module+".ko"), []byte("module"), 0o644); err != nil {
+				return err
+			}
+		}
+		if err := os.MkdirAll(filepath.Join(rootfs, "etc", "ssh"), 0o755); err != nil {
+			return err
+		}
+		return os.WriteFile(filepath.Join(rootfs, "etc", "ssh", "ssh_host_ed25519_key"), []byte("key"), 0o600)
+	case "mksquashfs":
+		return os.WriteFile(args[1], []byte("squashfs"), 0o644)
 	}
 	return nil
 }
@@ -312,13 +255,27 @@ func (r *fakeCommandRunner) Run(_ context.Context, env []string, name string, ar
 func (r *fakeCommandRunner) commandLabels() []string {
 	out := make([]string, 0, len(r.calls))
 	for _, call := range r.calls {
-		label := call.name
-		if (call.name == "packer" || call.name == "qemu-img") && len(call.args) > 0 {
-			label += " " + call.args[0]
+		switch call.name {
+		case "tar":
+			out = append(out, call.name+" "+call.args[0])
+		case "mount":
+			out = append(out, call.name+" "+call.args[0])
+		case "chroot":
+			out = append(out, "chroot "+call.args[3]+" "+call.args[4])
+		default:
+			out = append(out, call.name)
 		}
-		out = append(out, label)
 	}
 	return out
+}
+
+func (r *fakeCommandRunner) lastCall(name string) commandCall {
+	for i := len(r.calls) - 1; i >= 0; i-- {
+		if r.calls[i].name == name {
+			return r.calls[i]
+		}
+	}
+	return commandCall{}
 }
 
 func argAfter(args []string, flag string) string {
@@ -328,13 +285,4 @@ func argAfter(args []string, flag string) string {
 		}
 	}
 	return ""
-}
-
-func writeCatalog(t *testing.T, body string) string {
-	t.Helper()
-	path := filepath.Join(t.TempDir(), "catalog.yaml")
-	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
-		t.Fatalf("write catalog: %v", err)
-	}
-	return path
 }

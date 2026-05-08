@@ -10,7 +10,7 @@ import (
 	"github.com/sugaf1204/gomi/internal/osimage"
 )
 
-func TestListUsesRawPrebuiltArtifacts(t *testing.T) {
+func TestListUsesPrebuiltArtifacts(t *testing.T) {
 	t.Setenv("GOMI_OS_IMAGE_SOURCE_URL", "https://images.example.test/gomi")
 
 	entries, err := ListWithContext(context.Background())
@@ -18,20 +18,30 @@ func TestListUsesRawPrebuiltArtifacts(t *testing.T) {
 		t.Fatalf("list catalog: %v", err)
 	}
 	for _, entry := range entries {
-		if entry.Format != osimage.FormatRAW {
-			t.Fatalf("%s format = %s, want raw", entry.Name, entry.Format)
-		}
-		if entry.SourceFormat != osimage.FormatRAW {
-			t.Fatalf("%s sourceFormat = %s, want raw", entry.Name, entry.SourceFormat)
-		}
-		if entry.SourceCompression != "zstd" {
-			t.Fatalf("%s sourceCompression = %q, want zstd", entry.Name, entry.SourceCompression)
-		}
 		if !strings.HasPrefix(entry.URL, "https://images.example.test/gomi/") {
 			t.Fatalf("%s URL = %q, want configured source base", entry.Name, entry.URL)
 		}
-		if !strings.HasSuffix(entry.URL, ".raw.zst") {
-			t.Fatalf("%s URL = %q, want prebuilt .raw.zst artifact", entry.Name, entry.URL)
+		switch entry.Name {
+		case "ubuntu-22.04-amd64-baremetal":
+			if entry.Format != osimage.FormatSquashFS || entry.SourceFormat != osimage.FormatSquashFS {
+				t.Fatalf("%s formats = %s/%s, want squashfs", entry.Name, entry.Format, entry.SourceFormat)
+			}
+			if entry.SourceCompression != "" {
+				t.Fatalf("%s sourceCompression = %q, want empty", entry.Name, entry.SourceCompression)
+			}
+			if !strings.HasSuffix(entry.URL, ".rootfs.squashfs") {
+				t.Fatalf("%s URL = %q, want prebuilt .rootfs.squashfs artifact", entry.Name, entry.URL)
+			}
+		default:
+			if entry.Format != osimage.FormatRAW || entry.SourceFormat != osimage.FormatRAW {
+				t.Fatalf("%s formats = %s/%s, want raw", entry.Name, entry.Format, entry.SourceFormat)
+			}
+			if entry.SourceCompression != "zstd" {
+				t.Fatalf("%s sourceCompression = %q, want zstd", entry.Name, entry.SourceCompression)
+			}
+			if !strings.HasSuffix(entry.URL, ".raw.zst") {
+				t.Fatalf("%s URL = %q, want prebuilt .raw.zst artifact", entry.Name, entry.URL)
+			}
 		}
 	}
 }
@@ -68,11 +78,11 @@ entries:
 func TestExternalCatalogFileOverlaysDefaultByName(t *testing.T) {
 	path := writeCatalog(t, `
 entries:
-  - name: ubuntu-24.04-amd64-cloud
+  - name: ubuntu-22.04-amd64-baremetal
     osFamily: ubuntu
-    osVersion: "24.04"
+    osVersion: "22.04"
     arch: amd64
-    variant: cloud
+    variant: baremetal
     format: raw
     sourceFormat: raw
     sourceCompression: zstd
@@ -101,42 +111,65 @@ entries:
 	for _, entry := range entries {
 		got[entry.Name] = entry
 	}
-	if got["ubuntu-24.04-amd64-cloud"].URL != "https://release.example.test/assets/override.raw.zst" {
-		t.Fatalf("default entry was not overlaid with relative URL base resolution: %#v", got["ubuntu-24.04-amd64-cloud"])
+	if got["ubuntu-22.04-amd64-baremetal"].URL != "https://release.example.test/assets/override.raw.zst" {
+		t.Fatalf("default entry was not overlaid with relative URL base resolution: %#v", got["ubuntu-22.04-amd64-baremetal"])
 	}
 	if got["vendor-image"].URL != "https://vendor.example.test/root.raw.zst" {
 		t.Fatalf("absolute external URL was modified: %q", got["vendor-image"].URL)
 	}
 }
 
-func TestBuildEntriesExcludeURLOnlyEntries(t *testing.T) {
-	entries, err := Load(context.Background(), LoadOptions{})
+func TestSquashFSEntryManifestIsRuntimeMetadataOnly(t *testing.T) {
+	path := writeCatalog(t, `
+entries:
+  - name: ubuntu-22.04-amd64-baremetal
+    osFamily: ubuntu
+    osVersion: "22.04"
+    arch: amd64
+    variant: baremetal
+    format: squashfs
+    sourceFormat: squashfs
+    url: ubuntu-22.04-amd64-baremetal.rootfs.squashfs
+    bootEnvironment: ubuntu-minimal-cloud-amd64
+`)
+	entries, err := Load(context.Background(), LoadOptions{
+		CatalogFile:     path,
+		ReplaceExternal: true,
+	})
 	if err != nil {
 		t.Fatalf("load catalog: %v", err)
 	}
-	buildEntries := BuildEntries(entries)
-	if len(buildEntries) == 0 {
-		t.Fatal("expected default catalog to include build recipes")
+	if len(entries) != 1 {
+		t.Fatalf("entries = %#v", entries)
 	}
-	for _, entry := range buildEntries {
-		if entry.Build == nil {
-			t.Fatalf("build entry %s has nil build recipe", entry.Name)
-		}
+	entry := entries[0]
+	if got := entry.OSImage().Manifest; got == nil || got.Root.Path != "rootfs.squashfs" {
+		t.Fatalf("manifest = %#v", got)
 	}
+}
 
-	urlOnly := Entry{
-		Name:              "url-only",
-		OSFamily:          "custom",
-		OSVersion:         "1",
-		Arch:              "amd64",
-		Format:            osimage.FormatRAW,
-		SourceFormat:      osimage.FormatRAW,
-		SourceCompression: "zstd",
-		URL:               "https://images.example.test/root.raw.zst",
-		BootEnvironment:   "ubuntu-minimal-cloud-amd64",
-	}
-	if got := BuildEntries([]Entry{urlOnly}); len(got) != 0 {
-		t.Fatalf("expected URL-only entry to be excluded from build matrix, got %#v", got)
+func TestCatalogSchemaRejectsBuildMetadata(t *testing.T) {
+	path := writeCatalog(t, `
+entries:
+  - name: invalid-image
+    osFamily: ubuntu
+    osVersion: "22.04"
+    arch: amd64
+    variant: baremetal
+    format: squashfs
+    sourceFormat: squashfs
+    url: invalid.rootfs.squashfs
+    bootEnvironment: ubuntu-minimal-cloud-amd64
+    build:
+      source:
+        url: https://images.example.test/root.tar.xz
+`)
+	_, err := Load(context.Background(), LoadOptions{
+		CatalogFile:     path,
+		ReplaceExternal: true,
+	})
+	if err == nil || !strings.Contains(err.Error(), "validate OS catalog schema") {
+		t.Fatalf("expected schema validation error for build metadata, got %v", err)
 	}
 }
 

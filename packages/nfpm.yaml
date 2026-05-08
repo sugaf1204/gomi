@@ -18,12 +18,22 @@ depends:
   - ca-certificates
   - grub-efi-amd64-bin
   - ipxe
+  - squashfs-tools
   - systemd
+  - xz-utils
 contents:
   - src: packages/debian/build/gomi
     dst: /usr/bin/gomi
     file_info:
       mode: 0755
+  - src: packages/debian/build/gomi-osimage
+    dst: /usr/bin/gomi-osimage
+    file_info:
+      mode: 0755
+  - src: packages/debian/build/builds.yaml
+    dst: /usr/share/gomi/osimage/builds.yaml
+    file_info:
+      mode: 0644
   - src: packages/files/gomi-hypervisor.service
     dst: /var/lib/gomi/data/files/gomi-hypervisor.service
     file_info:

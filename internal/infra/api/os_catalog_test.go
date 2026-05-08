@@ -3,6 +3,7 @@ package api
 import (
 	"bytes"
 	"context"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -16,7 +17,7 @@ import (
 	"github.com/sugaf1204/gomi/internal/osimage"
 )
 
-func TestValidateCatalogRawArtifactRejectsConversion(t *testing.T) {
+func TestValidateCatalogArtifactRejectsConversion(t *testing.T) {
 	entry := oscatalog.Entry{
 		Name:         "ubuntu-24.04-amd64",
 		Format:       osimage.FormatRAW,
@@ -24,16 +25,16 @@ func TestValidateCatalogRawArtifactRejectsConversion(t *testing.T) {
 		URL:          "https://images.example.test/ubuntu-24.04-amd64.qcow2",
 	}
 
-	err := validateCatalogRawArtifact(entry)
+	err := validateCatalogArtifact(entry)
 	if err == nil {
 		t.Fatal("expected qcow2 source to be rejected")
 	}
-	if !strings.Contains(err.Error(), "catalog sources must be raw") {
+	if !strings.Contains(err.Error(), "source must match artifact format") {
 		t.Fatalf("expected raw-only error, got %v", err)
 	}
 }
 
-func TestValidateCatalogRawArtifactAcceptsRaw(t *testing.T) {
+func TestValidateCatalogArtifactAcceptsRaw(t *testing.T) {
 	entry := oscatalog.Entry{
 		Name:         "ubuntu-24.04-amd64",
 		Format:       osimage.FormatRAW,
@@ -41,7 +42,7 @@ func TestValidateCatalogRawArtifactAcceptsRaw(t *testing.T) {
 		URL:          "https://images.example.test/ubuntu-24.04-amd64.raw",
 	}
 
-	if err := validateCatalogRawArtifact(entry); err != nil {
+	if err := validateCatalogArtifact(entry); err != nil {
 		t.Fatalf("expected raw artifact to be accepted, got %v", err)
 	}
 }
@@ -60,10 +61,10 @@ func TestDownloadCatalogRawArtifactDecompressesZstdToRaw(t *testing.T) {
 		t.Fatalf("close zstd writer: %v", err)
 	}
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = w.Write(compressed.Bytes())
-	}))
-	defer server.Close()
+	restore := stubCatalogHTTPClient(t, func(req *http.Request) (*http.Response, error) {
+		return httpResponse(200, compressed.Bytes()), nil
+	})
+	defer restore()
 
 	storageDir := t.TempDir()
 	s := &Server{imageStorageDir: storageDir}
@@ -72,7 +73,7 @@ func TestDownloadCatalogRawArtifactDecompressesZstdToRaw(t *testing.T) {
 		Format:            osimage.FormatRAW,
 		SourceFormat:      osimage.FormatRAW,
 		SourceCompression: "zstd",
-		URL:               server.URL + "/ubuntu-24.04-amd64.raw.zst",
+		URL:               "https://images.example.test/ubuntu-24.04-amd64.raw.zst",
 	}
 	img := entry.OSImage()
 
@@ -89,5 +90,106 @@ func TestDownloadCatalogRawArtifactDecompressesZstdToRaw(t *testing.T) {
 	}
 	if !bytes.Equal(got, raw) {
 		t.Fatalf("raw payload = %q, want %q", got, raw)
+	}
+}
+
+func TestDownloadCatalogSquashFSArtifactStoresDirectoryLayout(t *testing.T) {
+	payload := []byte("squashfs-bytes")
+	restore := stubCatalogHTTPClient(t, func(req *http.Request) (*http.Response, error) {
+		return httpResponse(200, payload), nil
+	})
+	defer restore()
+
+	storageDir := t.TempDir()
+	s := &Server{imageStorageDir: storageDir}
+	entry := oscatalog.Entry{
+		Name:         "ubuntu-22.04-amd64-baremetal",
+		Format:       osimage.FormatSquashFS,
+		SourceFormat: osimage.FormatSquashFS,
+		URL:          "https://images.example.test/ubuntu-22.04-amd64-baremetal.rootfs.squashfs",
+	}
+	img := entry.OSImage()
+
+	localPath, err := s.downloadCatalogArtifact(context.Background(), entry, img)
+	if err != nil {
+		t.Fatalf("download catalog squashfs artifact: %v", err)
+	}
+	if filepath.Base(localPath) != "ubuntu-22.04-amd64-baremetal" {
+		t.Fatalf("local path = %q, want directory output", localPath)
+	}
+	got, err := os.ReadFile(filepath.Join(localPath, "rootfs.squashfs"))
+	if err != nil {
+		t.Fatalf("read local squashfs image: %v", err)
+	}
+	if !bytes.Equal(got, payload) {
+		t.Fatalf("squashfs payload = %q, want %q", got, payload)
+	}
+}
+
+func TestDownloadURLImageFileStoresManifestSquashFSDirectoryLayout(t *testing.T) {
+	payload := []byte("squashfs-bytes")
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/rootfs.squashfs" {
+			http.NotFound(w, r)
+			return
+		}
+		_, _ = w.Write(payload)
+	}))
+	defer server.Close()
+
+	storageDir := t.TempDir()
+	s := &Server{imageStorageDir: storageDir}
+	img := osimage.OSImage{
+		Name:   "custom-squashfs",
+		Format: osimage.FormatSquashFS,
+		Source: osimage.SourceURL,
+		URL:    server.URL + "/rootfs.squashfs",
+		Manifest: &osimage.Manifest{
+			Root: osimage.RootArtifact{
+				Format: osimage.FormatSquashFS,
+				Path:   "rootfs.squashfs",
+			},
+		},
+	}
+
+	localPath, err := s.downloadURLImageFile(context.Background(), img)
+	if err != nil {
+		t.Fatalf("download URL image file: %v", err)
+	}
+	if filepath.Base(localPath) != "custom-squashfs" {
+		t.Fatalf("local path = %q, want artifact directory", localPath)
+	}
+	got, err := os.ReadFile(filepath.Join(localPath, "rootfs.squashfs"))
+	if err != nil {
+		t.Fatalf("read local squashfs image: %v", err)
+	}
+	if !bytes.Equal(got, payload) {
+		t.Fatalf("squashfs payload = %q, want %q", got, payload)
+	}
+	if _, err := os.Stat(filepath.Join(storageDir, "custom-squashfs.squashfs")); !os.IsNotExist(err) {
+		t.Fatalf("flat squashfs artifact should not exist, err=%v", err)
+	}
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
+	return f(req)
+}
+
+func stubCatalogHTTPClient(t *testing.T, fn roundTripFunc) func() {
+	t.Helper()
+	prev := catalogHTTPClient
+	catalogHTTPClient = &http.Client{Transport: fn}
+	return func() {
+		catalogHTTPClient = prev
+	}
+}
+
+func httpResponse(status int, body []byte) *http.Response {
+	return &http.Response{
+		StatusCode: status,
+		Body:       io.NopCloser(bytes.NewReader(body)),
+		Header:     make(http.Header),
 	}
 }

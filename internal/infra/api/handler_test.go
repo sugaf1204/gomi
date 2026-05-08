@@ -2321,30 +2321,34 @@ func TestOSCatalogListsSupportedImages(t *testing.T) {
 		}
 		name, _ := entry["name"].(string)
 		bootEnv, _ := entry["bootEnvironment"].(string)
-		if entry["format"] != "raw" {
-			t.Fatalf("expected %s catalog format raw, got %v", name, entry["format"])
+		expectedFormat := "raw"
+		expectedCompression := "zstd"
+		expectedSuffix := ".raw.zst"
+		if name == "ubuntu-22.04-amd64-baremetal" {
+			expectedFormat = "squashfs"
+			expectedCompression = ""
+			expectedSuffix = ".rootfs.squashfs"
 		}
-		if entry["sourceFormat"] != "raw" {
-			t.Fatalf("expected %s catalog sourceFormat raw, got %v", name, entry["sourceFormat"])
+		if entry["format"] != expectedFormat {
+			t.Fatalf("expected %s catalog format %s, got %v", name, expectedFormat, entry["format"])
 		}
-		if entry["sourceCompression"] != "zstd" {
-			t.Fatalf("expected %s catalog sourceCompression zstd, got %v", name, entry["sourceCompression"])
+		if entry["sourceFormat"] != expectedFormat {
+			t.Fatalf("expected %s catalog sourceFormat %s, got %v", name, expectedFormat, entry["sourceFormat"])
+		}
+		gotCompression, hasCompression := entry["sourceCompression"]
+		if expectedCompression == "" && !hasCompression {
+			gotCompression = ""
+		}
+		if gotCompression != expectedCompression {
+			t.Fatalf("expected %s catalog sourceCompression %q, got %v", name, expectedCompression, entry["sourceCompression"])
 		}
 		url, _ := entry["url"].(string)
-		if strings.Contains(url, ".qcow2") || strings.Contains(url, "cloud-images.ubuntu.com") || !strings.HasSuffix(url, ".raw.zst") {
-			t.Fatalf("expected %s catalog URL to reference prebuilt raw.zst artifact, got %q", name, url)
+		if strings.Contains(url, ".qcow2") || strings.Contains(url, "cloud-images.ubuntu.com") || !strings.HasSuffix(url, expectedSuffix) {
+			t.Fatalf("expected %s catalog URL to reference prebuilt %s artifact, got %q", name, expectedSuffix, url)
 		}
 		seen[name] = bootEnv
 	}
 
-	for _, name := range []string{"debian-13-amd64-cloud", "debian-13-amd64-baremetal", "ubuntu-24.04-amd64-cloud", "ubuntu-24.04-amd64-baremetal"} {
-		if seen[name] != "ubuntu-minimal-cloud-amd64" {
-			t.Fatalf("expected %s to use ubuntu-minimal-cloud-amd64 boot environment, got %q", name, seen[name])
-		}
-	}
-	if seen["ubuntu-22.04-amd64-cloud"] != "ubuntu-minimal-cloud-amd64" {
-		t.Fatalf("expected ubuntu-22.04-amd64-cloud to use ubuntu-minimal-cloud-amd64 boot environment, got %q", seen["ubuntu-22.04-amd64-cloud"])
-	}
 	if seen["ubuntu-22.04-amd64-baremetal"] != "ubuntu-minimal-cloud-amd64" {
 		t.Fatalf("expected ubuntu-22.04-amd64-baremetal to use ubuntu-minimal-cloud-amd64 boot environment, got %q", seen["ubuntu-22.04-amd64-baremetal"])
 	}

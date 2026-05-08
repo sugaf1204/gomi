@@ -1427,6 +1427,8 @@ func TestPXECurtinConfig_UsesInventoryAndRawArtifact(t *testing.T) {
 		"source=curtin",
 		"late_commands:",
 		"var/lib/cloud/seed/nocloud",
+		"ssh_deletekeys: false",
+		"ssh-keygen -A",
 	} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("expected curtin config to contain %q, got:\n%s", want, body)
@@ -1521,10 +1523,124 @@ func TestPXECurtinConfig_DirectCloudImage(t *testing.T) {
 		"uri: http://192.168.2.254:8080/pxe/files/images/ubuntu-24.04-amd64.raw?attempt_id=attempt-direct-plan&token=token-direct-plan",
 		"late_commands:",
 		"var/lib/cloud/seed/nocloud",
+		"ssh_deletekeys: false",
+		"ssh-keygen -A",
 	} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("expected curtin config to contain %q, got:\n%s", want, body)
 		}
+	}
+}
+
+func TestPXECurtinConfig_SquashFSImageUsesFSImageAndStorageConfig(t *testing.T) {
+	backend := memory.New()
+	machineSvc := machine.NewService(backend.Machines())
+	hwInfoSvc := hwinfo.NewService(backend.HWInfo())
+	osImageSvc := osimage.NewService(backend.OSImages())
+	now := time.Now().UTC()
+
+	img := osimage.OSImage{
+		Name:      "ubuntu-22.04-amd64-baremetal",
+		OSFamily:  "ubuntu",
+		OSVersion: "22.04",
+		Arch:      "amd64",
+		Format:    osimage.FormatSquashFS,
+		Source:    osimage.SourceURL,
+		Ready:     true,
+		LocalPath: "/var/lib/gomi/data/images/ubuntu-22.04-amd64-baremetal",
+		Manifest: &osimage.Manifest{
+			Root: osimage.RootArtifact{
+				Format: osimage.FormatSquashFS,
+				Path:   "rootfs.squashfs",
+			},
+		},
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	if err := backend.OSImages().Upsert(context.Background(), img); err != nil {
+		t.Fatalf("upsert os image: %v", err)
+	}
+	target := machine.Machine{
+		Name:     "bm-squashfs-plan",
+		Hostname: "bm-squashfs-plan",
+		MAC:      "52:54:00:aa:bb:13",
+		Arch:     "amd64",
+		Firmware: machine.FirmwareUEFI,
+		OSPreset: machine.OSPreset{
+			Family:   machine.OSTypeUbuntu,
+			Version:  "22.04",
+			ImageRef: "ubuntu-22.04-amd64-baremetal",
+		},
+		Phase: machine.PhaseProvisioning,
+		Provision: &machine.ProvisionProgress{
+			Active:          true,
+			AttemptID:       "attempt-squashfs-plan",
+			CompletionToken: "token-squashfs-plan",
+		},
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	if err := backend.Machines().Upsert(context.Background(), target); err != nil {
+		t.Fatalf("upsert machine: %v", err)
+	}
+	if _, err := hwInfoSvc.Upsert(context.Background(), hwinfo.HardwareInfo{
+		Name:        "bm-squashfs-plan-hwinfo",
+		MachineName: "bm-squashfs-plan",
+		AttemptID:   "attempt-squashfs-plan",
+		Disks: []hwinfo.DiskInfo{
+			{
+				Name:   "nvme0n1",
+				Path:   "/dev/nvme0n1",
+				Type:   "disk",
+				SizeMB: 65536,
+			},
+		},
+	}); err != nil {
+		t.Fatalf("upsert hwinfo: %v", err)
+	}
+
+	e := echo.New()
+	req := httptest.NewRequest(http.MethodGet, "/pxe/curtin-config?token=token-squashfs-plan&attempt_id=attempt-squashfs-plan", nil)
+	req.Host = "192.168.2.254:8080"
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+
+	h := &Handler{machines: machineSvc, hwinfo: hwInfoSvc, osimages: osImageSvc}
+	if err := h.PXECurtinConfig(c); err != nil {
+		t.Fatalf("PXECurtinConfig: %v", err)
+	}
+	if rec.Code != http.StatusOK {
+		t.Fatalf("unexpected status: %d body=%s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	for _, want := range []string{
+		"type: fsimage",
+		"uri: http://192.168.2.254:8080/pxe/artifacts/os-images/ubuntu-22.04-amd64-baremetal/rootfs.squashfs?attempt_id=attempt-squashfs-plan&token=token-squashfs-plan",
+		"storage:",
+		"ptable: gpt",
+		"flag: bios_grub",
+		"path: /boot/efi",
+		"fstype: ext4",
+		"size: 1M",
+		"size: 512M",
+		"size: 64959M",
+		"install_devices:",
+		"- /dev/nvme0n1",
+		"- curthooks",
+		"partitioning_commands:",
+		"builtin:",
+		"- curtin",
+		"- block-meta",
+		"- custom",
+		"ssh_deletekeys: false",
+		"ssh-keygen -A",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("expected curtin squashfs config to contain %q, got:\n%s", want, body)
+		}
+	}
+	if strings.Contains(body, "size: -1") {
+		t.Fatalf("expected concrete root partition size, got:\n%s", body)
 	}
 }
 

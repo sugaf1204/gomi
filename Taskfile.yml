@@ -151,6 +151,27 @@ tasks:
     cmds:
       - cp packages/debian/build/gomi-linux-{{.ARCH}} packages/debian/build/gomi
 
+  build:deb-osimage:
+    desc: Build OS image helper binary for the Debian package
+    internal: true
+    vars:
+      ARCH:
+        sh: printf '%s' "${ARCH:-amd64}"
+    sources:
+      - go.mod
+      - go.sum
+      - cmd/gomi-osimage/**/*.go
+      - internal/oscatalog/**
+      - internal/osimage/**
+      - internal/osimagebuild/**
+    generates:
+      - packages/debian/build/gomi-osimage
+      - packages/debian/build/builds.yaml
+    cmds:
+      - mkdir -p packages/debian/build
+      - CGO_ENABLED=0 GOOS=linux GOARCH="{{.ARCH}}" go build -trimpath -ldflags "-s -w" -o packages/debian/build/gomi-osimage ./cmd/gomi-osimage
+      - cp internal/osimagebuild/default-builds.yaml packages/debian/build/builds.yaml
+
   build:deb-hypervisor-agent:
     desc: Build hypervisor agent binaries for the Debian package
     internal: true
@@ -189,6 +210,7 @@ tasks:
     desc: Build local artifacts used by the Debian package build
     deps:
       - build:deb-stage-gomi
+      - build:deb-osimage
       - build:deb-hypervisor-agent
       - build:deb-wol-daemon
 
@@ -203,6 +225,8 @@ tasks:
       - build:deb-artifacts
     sources:
       - packages/debian/build/gomi
+      - packages/debian/build/gomi-osimage
+      - packages/debian/build/builds.yaml
       - packages/debian/build/gomi-hypervisor-linux-amd64
       - packages/debian/build/gomi-hypervisor-linux-arm64
       - packages/debian/build/gomi-wol-daemon-linux-amd64
@@ -424,13 +448,16 @@ tasks:
         rsync_ssh="${ACT_RSYNC_SSH:-ssh}"
 
         mkdir -p tmp/act
-        git bundle create tmp/act/repo.bundle --all --tags >/dev/null
+        git bundle create tmp/act/repo.bundle --all >/dev/null
 
         echo "==> Preparing remote act workspace: $remote:$remote_root/src"
         $ssh_cmd "$remote" "mkdir -p '$remote_root'"
         rsync -az -e "$rsync_ssh" tmp/act/repo.bundle "$remote:$remote_root/repo.bundle"
         $ssh_cmd "$remote" "
           set -eu
+          if [ -d '$remote_root/src/.git' ] && [ ! -w '$remote_root/src/.git' ]; then
+            sudo chown -R \"\$(id -u):\$(id -g)\" '$remote_root/src'
+          fi
           if [ -d '$remote_root/src/.git' ]; then
             git -C '$remote_root/src' fetch --tags '$remote_root/repo.bundle' '+refs/heads/*:refs/remotes/act-local/*'
           else
@@ -463,6 +490,7 @@ tasks:
           --exclude 'bootenv/dist/' \
           --exclude 'bootenv/tmp/' \
           ./ "$remote:$remote_root/src/"
+        $ssh_cmd "$remote" "rm -rf '$remote_root/src/tmp' '$remote_root/src/bootenv/tmp'"
         echo "==> Remote act workspace is ready: $remote:$remote_root/src"
 
   act:list:
@@ -560,9 +588,11 @@ tasks:
         case "$remote_root" in *"'"*) echo "ERROR: ACT_REMOTE_WORK must not contain single quotes" >&2; exit 1 ;; esac
         case "$runner_image" in *"'"*) echo "ERROR: ACT_RUNNER_IMAGE must not contain single quotes" >&2; exit 1 ;; esac
         ssh_cmd="${ACT_SSH_CMD:-ssh}"
-        extra="${ACT_EXTRA_ARGS:-}"
+        extra="${ACT_EXTRA_ARGS:---container-options=--privileged}"
+        artifact_path="${ACT_ARTIFACT_PATH:-$remote_root/artifacts}"
+        case "$artifact_path" in *"'"*) echo "ERROR: ACT_ARTIFACT_PATH must not contain single quotes" >&2; exit 1 ;; esac
 
-        $ssh_cmd "$remote" "cd '$remote_root/src' && act workflow_dispatch -W .github/workflows/os-image-release.yml -P ubuntu-latest='$runner_image' $extra"
+        $ssh_cmd "$remote" "mkdir -p '$artifact_path' && cd '$remote_root/src' && act workflow_dispatch -W .github/workflows/os-image-release.yml -P ubuntu-latest='$runner_image' --artifact-server-path '$artifact_path' $extra"
 
   act:release:all:
     desc: Run all release workflows with act on the remote Linux host
@@ -636,21 +666,23 @@ tasks:
       - go run ./cmd/gomi-osimage catalog matrix
 
   os-image:build:
-    desc: Build one target OS image from catalog with Packer
+    desc: Build one target OS rootfs SquashFS image from catalog
     vars:
       NAME: '{{.NAME | default .IMAGE_NAME}}'
     cmds:
       - |
         test -n "{{.NAME}}" || (echo "ERROR: pass NAME=<catalog-entry>" >&2; exit 1)
-      - ./tools/osimage/build-cloud-image-packer.sh --name "{{.NAME}}"
+      - go build -trimpath -o /tmp/gomi-osimage ./cmd/gomi-osimage
+      - sudo -E /tmp/gomi-osimage build --name "{{.NAME}}"
 
   os-image:build-all:
-    desc: Build every catalog entry that defines a Packer build recipe
+    desc: Build every rootfs SquashFS build config entry
     cmds:
       - |
         set -euo pipefail
+        go build -trimpath -o /tmp/gomi-osimage ./cmd/gomi-osimage
         go run ./cmd/gomi-osimage catalog matrix --names | while IFS= read -r name; do
-          go run ./cmd/gomi-osimage build --name "$name"
+          sudo -E /tmp/gomi-osimage build --name "$name"
         done
 
   os-image:manifest:

@@ -6,9 +6,9 @@ import (
 	"flag"
 	"fmt"
 	"os"
-	"strconv"
 	"strings"
 
+	"github.com/sugaf1204/gomi/internal/oscatalog"
 	"github.com/sugaf1204/gomi/internal/osimagebuild"
 )
 
@@ -45,7 +45,7 @@ func runCatalog(ctx context.Context, args []string) error {
 		if err := fs.Parse(args[1:]); err != nil {
 			return err
 		}
-		entries, err := osimagebuild.LoadCatalog(ctx, loadOpts())
+		entries, err := oscatalog.Load(ctx, loadOpts())
 		if err != nil {
 			return err
 		}
@@ -53,15 +53,23 @@ func runCatalog(ctx context.Context, args []string) error {
 		return nil
 	case "matrix":
 		fs, loadOpts := catalogFlags("gomi-osimage catalog matrix")
+		buildConfig := fs.String("build-config", "", "OS image build config YAML path")
 		namesOnly := fs.Bool("names", false, "print one build entry name per line")
 		if err := fs.Parse(args[1:]); err != nil {
 			return err
 		}
-		entries, err := osimagebuild.LoadCatalog(ctx, loadOpts())
+		entries, err := oscatalog.Load(ctx, loadOpts())
 		if err != nil {
 			return err
 		}
-		matrix := osimagebuild.BuildMatrix(entries)
+		cfg, err := osimagebuild.LoadConfig(*buildConfig)
+		if err != nil {
+			return err
+		}
+		matrix, err := osimagebuild.BuildMatrix(entries, cfg)
+		if err != nil {
+			return err
+		}
 		if *namesOnly {
 			for _, entry := range matrix.Include {
 				fmt.Println(entry.Name)
@@ -82,29 +90,26 @@ func runCatalog(ctx context.Context, args []string) error {
 func runBuild(ctx context.Context, args []string) error {
 	fs, loadOpts := catalogFlags("gomi-osimage build")
 	name := fs.String("name", "", "catalog entry name to build")
-	outDir := fs.String("out-dir", "", "output directory for .raw.zst artifacts")
+	buildConfig := fs.String("build-config", "", "OS image build config YAML path")
+	outDir := fs.String("out-dir", "", "output directory for rootfs SquashFS artifacts")
 	workDir := fs.String("work-dir", "", "working directory")
-	template := fs.String("template", "", "packer template directory override")
-	timeout := fs.String("timeout", "", "packer SSH/build timeout")
-	maxSize := fs.String("max-size", "", "maximum artifact size in bytes")
+	processors := fs.Int("processors", 1, "mksquashfs processor count")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	entries, err := osimagebuild.LoadCatalog(ctx, loadOpts())
+	entries, err := oscatalog.Load(ctx, loadOpts())
 	if err != nil {
 		return err
 	}
-	size, err := parseOptionalInt64(*maxSize)
+	cfg, err := osimagebuild.LoadConfig(*buildConfig)
 	if err != nil {
 		return err
 	}
-	meta, err := osimagebuild.Build(ctx, entries, osimagebuild.BuildOptions{
-		EntryName: *name,
-		OutDir:    *outDir,
-		WorkDir:   *workDir,
-		Template:  *template,
-		Timeout:   *timeout,
-		MaxSize:   size,
+	meta, err := osimagebuild.Build(ctx, entries, cfg, osimagebuild.BuildOptions{
+		EntryName:  *name,
+		OutDir:     *outDir,
+		WorkDir:    *workDir,
+		Processors: *processors,
 	})
 	if err != nil {
 		return err
@@ -115,38 +120,27 @@ func runBuild(ctx context.Context, args []string) error {
 
 func runManifest(args []string) error {
 	fs := flag.NewFlagSet("gomi-osimage manifest", flag.ContinueOnError)
-	dir := fs.String("dir", "", "directory containing per-image metadata and .raw.zst artifacts")
+	dir := fs.String("dir", "", "directory containing per-image metadata and rootfs SquashFS artifacts")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	return osimagebuild.WriteManifest(*dir)
 }
 
-func catalogFlags(name string) (*flag.FlagSet, func() osimagebuild.LoadOptions) {
+func catalogFlags(name string) (*flag.FlagSet, func() oscatalog.LoadOptions) {
 	fs := flag.NewFlagSet(name, flag.ContinueOnError)
 	sourceBase := fs.String("source-base", os.Getenv("GOMI_OS_IMAGE_SOURCE_URL"), "base URL for relative catalog artifact URLs")
 	catalogFile := fs.String("catalog", os.Getenv("GOMI_OS_CATALOG_FILE"), "external catalog YAML file")
 	catalogURL := fs.String("catalog-url", os.Getenv("GOMI_OS_CATALOG_URL"), "external catalog YAML URL")
 	replace := fs.Bool("replace", truthy(os.Getenv("GOMI_OS_CATALOG_REPLACE")), "replace built-in catalog with external catalog")
-	return fs, func() osimagebuild.LoadOptions {
-		return osimagebuild.LoadOptions{
+	return fs, func() oscatalog.LoadOptions {
+		return oscatalog.LoadOptions{
 			SourceBase:      *sourceBase,
 			CatalogFile:     *catalogFile,
 			CatalogURL:      *catalogURL,
 			ReplaceExternal: *replace,
 		}
 	}
-}
-
-func parseOptionalInt64(value string) (int64, error) {
-	if value == "" {
-		return 0, nil
-	}
-	out, err := strconv.ParseInt(value, 10, 64)
-	if err != nil {
-		return 0, fmt.Errorf("invalid --max-size: %w", err)
-	}
-	return out, nil
 }
 
 func usage() error {
