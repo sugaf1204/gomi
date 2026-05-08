@@ -42,6 +42,9 @@
           },
           "then": {
             "properties": {
+              "sourceFormat": {
+                "const": "raw"
+              },
               "sourceCompression": {
                 "enum": ["zstd", ""]
               }
@@ -57,6 +60,9 @@
           },
           "then": {
             "properties": {
+              "sourceFormat": {
+                "const": "squashfs"
+              },
               "sourceCompression": {
                 "const": ""
               }

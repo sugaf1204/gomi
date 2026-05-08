@@ -262,6 +262,28 @@ entries:
 	}
 }
 
+func TestCatalogSchemaRejectsMismatchedSourceFormat(t *testing.T) {
+	path := writeCatalog(t, `
+entries:
+  - name: mismatched-source-format
+    osFamily: custom
+    osVersion: "1"
+    arch: amd64
+    variant: baremetal
+    format: squashfs
+    sourceFormat: raw
+    url: invalid.rootfs.squashfs
+    bootEnvironment: ubuntu-minimal-cloud-amd64
+`)
+	_, err := Load(context.Background(), LoadOptions{
+		CatalogFile:     path,
+		ReplaceExternal: true,
+	})
+	if err == nil || !strings.Contains(err.Error(), "validate OS catalog schema") {
+		t.Fatalf("expected schema validation error for mismatched sourceFormat, got %v", err)
+	}
+}
+
 func TestCatalogSemanticValidationRejectsDuplicateNames(t *testing.T) {
 	path := writeCatalog(t, `
 entries:
