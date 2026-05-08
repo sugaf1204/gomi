@@ -406,7 +406,7 @@ func withPreparedChroot(ctx context.Context, runner CommandRunner, rootfsDir str
 		}
 	}()
 	for _, mount := range mounts {
-		if err := os.MkdirAll(mount.target, 0o755); err != nil {
+		if err := prepareChrootMountTarget(rootfsDir, mount.target); err != nil {
 			return err
 		}
 		if err := runner.Run(ctx, "mount", mount.args...); err != nil {
@@ -417,9 +417,25 @@ func withPreparedChroot(ctx context.Context, runner CommandRunner, rootfsDir str
 	return fn()
 }
 
+func prepareChrootMountTarget(rootfsDir, target string) error {
+	if err := ensureNoSymlinkAncestors(rootfsDir, filepath.Dir(target)); err != nil {
+		return err
+	}
+	if err := os.MkdirAll(target, 0o755); err != nil {
+		return err
+	}
+	return ensureNoSymlinkAncestors(rootfsDir, target)
+}
+
 func installResolver(rootfsDir string) (func() error, error) {
 	dst := filepath.Join(rootfsDir, "etc", "resolv.conf")
+	if err := ensureNoSymlinkAncestors(rootfsDir, filepath.Dir(dst)); err != nil {
+		return nil, err
+	}
 	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+		return nil, err
+	}
+	if err := ensureNoSymlinkAncestors(rootfsDir, filepath.Dir(dst)); err != nil {
 		return nil, err
 	}
 

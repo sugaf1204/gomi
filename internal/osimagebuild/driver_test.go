@@ -229,6 +229,105 @@ func TestWithPreparedChrootUnmountsOnMountFailure(t *testing.T) {
 	}
 }
 
+func TestWithPreparedChrootRejectsSymlinkedMountTarget(t *testing.T) {
+	rootfsDir := filepath.Join(t.TempDir(), "rootfs")
+	outsideDir := t.TempDir()
+	if err := os.MkdirAll(rootfsDir, 0o755); err != nil {
+		t.Fatalf("create rootfs: %v", err)
+	}
+	if err := os.Symlink(outsideDir, filepath.Join(rootfsDir, "proc")); err != nil {
+		t.Fatalf("create proc symlink: %v", err)
+	}
+	runner := &fakeCommandRunner{}
+
+	err := withPreparedChroot(context.Background(), runner, rootfsDir, func() error {
+		t.Fatal("chroot callback must not run with symlinked mount target")
+		return nil
+	})
+	if err == nil {
+		t.Fatal("expected symlinked mount target to be rejected")
+	}
+	for _, call := range runner.calls {
+		if call.name == "mount" {
+			t.Fatalf("mount should not be called for symlinked target: %#v", call)
+		}
+	}
+}
+
+func TestWithPreparedChrootRejectsSymlinkedMountAncestor(t *testing.T) {
+	rootfsDir := filepath.Join(t.TempDir(), "rootfs")
+	outsideDir := t.TempDir()
+	if err := os.MkdirAll(rootfsDir, 0o755); err != nil {
+		t.Fatalf("create rootfs: %v", err)
+	}
+	if err := os.Symlink(outsideDir, filepath.Join(rootfsDir, "dev")); err != nil {
+		t.Fatalf("create dev symlink: %v", err)
+	}
+	runner := &fakeCommandRunner{}
+
+	err := withPreparedChroot(context.Background(), runner, rootfsDir, func() error {
+		t.Fatal("chroot callback must not run with symlinked mount ancestor")
+		return nil
+	})
+	if err == nil {
+		t.Fatal("expected symlinked mount ancestor to be rejected")
+	}
+	for _, call := range runner.calls {
+		if call.name == "mount" && len(call.args) > 0 && call.args[0] == "-t" {
+			t.Fatalf("devpts mount should not be called with symlinked ancestor: %#v", call)
+		}
+	}
+	var unmounts []string
+	for _, call := range runner.calls {
+		if call.name == "umount" {
+			unmounts = append(unmounts, call.args[0])
+		}
+	}
+	wantUnmounts := []string{
+		filepath.Join(rootfsDir, "sys"),
+		filepath.Join(rootfsDir, "proc"),
+	}
+	if !reflect.DeepEqual(unmounts, wantUnmounts) {
+		t.Fatalf("unmounts = %#v, want %#v", unmounts, wantUnmounts)
+	}
+}
+
+func TestWithPreparedChrootRejectsResolverSymlinkAncestor(t *testing.T) {
+	rootfsDir := filepath.Join(t.TempDir(), "rootfs")
+	outsideDir := t.TempDir()
+	outsideResolver := filepath.Join(outsideDir, "resolv.conf")
+	if err := os.MkdirAll(rootfsDir, 0o755); err != nil {
+		t.Fatalf("create rootfs: %v", err)
+	}
+	if err := os.WriteFile(outsideResolver, []byte("outside resolver\n"), 0o644); err != nil {
+		t.Fatalf("write outside resolver: %v", err)
+	}
+	if err := os.Symlink(outsideDir, filepath.Join(rootfsDir, "etc")); err != nil {
+		t.Fatalf("create etc symlink: %v", err)
+	}
+	runner := &fakeCommandRunner{}
+
+	err := withPreparedChroot(context.Background(), runner, rootfsDir, func() error {
+		t.Fatal("chroot callback must not run with symlinked resolver ancestor")
+		return nil
+	})
+	if err == nil {
+		t.Fatal("expected symlinked resolver ancestor to be rejected")
+	}
+	got, readErr := os.ReadFile(outsideResolver)
+	if readErr != nil {
+		t.Fatalf("read outside resolver: %v", readErr)
+	}
+	if string(got) != "outside resolver\n" {
+		t.Fatalf("outside resolver was modified: %q", got)
+	}
+	for _, call := range runner.calls {
+		if call.name == "mount" {
+			t.Fatalf("mount should not be called after resolver setup failure: %#v", call)
+		}
+	}
+}
+
 func TestWithPreparedChrootRestoresResolverSymlink(t *testing.T) {
 	rootfsDir := filepath.Join(t.TempDir(), "rootfs")
 	resolvedDir := filepath.Join(rootfsDir, "run", "systemd", "resolve")
