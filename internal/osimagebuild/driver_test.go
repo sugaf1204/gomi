@@ -296,6 +296,119 @@ func TestCleanupRootFSRejectsEscapingCleanupGlobs(t *testing.T) {
 	}
 }
 
+func TestCleanupRootFSReplacesMachineIDSymlinkWithoutFollowing(t *testing.T) {
+	rootfsDir := filepath.Join(t.TempDir(), "rootfs")
+	outsideDir := t.TempDir()
+	outsideFile := filepath.Join(outsideDir, "machine-id")
+	if err := os.WriteFile(outsideFile, []byte("host-machine-id"), 0o644); err != nil {
+		t.Fatalf("write outside file: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(rootfsDir, "etc"), 0o755); err != nil {
+		t.Fatalf("create rootfs etc: %v", err)
+	}
+	if err := os.Symlink(outsideFile, filepath.Join(rootfsDir, "etc", "machine-id")); err != nil {
+		t.Fatalf("create machine-id symlink: %v", err)
+	}
+
+	err := cleanupRootFS(BuildEntry{}, rootfsDir)
+	if err != nil {
+		t.Fatalf("cleanupRootFS: %v", err)
+	}
+	got, readErr := os.ReadFile(outsideFile)
+	if readErr != nil {
+		t.Fatalf("read outside file: %v", readErr)
+	}
+	if string(got) != "host-machine-id" {
+		t.Fatalf("outside machine-id was modified: %q", got)
+	}
+	info, err := os.Lstat(filepath.Join(rootfsDir, "etc", "machine-id"))
+	if err != nil {
+		t.Fatalf("stat rootfs machine-id: %v", err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		t.Fatal("rootfs machine-id should be replaced with a regular file")
+	}
+	if info.Size() != 0 {
+		t.Fatalf("rootfs machine-id size = %d, want 0", info.Size())
+	}
+}
+
+func TestCleanupRootFSAcceptsRootfsMachineIDSymlink(t *testing.T) {
+	rootfsDir := filepath.Join(t.TempDir(), "rootfs")
+	if err := os.MkdirAll(filepath.Join(rootfsDir, "etc"), 0o755); err != nil {
+		t.Fatalf("create rootfs etc: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(rootfsDir, "etc", "machine-id"), []byte("machine-id"), 0o644); err != nil {
+		t.Fatalf("write rootfs machine-id: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(rootfsDir, "var", "lib", "dbus"), 0o755); err != nil {
+		t.Fatalf("create dbus dir: %v", err)
+	}
+	if err := os.Symlink("../../../etc/machine-id", filepath.Join(rootfsDir, "var", "lib", "dbus", "machine-id")); err != nil {
+		t.Fatalf("create dbus machine-id symlink: %v", err)
+	}
+
+	if err := cleanupRootFS(BuildEntry{}, rootfsDir); err != nil {
+		t.Fatalf("cleanupRootFS: %v", err)
+	}
+	for _, path := range []string{
+		filepath.Join(rootfsDir, "etc", "machine-id"),
+		filepath.Join(rootfsDir, "var", "lib", "dbus", "machine-id"),
+	} {
+		info, err := os.Lstat(path)
+		if err != nil {
+			t.Fatalf("stat %s: %v", path, err)
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			t.Fatalf("%s should be replaced with a regular file", path)
+		}
+		if info.Size() != 0 {
+			t.Fatalf("%s size = %d, want 0", path, info.Size())
+		}
+	}
+}
+
+func TestCleanupRootFSRejectsMachineIDAncestorSymlink(t *testing.T) {
+	rootfsDir := filepath.Join(t.TempDir(), "rootfs")
+	outsideDir := t.TempDir()
+	outsideFile := filepath.Join(outsideDir, "machine-id")
+	if err := os.WriteFile(outsideFile, []byte("host-machine-id"), 0o644); err != nil {
+		t.Fatalf("write outside file: %v", err)
+	}
+	if err := os.MkdirAll(rootfsDir, 0o755); err != nil {
+		t.Fatalf("create rootfs: %v", err)
+	}
+	outsideNetplan := filepath.Join(outsideDir, "netplan", "50-cloud-init.yaml")
+	if err := os.MkdirAll(filepath.Dir(outsideNetplan), 0o755); err != nil {
+		t.Fatalf("create outside netplan dir: %v", err)
+	}
+	if err := os.WriteFile(outsideNetplan, []byte("outside-netplan"), 0o644); err != nil {
+		t.Fatalf("write outside netplan: %v", err)
+	}
+	if err := os.Symlink(outsideDir, filepath.Join(rootfsDir, "etc")); err != nil {
+		t.Fatalf("create etc symlink: %v", err)
+	}
+
+	err := cleanupRootFS(BuildEntry{}, rootfsDir)
+	if err == nil {
+		t.Fatal("expected machine-id ancestor symlink to be rejected")
+	}
+	got, readErr := os.ReadFile(outsideFile)
+	if readErr != nil {
+		t.Fatalf("read outside file: %v", readErr)
+	}
+	if string(got) != "host-machine-id" {
+		t.Fatalf("outside machine-id was modified: %q", got)
+	}
+	netplan, readErr := os.ReadFile(outsideNetplan)
+	if readErr != nil {
+		t.Fatalf("read outside netplan: %v", readErr)
+	}
+	if string(netplan) != "outside-netplan" {
+		t.Fatalf("outside netplan was modified: %q", netplan)
+	}
+}
+
 func TestWriteManifestIncludesSquashFSArtifacts(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "sample.squashfs"), []byte("squashfs-bytes"), 0o644); err != nil {

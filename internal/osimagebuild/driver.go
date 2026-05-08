@@ -17,6 +17,7 @@ import (
 	"path"
 	"path/filepath"
 	"strings"
+	"syscall"
 
 	"github.com/sugaf1204/gomi/internal/oscatalog"
 	"github.com/sugaf1204/gomi/internal/osimage"
@@ -468,6 +469,9 @@ func cleanupRootFS(entry BuildEntry, rootfsDir string) error {
 		if err != nil {
 			return err
 		}
+		if err := ensureNoSymlinkAncestors(rootfsDir, filepath.Dir(full)); err != nil {
+			return err
+		}
 		if err := os.RemoveAll(full); err != nil {
 			return err
 		}
@@ -477,10 +481,7 @@ func cleanupRootFS(entry BuildEntry, rootfsDir string) error {
 		if err != nil {
 			return err
 		}
-		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
-			return err
-		}
-		if err := os.WriteFile(full, nil, 0o644); err != nil {
+		if err := writeEmptyRegularFile(rootfsDir, full); err != nil {
 			return err
 		}
 	}
@@ -498,9 +499,69 @@ func cleanupRootFS(entry BuildEntry, rootfsDir string) error {
 			if err := ensureUnderRoot(rootfsDir, match); err != nil {
 				return err
 			}
+			if err := ensureNoSymlinkAncestors(rootfsDir, filepath.Dir(match)); err != nil {
+				return err
+			}
 			if err := os.RemoveAll(match); err != nil {
 				return err
 			}
+		}
+	}
+	return nil
+}
+
+func writeEmptyRegularFile(rootfsDir, full string) error {
+	if err := ensureNoSymlinkAncestors(rootfsDir, filepath.Dir(full)); err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+		return err
+	}
+	if info, err := os.Lstat(full); err == nil && info.Mode()&os.ModeSymlink != 0 {
+		if err := os.Remove(full); err != nil {
+			return err
+		}
+	} else if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	f, err := os.OpenFile(full, os.O_WRONLY|os.O_CREATE|os.O_TRUNC|syscall.O_NOFOLLOW, 0o644)
+	if err != nil {
+		return err
+	}
+	return f.Close()
+}
+
+func ensureNoSymlinkAncestors(rootfsDir, full string) error {
+	rootAbs, err := filepath.Abs(rootfsDir)
+	if err != nil {
+		return err
+	}
+	fullAbs, err := filepath.Abs(full)
+	if err != nil {
+		return err
+	}
+	if err := ensureUnderRoot(rootAbs, fullAbs); err != nil {
+		return err
+	}
+	rel, err := filepath.Rel(rootAbs, fullAbs)
+	if err != nil {
+		return err
+	}
+	if rel == "." {
+		return nil
+	}
+	current := rootAbs
+	for _, part := range strings.Split(rel, string(os.PathSeparator)) {
+		current = filepath.Join(current, part)
+		info, err := os.Lstat(current)
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("rootfs path contains symlink ancestor: %s", current)
 		}
 	}
 	return nil
