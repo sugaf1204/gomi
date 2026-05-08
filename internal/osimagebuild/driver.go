@@ -61,6 +61,9 @@ func Build(ctx context.Context, entries []oscatalog.Entry, cfg Config, opts Buil
 	if err != nil {
 		return ImageMetadata{}, err
 	}
+	if err := validateBuildEntry(catalogEntry.Name, buildEntry); err != nil {
+		return ImageMetadata{}, err
+	}
 	if buildEntry.PackageManager == "" {
 		buildEntry.PackageManager = "apt"
 	}
@@ -229,7 +232,8 @@ func resolveChecksum(ctx context.Context, sourceURL, checksum string) (checksumV
 	}
 	if strings.HasPrefix(checksum, "file:") {
 		filename := filepath.Base(mustURLPath(sourceURL))
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimPrefix(checksum, "file:"), nil)
+		checksumURL := strings.TrimSpace(strings.TrimPrefix(checksum, "file:"))
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, checksumURL, nil)
 		if err != nil {
 			return checksumValue{}, err
 		}
@@ -259,9 +263,9 @@ func resolveChecksum(ctx context.Context, sourceURL, checksum string) (checksumV
 		return checksumValue{}, fmt.Errorf("checksum entry not found for %s", filename)
 	}
 	if algo, digest, ok := strings.Cut(checksum, ":"); ok {
-		return checksumValue{algo: strings.ToLower(strings.TrimSpace(algo)), digest: strings.TrimSpace(digest)}, nil
+		return parseInlineChecksum(strings.ToLower(strings.TrimSpace(algo)) + ":" + strings.TrimSpace(digest))
 	}
-	return digestFromValue(checksum)
+	return parseInlineChecksum(checksum)
 }
 
 func mustURLPath(raw string) string {
@@ -272,8 +276,27 @@ func mustURLPath(raw string) string {
 	return parsed.Path
 }
 
+func parseInlineChecksum(value string) (checksumValue, error) {
+	value = strings.TrimSpace(value)
+	if algo, digest, ok := strings.Cut(value, ":"); ok {
+		algo = strings.ToLower(strings.TrimSpace(algo))
+		parsed, err := digestFromValue(digest)
+		if err != nil {
+			return checksumValue{}, err
+		}
+		if parsed.algo != algo {
+			return checksumValue{}, fmt.Errorf("%s digest length does not match %s", parsed.algo, algo)
+		}
+		return parsed, nil
+	}
+	return digestFromValue(value)
+}
+
 func digestFromValue(value string) (checksumValue, error) {
 	value = strings.TrimSpace(value)
+	if _, err := hex.DecodeString(value); err != nil {
+		return checksumValue{}, fmt.Errorf("checksum digest must be hex: %w", err)
+	}
 	switch len(value) {
 	case 64:
 		return checksumValue{algo: "sha256", digest: value}, nil

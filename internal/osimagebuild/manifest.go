@@ -44,20 +44,28 @@ func WriteManifest(dir string) error {
 		return err
 	}
 
-	artifacts, err := filepath.Glob(filepath.Join(dir, "*.rootfs.squashfs"))
-	if err != nil {
-		return err
-	}
-	sort.Strings(artifacts)
 	var checksums strings.Builder
-	for _, path := range artifacts {
+	seenArtifacts := map[string]struct{}{}
+	for _, entry := range entries {
+		artifact := strings.TrimSpace(entry.Artifact)
+		if artifact == "" {
+			return fmt.Errorf("%s: artifact is required in metadata", entry.Name)
+		}
+		if filepath.Base(artifact) != artifact {
+			return fmt.Errorf("%s: artifact must be a file name, got %q", entry.Name, artifact)
+		}
+		if _, ok := seenArtifacts[artifact]; ok {
+			continue
+		}
+		seenArtifacts[artifact] = struct{}{}
+		path := filepath.Join(dir, artifact)
 		sum, err := sha256File(path)
 		if err != nil {
 			return err
 		}
 		checksums.WriteString(sum)
 		checksums.WriteString("  ")
-		checksums.WriteString(filepath.Base(path))
+		checksums.WriteString(artifact)
 		checksums.WriteByte('\n')
 	}
 	return os.WriteFile(filepath.Join(dir, "checksums-os-images.txt"), []byte(checksums.String()), 0o644)

@@ -4,6 +4,7 @@ import (
 	"context"
 	_ "embed"
 	"fmt"
+	"net/url"
 	"os"
 	"sort"
 	"strings"
@@ -105,14 +106,50 @@ func validateConfig(cfg Config) error {
 			return fmt.Errorf("duplicate OS image build config entry: %s", name)
 		}
 		seen[name] = struct{}{}
-		if strings.TrimSpace(entry.Source.URL) == "" {
-			return fmt.Errorf("%s: source.url is required", name)
-		}
-		if strings.TrimSpace(entry.Source.Format) == "" {
-			return fmt.Errorf("%s: source.format is required", name)
+		if err := validateBuildEntry(name, entry); err != nil {
+			return err
 		}
 	}
 	return nil
+}
+
+func validateBuildEntry(name string, entry BuildEntry) error {
+	if strings.TrimSpace(entry.Source.URL) == "" {
+		return fmt.Errorf("%s: source.url is required", name)
+	}
+	if strings.TrimSpace(entry.Source.Checksum) == "" {
+		return fmt.Errorf("%s: source.checksum is required", name)
+	}
+	if err := validateChecksumReference(entry.Source.Checksum); err != nil {
+		return fmt.Errorf("%s: source.checksum: %w", name, err)
+	}
+	if strings.TrimSpace(entry.Source.Format) == "" {
+		return fmt.Errorf("%s: source.format is required", name)
+	}
+	return nil
+}
+
+func validateChecksumReference(checksum string) error {
+	checksum = strings.TrimSpace(checksum)
+	if strings.HasPrefix(checksum, "file:") {
+		checksumURL := strings.TrimSpace(strings.TrimPrefix(checksum, "file:"))
+		if checksumURL == "" {
+			return fmt.Errorf("checksum file URL is required")
+		}
+		parsed, err := url.Parse(checksumURL)
+		if err != nil {
+			return fmt.Errorf("parse checksum file URL: %w", err)
+		}
+		if parsed.Scheme != "http" && parsed.Scheme != "https" {
+			return fmt.Errorf("checksum file URL must use http or https")
+		}
+		if parsed.Host == "" {
+			return fmt.Errorf("checksum file URL host is required")
+		}
+		return nil
+	}
+	_, err := parseInlineChecksum(checksum)
+	return err
 }
 
 func BuildMatrix(entries []oscatalog.Entry, cfg Config) (Matrix, error) {

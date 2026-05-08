@@ -43,13 +43,63 @@ func TestBuildMatrixUsesBuildConfigOnly(t *testing.T) {
 			BootEnvironment: "ubuntu-minimal-cloud-amd64",
 		},
 	}
-	cfg := Config{Entries: []BuildEntry{{Name: "buildable", Source: Source{URL: "https://source.example.test/root.tar.xz", Format: "root-tar"}}}}
+	cfg := Config{Entries: []BuildEntry{{Name: "buildable", Source: Source{URL: "https://source.example.test/root.tar.xz", Checksum: "sha256:" + strings.Repeat("a", 64), Format: "root-tar"}}}}
 	matrix, err := BuildMatrix(entries, cfg)
 	if err != nil {
 		t.Fatalf("build matrix: %v", err)
 	}
 	if !reflect.DeepEqual(matrix.Include, []MatrixEntry{{Name: "buildable"}}) {
 		t.Fatalf("matrix = %#v", matrix)
+	}
+}
+
+func TestValidateConfigRequiresSourceChecksum(t *testing.T) {
+	err := validateConfig(Config{Entries: []BuildEntry{{
+		Name:   "missing-checksum",
+		Source: Source{URL: "https://source.example.test/root.tar.xz", Format: "root-tar"},
+	}}})
+	if err == nil || !strings.Contains(err.Error(), "source.checksum is required") {
+		t.Fatalf("validateConfig error = %v", err)
+	}
+}
+
+func TestValidateConfigRejectsMalformedSourceChecksum(t *testing.T) {
+	err := validateConfig(Config{Entries: []BuildEntry{{
+		Name:   "bad-checksum",
+		Source: Source{URL: "https://source.example.test/root.tar.xz", Checksum: "sha256:not-hex", Format: "root-tar"},
+	}}})
+	if err == nil || !strings.Contains(err.Error(), "checksum digest must be hex") {
+		t.Fatalf("validateConfig error = %v", err)
+	}
+}
+
+func TestValidateConfigRejectsLocalChecksumFileReference(t *testing.T) {
+	err := validateConfig(Config{Entries: []BuildEntry{{
+		Name:   "local-checksum",
+		Source: Source{URL: "https://source.example.test/root.tar.xz", Checksum: "file:/tmp/SHA256SUMS", Format: "root-tar"},
+	}}})
+	if err == nil || !strings.Contains(err.Error(), "checksum file URL must use http or https") {
+		t.Fatalf("validateConfig error = %v", err)
+	}
+}
+
+func TestResolveChecksumTrimsChecksumFileURL(t *testing.T) {
+	checksumFile := strings.Repeat("b", 64) + "  root.tar.xz\n"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/SHA256SUMS" {
+			http.NotFound(w, r)
+			return
+		}
+		_, _ = w.Write([]byte(checksumFile))
+	}))
+	defer server.Close()
+
+	got, err := resolveChecksum(context.Background(), "https://source.example.test/root.tar.xz", "file: "+server.URL+"/SHA256SUMS")
+	if err != nil {
+		t.Fatalf("resolveChecksum: %v", err)
+	}
+	if got.algo != "sha256" || got.digest != strings.Repeat("b", 64) {
+		t.Fatalf("checksum = %#v", got)
 	}
 }
 
@@ -248,7 +298,7 @@ func TestCleanupRootFSRejectsEscapingCleanupGlobs(t *testing.T) {
 
 func TestWriteManifestIncludesSquashFSArtifacts(t *testing.T) {
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "sample.rootfs.squashfs"), []byte("squashfs-bytes"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "sample.squashfs"), []byte("squashfs-bytes"), 0o644); err != nil {
 		t.Fatalf("write artifact: %v", err)
 	}
 	if err := os.WriteFile(filepath.Join(dir, "sample.json"), []byte(`{
@@ -258,7 +308,7 @@ func TestWriteManifestIncludesSquashFSArtifacts(t *testing.T) {
   "arch": "amd64",
   "variant": "baremetal",
   "format": "squashfs",
-  "artifact": "sample.rootfs.squashfs",
+  "artifact": "sample.squashfs",
   "rootPath": "rootfs.squashfs",
   "sha256": "old",
   "sizeBytes": 14
@@ -276,14 +326,14 @@ func TestWriteManifestIncludesSquashFSArtifacts(t *testing.T) {
 	if err := json.Unmarshal(manifest, &entries); err != nil {
 		t.Fatalf("parse manifest: %v", err)
 	}
-	if len(entries) != 1 || entries[0].Artifact != "sample.rootfs.squashfs" || entries[0].RootPath != "rootfs.squashfs" {
+	if len(entries) != 1 || entries[0].Artifact != "sample.squashfs" || entries[0].RootPath != "rootfs.squashfs" {
 		t.Fatalf("manifest entries = %#v", entries)
 	}
 	checksums, err := os.ReadFile(filepath.Join(dir, "checksums-os-images.txt"))
 	if err != nil {
 		t.Fatalf("read checksums: %v", err)
 	}
-	if !strings.Contains(string(checksums), "sample.rootfs.squashfs") {
+	if !strings.Contains(string(checksums), "sample.squashfs") {
 		t.Fatalf("checksums do not include artifact: %s", checksums)
 	}
 }
