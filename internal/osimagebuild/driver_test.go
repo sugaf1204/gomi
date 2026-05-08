@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -141,6 +142,73 @@ func TestBuildRunsRootFSSquashFSSteps(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(workDir, "rootfs", "etc", "ssh", "ssh_host_ed25519_key")); !os.IsNotExist(err) {
 		t.Fatalf("ssh host key cleanup failed: %v", err)
 	}
+	if got, err := os.ReadFile(filepath.Join(workDir, "rootfs", "etc", "resolv.conf")); err != nil || string(got) != "original resolver\n" {
+		t.Fatalf("resolv.conf was not restored: got=%q err=%v", got, err)
+	}
+}
+
+func TestWithPreparedChrootUnmountsOnMountFailure(t *testing.T) {
+	rootfsDir := filepath.Join(t.TempDir(), "rootfs")
+	if err := os.MkdirAll(filepath.Join(rootfsDir, "etc"), 0o755); err != nil {
+		t.Fatalf("create etc: %v", err)
+	}
+	runner := &failingMountRunner{}
+
+	err := withPreparedChroot(context.Background(), runner, rootfsDir, func() error {
+		t.Fatal("chroot callback must not run after mount failure")
+		return nil
+	})
+	if err == nil {
+		t.Fatal("expected mount failure")
+	}
+
+	var unmounts []string
+	for _, call := range runner.calls {
+		if call.name == "umount" {
+			unmounts = append(unmounts, call.args[0])
+		}
+	}
+	want := []string{
+		filepath.Join(rootfsDir, "run"),
+		filepath.Join(rootfsDir, "dev"),
+		filepath.Join(rootfsDir, "sys"),
+		filepath.Join(rootfsDir, "proc"),
+	}
+	if !reflect.DeepEqual(unmounts, want) {
+		t.Fatalf("unmounts = %#v, want %#v", unmounts, want)
+	}
+}
+
+func TestWithPreparedChrootRestoresResolverSymlink(t *testing.T) {
+	rootfsDir := filepath.Join(t.TempDir(), "rootfs")
+	resolvedDir := filepath.Join(rootfsDir, "run", "systemd", "resolve")
+	if err := os.MkdirAll(resolvedDir, 0o755); err != nil {
+		t.Fatalf("create resolved dir: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(rootfsDir, "etc"), 0o755); err != nil {
+		t.Fatalf("create etc: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(resolvedDir, "stub-resolv.conf"), []byte("stub resolver\n"), 0o644); err != nil {
+		t.Fatalf("write stub resolver: %v", err)
+	}
+	const linkTarget = "../run/systemd/resolve/stub-resolv.conf"
+	if err := os.Symlink(linkTarget, filepath.Join(rootfsDir, "etc", "resolv.conf")); err != nil {
+		t.Fatalf("create resolver symlink: %v", err)
+	}
+
+	if err := withPreparedChroot(context.Background(), &fakeCommandRunner{}, rootfsDir, func() error {
+		return nil
+	}); err != nil {
+		t.Fatalf("withPreparedChroot: %v", err)
+	}
+
+	got, err := os.Readlink(filepath.Join(rootfsDir, "etc", "resolv.conf"))
+	if err != nil {
+		t.Fatalf("resolv.conf is not a symlink: %v", err)
+	}
+	if got != linkTarget {
+		t.Fatalf("resolv.conf link = %q, want %q", got, linkTarget)
+	}
 }
 
 func TestCleanupRootFSRejectsEscapingCleanupPaths(t *testing.T) {
@@ -237,6 +305,12 @@ func (r *fakeCommandRunner) Run(_ context.Context, name string, args ...string) 
 		if err := os.MkdirAll(filepath.Join(rootfs, "lib", "modules", "test", "kernel", "drivers", "net"), 0o755); err != nil {
 			return err
 		}
+		if err := os.MkdirAll(filepath.Join(rootfs, "etc"), 0o755); err != nil {
+			return err
+		}
+		if err := os.WriteFile(filepath.Join(rootfs, "etc", "resolv.conf"), []byte("original resolver\n"), 0o644); err != nil {
+			return err
+		}
 		for _, module := range []string{"igc", "r8169"} {
 			if err := os.WriteFile(filepath.Join(rootfs, "lib", "modules", "test", "kernel", "drivers", "net", module+".ko"), []byte("module"), 0o644); err != nil {
 				return err
@@ -248,6 +322,18 @@ func (r *fakeCommandRunner) Run(_ context.Context, name string, args ...string) 
 		return os.WriteFile(filepath.Join(rootfs, "etc", "ssh", "ssh_host_ed25519_key"), []byte("key"), 0o600)
 	case "mksquashfs":
 		return os.WriteFile(args[1], []byte("squashfs"), 0o644)
+	}
+	return nil
+}
+
+type failingMountRunner struct {
+	calls []commandCall
+}
+
+func (r *failingMountRunner) Run(_ context.Context, name string, args ...string) error {
+	r.calls = append(r.calls, commandCall{name: name, args: append([]string{}, args...)})
+	if name == "mount" && len(args) > 0 && args[0] == "-t" {
+		return errors.New("mount devpts failed")
 	}
 	return nil
 }

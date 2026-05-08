@@ -6,6 +6,7 @@ import (
 	"crypto/sha512"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"hash"
 	"io"
@@ -341,10 +342,17 @@ func configureRootFS(ctx context.Context, runner CommandRunner, entry BuildEntry
 	})
 }
 
-func withPreparedChroot(ctx context.Context, runner CommandRunner, rootfsDir string, fn func() error) error {
-	if err := installResolver(rootfsDir); err != nil {
+func withPreparedChroot(ctx context.Context, runner CommandRunner, rootfsDir string, fn func() error) (err error) {
+	restoreResolver, err := installResolver(rootfsDir)
+	if err != nil {
 		return err
 	}
+	defer func() {
+		if restoreErr := restoreResolver(); err == nil && restoreErr != nil {
+			err = restoreErr
+		}
+	}()
+
 	type chrootMount struct {
 		target string
 		args   []string
@@ -368,6 +376,11 @@ func withPreparedChroot(ctx context.Context, runner CommandRunner, rootfsDir str
 	})
 
 	mounted := make([]string, 0, len(mounts))
+	defer func() {
+		for i := len(mounted) - 1; i >= 0; i-- {
+			_ = runner.Run(context.Background(), "umount", mounted[i])
+		}
+	}()
 	for _, mount := range mounts {
 		if err := os.MkdirAll(mount.target, 0o755); err != nil {
 			return err
@@ -377,21 +390,42 @@ func withPreparedChroot(ctx context.Context, runner CommandRunner, rootfsDir str
 		}
 		mounted = append(mounted, mount.target)
 	}
-	defer func() {
-		for i := len(mounted) - 1; i >= 0; i-- {
-			_ = runner.Run(context.Background(), "umount", mounted[i])
-		}
-	}()
 	return fn()
 }
 
-func installResolver(rootfsDir string) error {
+func installResolver(rootfsDir string) (func() error, error) {
 	dst := filepath.Join(rootfsDir, "etc", "resolv.conf")
 	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
-		return err
+		return nil, err
 	}
-	_ = os.Remove(dst)
-	return copyFile("/etc/resolv.conf", dst)
+
+	backup := dst + ".gomi-build-backup"
+	_ = os.Remove(backup)
+
+	existed := false
+	if _, err := os.Lstat(dst); err == nil {
+		existed = true
+		if err := os.Rename(dst, backup); err != nil {
+			return nil, err
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return nil, err
+	}
+
+	restore := func() error {
+		_ = os.Remove(dst)
+		if !existed {
+			return nil
+		}
+		return os.Rename(backup, dst)
+	}
+	if err := copyFile("/etc/resolv.conf", dst); err != nil {
+		if restoreErr := restore(); restoreErr != nil {
+			return nil, fmt.Errorf("%w; restore resolver: %v", err, restoreErr)
+		}
+		return nil, err
+	}
+	return restore, nil
 }
 
 func cleanupRootFS(entry BuildEntry, rootfsDir string) error {
