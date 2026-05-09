@@ -2,7 +2,12 @@ name: Release Boot Environment
 
 on:
   workflow_dispatch:
-  pull_request:
+  pull_request_target:
+    types:
+      - opened
+      - reopened
+      - synchronize
+      - labeled
   push:
     branches:
       - "**"
@@ -10,7 +15,7 @@ on:
       - "v*"
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: bootenv-release-${{ github.ref }}
@@ -18,12 +23,16 @@ concurrency:
 
 jobs:
   build:
+    if: github.event_name != 'pull_request_target' || github.event.pull_request.author_association == 'OWNER' || github.event.pull_request.author_association == 'MEMBER' || github.event.pull_request.author_association == 'COLLABORATOR' || contains(github.event.pull_request.labels.*.name, 'ci:approved')
     runs-on: ubuntu-latest
     defaults:
       run:
         working-directory: bootenv
     steps:
-      - uses: actions/checkout@v6
+      - if: env.ACT != 'true'
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event_name == 'pull_request_target' && github.event.pull_request.head.sha || github.sha }}
       - uses: actions/setup-go@v6
         with:
           go-version-file: bootenv/go.mod
@@ -36,14 +45,43 @@ jobs:
         run: make test
       - name: Build boot environment
         run: make build OUT=dist/ubuntu-minimal-cloud-amd64 VERSION="${GITHUB_REF_NAME:-manual}"
-      - name: Publish release assets
+
+      - name: Upload boot environment artifact
         if: startsWith(github.ref, 'refs/tags/')
+        uses: actions/upload-artifact@v4
+        with:
+          name: bootenv-ubuntu-minimal-cloud-amd64
+          path: |
+            bootenv/dist/ubuntu-minimal-cloud-amd64/boot-kernel
+            bootenv/dist/ubuntu-minimal-cloud-amd64/boot-initrd
+            bootenv/dist/ubuntu-minimal-cloud-amd64/rootfs.squashfs
+            bootenv/dist/ubuntu-minimal-cloud-amd64/boot.ipxe
+            bootenv/dist/ubuntu-minimal-cloud-amd64/manifest.json
+            bootenv/dist/ubuntu-minimal-cloud-amd64/checksums.txt
+          if-no-files-found: error
+          retention-days: 1
+
+  publish:
+    name: Publish release assets
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download boot environment artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: bootenv-ubuntu-minimal-cloud-amd64
+          path: bootenv/dist/ubuntu-minimal-cloud-amd64
+
+      - name: Publish release assets
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.ref_name }}
         run: |
           set -euo pipefail
-          cd dist/ubuntu-minimal-cloud-amd64
+          cd bootenv/dist/ubuntu-minimal-cloud-amd64
           if ! gh release view "$TAG" >/dev/null 2>&1; then
             gh release create "$TAG" --verify-tag --generate-notes || {
               status=$?

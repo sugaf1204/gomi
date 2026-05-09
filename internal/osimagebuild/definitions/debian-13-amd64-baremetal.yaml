@@ -1,0 +1,52 @@
+image:
+  distribution: debian
+  release: trixie
+  architecture: amd64
+
+source:
+  downloader: debootstrap
+  url: https://deb.debian.org/debian
+  components:
+    - main
+
+packages:
+  manager: apt
+  update: true
+  cleanup: true
+  sets:
+    - action: install
+      packages:
+        - linux-image-amd64
+        - grub-pc
+        - grub-efi-amd64-bin
+        - cloud-init
+
+files:
+  - generator: remove
+    path: /etc/ssh/ssh_host_rsa_key
+  - generator: remove
+    path: /etc/ssh/ssh_host_rsa_key.pub
+  - generator: remove
+    path: /etc/ssh/ssh_host_ecdsa_key
+  - generator: remove
+    path: /etc/ssh/ssh_host_ecdsa_key.pub
+  - generator: remove
+    path: /etc/ssh/ssh_host_ed25519_key
+  - generator: remove
+    path: /etc/ssh/ssh_host_ed25519_key.pub
+  - generator: dump
+    path: /etc/machine-id
+    content: ""
+    mode: "0644"
+  - generator: dump
+    path: /var/lib/dbus/machine-id
+    content: ""
+    mode: "0644"
+
+actions:
+  - trigger: post-files
+    action: |-
+      #!/bin/sh
+      set -eu
+      rm -f /var/log/cloud-init.log /var/log/cloud-init-output.log
+      rm -rf /var/cache/apt/archives/* /var/lib/apt/lists/*

@@ -2321,10 +2321,11 @@ func TestOSCatalogListsSupportedImages(t *testing.T) {
 		}
 		name, _ := entry["name"].(string)
 		bootEnv, _ := entry["bootEnvironment"].(string)
+		variant, _ := entry["variant"].(string)
 		expectedFormat := "raw"
 		expectedCompression := "zstd"
 		expectedSuffix := ".raw.zst"
-		if name == "ubuntu-22.04-amd64-baremetal" {
+		if variant == "baremetal" {
 			expectedFormat = "squashfs"
 			expectedCompression = ""
 			expectedSuffix = ".rootfs.squashfs"

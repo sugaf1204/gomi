@@ -4,12 +4,10 @@ entries:
     osVersion: "13"
     arch: amd64
     variant: baremetal
-    format: raw
-    sourceFormat: raw
-    sourceCompression: zstd
-    url: https://github.com/sugaf1204/gomi/releases/download/v0.0.2/debian-13-amd64-baremetal.raw.zst
-    checksum: sha256:824417308379cf1d4b24516835040006dca54cb9b618949301381e38f43ffa29
-    description: Debian 13 amd64 bare-metal raw image with expanded kernel modules
+    format: squashfs
+    sourceFormat: squashfs
+    url: debian-13-amd64-baremetal.rootfs.squashfs
+    description: Debian 13 amd64 bare-metal rootfs SquashFS image with generic kernel modules
     bootEnvironment: ubuntu-minimal-cloud-amd64
   - name: debian-13-amd64-cloud
     osFamily: debian
@@ -50,12 +48,10 @@ entries:
     osVersion: "24.04"
     arch: amd64
     variant: baremetal
-    format: raw
-    sourceFormat: raw
-    sourceCompression: zstd
-    url: https://github.com/sugaf1204/gomi/releases/download/v0.0.2/ubuntu-24.04-amd64-baremetal.raw.zst
-    checksum: sha256:cd4c5fddae9163cda87c1da52a9b67a3b620ca55fcdb8dca45688de30418d002
-    description: Ubuntu 24.04 LTS amd64 bare-metal raw image with generic kernel modules
+    format: squashfs
+    sourceFormat: squashfs
+    url: ubuntu-24.04-amd64-baremetal.rootfs.squashfs
+    description: Ubuntu 24.04 LTS amd64 bare-metal rootfs SquashFS image with generic kernel modules
     bootEnvironment: ubuntu-minimal-cloud-amd64
   - name: ubuntu-24.04-amd64-cloud
     osFamily: ubuntu
