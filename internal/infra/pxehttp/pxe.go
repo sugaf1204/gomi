@@ -308,7 +308,7 @@ func (h *Handler) PXENocloudUserData(c echo.Context) error {
 		result = injectHypervisorSetup(result, base, m.Name, registrationToken)
 	}
 
-	if target.node != nil && target.node.GetIPAssignment() == resource.IPAssignmentStatic {
+	if target.node != nil && strings.TrimSpace(target.node.PrimaryMAC()) != "" {
 		if m, ok := target.node.(*machine.Machine); ok && m.Role == machine.RoleHypervisor {
 			result = injectBridgedNetplanConfig(result, m, h.resolveSubnetSpec(ctx, target.node))
 		} else {
@@ -1635,7 +1635,8 @@ type netplanParams struct {
 
 func injectNetplanConfigFromParams(cloudConfig string, params netplanParams, spec *subnet.SubnetSpec) string {
 	ip := net.ParseIP(strings.TrimSpace(params.IP))
-	if ip == nil {
+	mac := strings.TrimSpace(params.MAC)
+	if ip == nil && mac == "" {
 		return cloudConfig
 	}
 
@@ -1654,20 +1655,24 @@ func injectNetplanConfigFromParams(cloudConfig string, params netplanParams, spe
 	if len(nameServers) == 0 {
 		nameServers = subnetNameServers(spec)
 	}
+	nic := netplanNIC{
+		Match:     macMatch(mac),
+		WakeOnLAN: mac != "",
+		DHCP4:     ip == nil,
+		DHCP6:     false,
+	}
+	if ip != nil {
+		nic.Addresses = []string{fmt.Sprintf("%s/%d", ip.String(), subnetPrefixLen(spec))}
+		nic.Routes = defaultRoute(gateway)
+		nic.NameServers = nameserverBlock(nameServers)
+	}
 	netplanYAML := marshalYAMLString(struct {
 		Network netplanConfig `yaml:"network"`
 	}{
 		Network: netplanConfig{
 			Version: 2,
 			Ethernets: map[string]netplanNIC{
-				"id0": {
-					Match:       macMatch(params.MAC),
-					WakeOnLAN:   strings.TrimSpace(params.MAC) != "",
-					DHCP4:       false,
-					Addresses:   []string{fmt.Sprintf("%s/%d", ip.String(), subnetPrefixLen(spec))},
-					Routes:      defaultRoute(gateway),
-					NameServers: nameserverBlock(nameServers),
-				},
+				"id0": nic,
 			},
 		},
 	})
@@ -1689,7 +1694,7 @@ func injectNetplanConfigFromParams(cloudConfig string, params netplanParams, spe
 		writeFiles = existing
 	}
 	writeFiles = append(writeFiles, map[string]any{
-		"path":        "/etc/netplan/99-gomi-static.yaml",
+		"path":        "/etc/netplan/99-gomi-network.yaml",
 		"content":     netplanYAML,
 		"permissions": "0644",
 	})
@@ -1717,7 +1722,7 @@ func injectNetplanConfigFromParams(cloudConfig string, params netplanParams, spe
 // write_files so that the hypervisor machine gets a bridge with a static IP.
 func injectBridgedNetplanConfig(cloudConfig string, m *machine.Machine, spec *subnet.SubnetSpec) string {
 	ip := m.StaticIP()
-	if ip == "" {
+	if ip == "" && strings.TrimSpace(m.PrimaryMAC()) == "" {
 		return cloudConfig
 	}
 	netplanYAML := marshalYAMLString(struct {
@@ -1730,7 +1735,7 @@ func injectBridgedNetplanConfig(cloudConfig string, m *machine.Machine, spec *su
 			subnetPrefixLen(spec),
 			subnetGateway(spec),
 			subnetNameServers(spec),
-			false,
+			ip == "",
 		),
 	})
 	if netplanYAML == "" {
@@ -1751,7 +1756,7 @@ func injectBridgedNetplanConfig(cloudConfig string, m *machine.Machine, spec *su
 		writeFiles = existing
 	}
 	writeFiles = append(writeFiles, map[string]any{
-		"path":        "/etc/netplan/99-gomi-static.yaml",
+		"path":        "/etc/netplan/99-gomi-network.yaml",
 		"content":     netplanYAML,
 		"permissions": "0644",
 	})
@@ -1777,7 +1782,7 @@ func injectBridgedNetplanConfig(cloudConfig string, m *machine.Machine, spec *su
 
 func injectNetplanConfigForHost(cloudConfig string, h node.Node, spec *subnet.SubnetSpec) string {
 	ip := h.StaticIP()
-	if ip == "" {
+	if ip == "" && strings.TrimSpace(h.PrimaryMAC()) == "" {
 		return cloudConfig
 	}
 	return injectNetplanConfigFromParams(cloudConfig, netplanParams{

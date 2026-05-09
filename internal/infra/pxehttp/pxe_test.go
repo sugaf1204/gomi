@@ -2842,6 +2842,64 @@ func TestPXENocloudNetworkConfig_DHCP(t *testing.T) {
 	}
 }
 
+func TestPXENocloudUserData_DHCPMachineInjectsWakeOnLANNetplan(t *testing.T) {
+	backend := memory.New()
+	machineSvc := machine.NewService(backend.Machines())
+	now := time.Now().UTC()
+	deadline := now.Add(30 * time.Minute)
+	target := machine.Machine{
+		Name:     "bm-dhcp-wol",
+		Hostname: "bm-dhcp-wol",
+		MAC:      "84:47:09:1f:1c:d6",
+		Arch:     "amd64",
+		Firmware: machine.FirmwareUEFI,
+		Power: power.PowerConfig{
+			Type: power.PowerTypeWoL,
+			WoL:  &power.WoLConfig{WakeMAC: "84:47:09:1f:1c:d6"},
+		},
+		Phase: machine.PhaseProvisioning,
+		Provision: &machine.ProvisionProgress{
+			Active:          true,
+			StartedAt:       &now,
+			DeadlineAt:      &deadline,
+			CompletionToken: "token-dhcp-wol",
+		},
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	if err := backend.Machines().Upsert(context.Background(), target); err != nil {
+		t.Fatalf("upsert machine: %v", err)
+	}
+
+	e := echo.New()
+	req := httptest.NewRequest(http.MethodGet, "/pxe/nocloud/8447091f1cd6/user-data", nil)
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+	c.SetParamNames("mac")
+	c.SetParamValues("8447091f1cd6")
+
+	h := &Handler{machines: machineSvc}
+	if err := h.PXENocloudUserData(c); err != nil {
+		t.Fatalf("PXENocloudUserData: %v", err)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "99-gomi-network.yaml") {
+		t.Fatalf("expected netplan write_files entry in user-data, got:\n%s", body)
+	}
+	if !strings.Contains(body, "macaddress: 84:47:09:1f:1c:d6") {
+		t.Fatalf("expected MAC match in netplan config, got:\n%s", body)
+	}
+	if !strings.Contains(body, "dhcp4: true") {
+		t.Fatalf("expected dhcp4 enabled in netplan config, got:\n%s", body)
+	}
+	if !strings.Contains(body, "wakeonlan: true") {
+		t.Fatalf("expected wakeonlan enabled in netplan config, got:\n%s", body)
+	}
+	if !strings.Contains(body, "netplan apply") {
+		t.Fatalf("expected netplan apply in runcmd, got:\n%s", body)
+	}
+}
+
 func TestBuildNetworkConfig_DHCP(t *testing.T) {
 	got := buildNetworkConfig("84:47:09:1f:1c:d6", "", nil)
 	if !strings.Contains(got, "macaddress: 84:47:09:1f:1c:d6") {

@@ -128,7 +128,7 @@ func TestPXENocloudUserData_StaticIPVM_InjectsNetplan(t *testing.T) {
 	body := rec.Body.String()
 
 	// Verify the response contains netplan static IP configuration
-	if !strings.Contains(body, "99-gomi-static.yaml") {
+	if !strings.Contains(body, "99-gomi-network.yaml") {
 		t.Fatalf("expected netplan write_files entry in user-data, got:\n%s", body)
 	}
 	if !strings.Contains(body, "10.0.0.100/24") {
