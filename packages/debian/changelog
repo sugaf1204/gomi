@@ -1,3 +1,9 @@
+gomi (0.0.4) unstable; urgency=medium
+
+  * Release distrobuilder-backed rootfs image builds and CI workflow fixes.
+
+ -- sugaf1204 <sugaf1204@example.invalid>  Sat, 09 May 2026 19:30:47 +0900
+
 gomi (0.0.3) unstable; urgency=medium
 
   * Release rootfs SquashFS deployment support and multi-OS deploy

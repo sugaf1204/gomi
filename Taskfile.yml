@@ -500,7 +500,7 @@ tasks:
           if [ -d '$remote_root/src/dist' ]; then
             sudo chown -R \"\$(id -u):\$(id -g)\" '$remote_root/src/dist'
           fi
-          rm -rf '$remote_root/src/tmp' '$remote_root/src/bootenv/tmp' '$remote_root/src/dist/os-images'
+          rm -rf '$remote_root/src/tmp' '$remote_root/src/bootenv/tmp' '$remote_root/src/dist/os-images' '$remote_root/src/packages/deb'
         "
         echo "==> Remote act workspace is ready: $remote:$remote_root/src"
 
