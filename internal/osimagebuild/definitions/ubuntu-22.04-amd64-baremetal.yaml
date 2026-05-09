@@ -4,9 +4,11 @@ image:
   architecture: amd64
 
 source:
-  downloader: ubuntu-http
-  url: https://cloud-images.ubuntu.com/releases/
-  variant: default
+  downloader: debootstrap
+  url: https://archive.ubuntu.com/ubuntu
+  components:
+    - main
+    - universe
 
 packages:
   manager: apt
