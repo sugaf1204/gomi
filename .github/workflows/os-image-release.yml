@@ -45,7 +45,8 @@ jobs:
     outputs:
       matrix: ${{ steps.matrix.outputs.matrix }}
     steps:
-      - uses: actions/checkout@v6
+      - if: env.ACT != 'true'
+        uses: actions/checkout@v6
         with:
           ref: ${{ github.event_name == 'pull_request_target' && github.event.pull_request.head.sha || github.sha }}
       - uses: actions/setup-go@v6
@@ -69,7 +70,8 @@ jobs:
       fail-fast: false
       matrix: ${{ fromJSON(needs.matrix.outputs.matrix) }}
     steps:
-      - uses: actions/checkout@v6
+      - if: env.ACT != 'true'
+        uses: actions/checkout@v6
         with:
           ref: ${{ github.event_name == 'pull_request_target' && github.event.pull_request.head.sha || github.sha }}
       - uses: actions/setup-go@v6
@@ -79,29 +81,40 @@ jobs:
 
       - name: Install distrobuilder image build tools
         run: |
+          set -euo pipefail
           if [ -f /etc/apt/apt-mirrors.txt ]; then
             printf 'https://archive.ubuntu.com/ubuntu\n' | sudo tee /etc/apt/apt-mirrors.txt >/dev/null
           fi
           sudo find /etc/apt -type f \( -name '*.list' -o -name '*.sources' \) -print0 \
             | sudo xargs -0 sed -i 's|http://azure.archive.ubuntu.com/ubuntu|https://archive.ubuntu.com/ubuntu|g'
           sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update
-          sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y debootstrap gpg rsync squashfs-tools
-          sudo snap install distrobuilder --classic
+          sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y debootstrap gpg rsync squashfs-tools git make build-essential libwin-hivex-perl wimtools genisoimage
+          if [ "${ACT:-}" = "true" ]; then
+            distrobuilder_src="$(mktemp -d)"
+            git clone --depth 1 https://github.com/lxc/distrobuilder "$distrobuilder_src"
+            GOTOOLCHAIN=auto make -C "$distrobuilder_src"
+            sudo install -m 0755 "$(go env GOPATH)/bin/distrobuilder" /usr/local/bin/distrobuilder
+          else
+            sudo snap install distrobuilder --classic
+          fi
 
       - name: Build rootfs SquashFS OS image artifact with distrobuilder
         run: |
           set -euo pipefail
-          rm -rf dist/os-images
+          out_dir="${RUNNER_TEMP:-/tmp}/gomi-os-images/${{ matrix.name }}"
+          rm -rf "$out_dir"
+          mkdir -p "$out_dir"
           go build -trimpath -o /tmp/gomi-osimage ./cmd/gomi-osimage
-          sudo -E /tmp/gomi-osimage build --name "${{ matrix.name }}"
+          sudo -E /tmp/gomi-osimage build --name "${{ matrix.name }}" --out-dir "$out_dir"
+          sudo chown -R "$(id -u):$(id -g)" "$out_dir"
 
       - name: Upload image artifact
         uses: actions/upload-artifact@v4
         with:
           name: os-image-${{ matrix.name }}
           path: |
-            dist/os-images/${{ matrix.name }}.rootfs.squashfs
-            dist/os-images/${{ matrix.name }}.json
+            ${{ runner.temp }}/gomi-os-images/${{ matrix.name }}/${{ matrix.name }}.rootfs.squashfs
+            ${{ runner.temp }}/gomi-os-images/${{ matrix.name }}/${{ matrix.name }}.json
           if-no-files-found: error
           retention-days: 1
 
@@ -113,7 +126,8 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v6
+      - if: env.ACT != 'true'
+        uses: actions/checkout@v6
       - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod

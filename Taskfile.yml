@@ -468,6 +468,7 @@ tasks:
             rm -rf '$remote_root/src'
             git clone '$remote_root/repo.bundle' '$remote_root/src'
           fi
+          git -C '$remote_root/src' remote set-url origin 'https://github.com/sugaf1204/gomi'
         "
 
         rsync -az --delete -e "$rsync_ssh" \
@@ -494,7 +495,13 @@ tasks:
           --exclude 'bootenv/dist/' \
           --exclude 'bootenv/tmp/' \
           ./ "$remote:$remote_root/src/"
-        $ssh_cmd "$remote" "rm -rf '$remote_root/src/tmp' '$remote_root/src/bootenv/tmp'"
+        $ssh_cmd "$remote" "
+          set -eu
+          if [ -d '$remote_root/src/dist' ]; then
+            sudo chown -R \"\$(id -u):\$(id -g)\" '$remote_root/src/dist'
+          fi
+          rm -rf '$remote_root/src/tmp' '$remote_root/src/bootenv/tmp' '$remote_root/src/dist/os-images'
+        "
         echo "==> Remote act workspace is ready: $remote:$remote_root/src"
 
   act:list:
@@ -528,8 +535,7 @@ tasks:
         case "$runner_image" in *"'"*) echo "ERROR: ACT_RUNNER_IMAGE must not contain single quotes" >&2; exit 1 ;; esac
         ssh_cmd="${ACT_SSH_CMD:-ssh}"
         rsync_ssh="${ACT_RSYNC_SSH:-ssh}"
-        extra="${ACT_EXTRA_ARGS:-}"
-        publish="${ACT_PUBLISH_RELEASES:-false}"
+        extra="${ACT_EXTRA_ARGS:---bind --container-options=--privileged}"
 
         version="$(sed -n '1s/^gomi (\([^)]*\)).*/\1/p' packages/debian/changelog)"
         test -n "$version" || { echo "ERROR: unable to read package version from packages/debian/changelog" >&2; exit 1; }
@@ -538,29 +544,7 @@ tasks:
         tag="${ACT_TAG:-v$upstream}"
         case "$tag" in *"'"*) echo "ERROR: ACT_TAG must not contain single quotes" >&2; exit 1 ;; esac
 
-        mkdir -p tmp/act
-        cat > tmp/act/tag-push.json <<EOF
-        {
-          "ref": "refs/tags/$tag",
-          "ref_type": "tag",
-          "ref_name": "$tag",
-          "repository": {
-            "full_name": "sugaf1204/gomi",
-            "name": "gomi",
-            "owner": {
-              "login": "sugaf1204"
-            }
-          }
-        }
-        EOF
-
-        $ssh_cmd "$remote" "mkdir -p '$remote_root/src/tmp/act'"
-        rsync -az -e "$rsync_ssh" tmp/act/tag-push.json "$remote:$remote_root/src/tmp/act/tag-push.json"
-        publish_args=""
-        if [ "$publish" != "true" ]; then
-          publish_args="--env ACT_SKIP_PUBLISH=true"
-        fi
-        $ssh_cmd "$remote" "cd '$remote_root/src' && act push -W .github/workflows/release.yml -j deb -e tmp/act/tag-push.json --env GITHUB_REF_TYPE=tag --env GITHUB_REF_NAME='$tag' $publish_args -P ubuntu-latest='$runner_image' $extra"
+        $ssh_cmd "$remote" "cd '$remote_root/src' && act workflow_dispatch -W .github/workflows/release.yml -j deb --env GITHUB_REF_TYPE=tag --env GITHUB_REF_NAME='$tag' -P ubuntu-latest='$runner_image' $extra"
 
   act:release:bootenv:
     desc: Run the boot environment release workflow with act on the remote Linux host
@@ -575,7 +559,7 @@ tasks:
         case "$remote_root" in *"'"*) echo "ERROR: ACT_REMOTE_WORK must not contain single quotes" >&2; exit 1 ;; esac
         case "$runner_image" in *"'"*) echo "ERROR: ACT_RUNNER_IMAGE must not contain single quotes" >&2; exit 1 ;; esac
         ssh_cmd="${ACT_SSH_CMD:-ssh}"
-        extra="${ACT_EXTRA_ARGS:-}"
+        extra="${ACT_EXTRA_ARGS:---bind --container-options=--privileged}"
 
         $ssh_cmd "$remote" "cd '$remote_root/src' && act workflow_dispatch -W .github/workflows/bootenv-release.yml -j build -P ubuntu-latest='$runner_image' $extra"
 
@@ -592,7 +576,7 @@ tasks:
         case "$remote_root" in *"'"*) echo "ERROR: ACT_REMOTE_WORK must not contain single quotes" >&2; exit 1 ;; esac
         case "$runner_image" in *"'"*) echo "ERROR: ACT_RUNNER_IMAGE must not contain single quotes" >&2; exit 1 ;; esac
         ssh_cmd="${ACT_SSH_CMD:-ssh}"
-        extra="${ACT_EXTRA_ARGS:---container-options=--privileged}"
+        extra="${ACT_EXTRA_ARGS:---bind --container-options=--privileged}"
         artifact_path="${ACT_ARTIFACT_PATH:-$remote_root/artifacts}"
         case "$artifact_path" in *"'"*) echo "ERROR: ACT_ARTIFACT_PATH must not contain single quotes" >&2; exit 1 ;; esac
 
