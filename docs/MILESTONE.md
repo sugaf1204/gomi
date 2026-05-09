@@ -147,3 +147,24 @@ production default. Define and implement a production-safe connection/auth model
 such as SSH transport, TLS client certificates, SASL, or a `gomi-hypervisor`
 agent API, and update the setup/register flow so unauthenticated libvirt TCP is
 clearly limited to local lab/dev testing.
+
+## 24. Multi-OS curtin and artifact deploy design
+
+The current curtin/rootfs deployment path was validated primarily with Ubuntu
+and must not grow into Ubuntu-specific behavior hidden inside generic deploy
+logic. Refactor curtin config generation so OS-family-specific behavior is
+explicitly selected by catalog metadata, image/rootfs artifact capabilities, or
+typed OS family branches.
+
+- Keep curtin YAML generation centralized in a small builder layer rather than
+  scattering `sources`, `storage`, `stages`, `late_commands`, and shell snippets
+  across deploy handlers.
+- Treat whole-disk raw artifacts, rootfs SquashFS artifacts, ISO installers, and
+  future filesystem artifacts as distinct deploy capabilities instead of
+  inferring behavior from filenames or one Ubuntu example.
+- Isolate Ubuntu/Debian-specific cloud-init, netplan, bootloader, package, and
+  post-install assumptions behind clearly named helpers.
+- For Red Hat-family, Fedora, Debian, and Ubuntu paths, either implement the
+  correct behavior or fail early with an explicit unsupported-family error.
+- Add tests that cover at least one non-Ubuntu path, or the explicit
+  unsupported-family error, whenever OS deploy behavior changes.
