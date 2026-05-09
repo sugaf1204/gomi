@@ -18,7 +18,9 @@ Depends:
  ca-certificates,
  grub-efi-amd64-bin,
  ipxe,
+ squashfs-tools,
  systemd,
+ xz-utils,
  ${misc:Depends}
 Description: GOMI - Go Machine Installer
  Bare-metal server management system for provisioning,

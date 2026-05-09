@@ -1,4 +1,6 @@
 debian/build/gomi usr/bin/
+debian/build/gomi-osimage usr/bin/
+debian/build/builds.yaml usr/share/gomi/osimage/
 packages/files/gomi-hypervisor.service var/lib/gomi/data/files/
 debian/build/gomi-hypervisor-linux-amd64 var/lib/gomi/data/files/
 debian/build/gomi-hypervisor-linux-arm64 var/lib/gomi/data/files/

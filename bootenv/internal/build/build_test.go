@@ -46,7 +46,7 @@ func TestBuildRootFSPackagesAddsCloudInitramfsSupport(t *testing.T) {
 			Initramfs: spec.Initramfs{Packages: []string{"cloud-initramfs-rooturl"}},
 			RootFS: spec.RootFS{
 				Source:   spec.RootFSSource{Type: "ubuntu-cloud-squashfs"},
-				Packages: []string{"curtin", "curl"},
+				Packages: []string{"curtin", "curl", "rsync"},
 			},
 		},
 	}
@@ -55,6 +55,7 @@ func TestBuildRootFSPackagesAddsCloudInitramfsSupport(t *testing.T) {
 	for _, want := range []string{
 		"curtin",
 		"curl",
+		"rsync",
 		"linux-image-generic",
 		"initramfs-tools",
 		"cloud-initramfs-rooturl",

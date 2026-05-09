@@ -50,29 +50,29 @@ jobs:
           go-version-file: go.mod
           cache-dependency-path: go.sum
 
-      - name: Set up Packer
-        uses: hashicorp/setup-packer@v3
-
       - name: Install image build tools
         run: |
-          sudo apt-get update
-          sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y cloud-image-utils ovmf qemu-system-x86 qemu-utils zstd
-          if [ -e /dev/kvm ]; then
-            sudo chmod 666 /dev/kvm
+          if [ -f /etc/apt/apt-mirrors.txt ]; then
+            printf 'https://archive.ubuntu.com/ubuntu\n' | sudo tee /etc/apt/apt-mirrors.txt >/dev/null
           fi
+          sudo find /etc/apt -type f \( -name '*.list' -o -name '*.sources' \) -print0 \
+            | sudo xargs -0 sed -i 's|http://azure.archive.ubuntu.com/ubuntu|https://archive.ubuntu.com/ubuntu|g'
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update
+          sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y squashfs-tools xz-utils
 
-      - name: Build raw zstd OS image artifact
+      - name: Build rootfs SquashFS OS image artifact
         run: |
           set -euo pipefail
           rm -rf dist/os-images
-          go run ./cmd/gomi-osimage build --name "${{ matrix.name }}"
+          go build -trimpath -o /tmp/gomi-osimage ./cmd/gomi-osimage
+          sudo -E /tmp/gomi-osimage build --name "${{ matrix.name }}"
 
       - name: Upload image artifact
         uses: actions/upload-artifact@v4
         with:
           name: os-image-${{ matrix.name }}
           path: |
-            dist/os-images/${{ matrix.name }}.raw.zst
+            dist/os-images/${{ matrix.name }}.rootfs.squashfs
             dist/os-images/${{ matrix.name }}.json
           if-no-files-found: error
           retention-days: 1
@@ -111,4 +111,4 @@ jobs:
               gh release view "$TAG" >/dev/null 2>&1 || exit "$status"
             }
           fi
-          gh release upload "$TAG" dist/os-images/*.raw.zst dist/os-images/checksums-os-images.txt dist/os-images/manifest-os-images.json --clobber
+          gh release upload "$TAG" dist/os-images/*.rootfs.squashfs dist/os-images/checksums-os-images.txt dist/os-images/manifest-os-images.json --clobber

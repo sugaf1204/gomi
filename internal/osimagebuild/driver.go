@@ -2,246 +2,147 @@ package osimagebuild
 
 import (
 	"context"
+	"crypto/sha256"
+	"crypto/sha512"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"hash"
+	"io"
+	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"strings"
+	"syscall"
 
 	"github.com/sugaf1204/gomi/internal/oscatalog"
+	"github.com/sugaf1204/gomi/internal/osimage"
 )
 
-const defaultMaxReleaseAssetSize int64 = 2147483647
-
-type LoadOptions = oscatalog.LoadOptions
+const defaultRootPath = "rootfs.squashfs"
 
 type BuildOptions struct {
 	EntryName     string
 	OutDir        string
 	WorkDir       string
-	Template      string
-	Timeout       string
-	MaxSize       int64
+	Processors    int
 	CommandRunner CommandRunner
 }
 
 type CommandRunner interface {
-	Run(ctx context.Context, env []string, name string, args ...string) error
+	Run(ctx context.Context, name string, args ...string) error
 }
 
 type execCommandRunner struct{}
 
-func (execCommandRunner) Run(ctx context.Context, env []string, name string, args ...string) error {
+func (execCommandRunner) Run(ctx context.Context, name string, args ...string) error {
 	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	cmd.Stdin = os.Stdin
-	cmd.Env = append(os.Environ(), env...)
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("%s %s: %w", name, strings.Join(args, " "), err)
 	}
 	return nil
 }
 
-func Build(ctx context.Context, entries []oscatalog.Entry, opts BuildOptions) (ImageMetadata, error) {
-	entry, err := findBuildEntry(entries, opts.EntryName)
+func Build(ctx context.Context, entries []oscatalog.Entry, cfg Config, opts BuildOptions) (ImageMetadata, error) {
+	catalogEntry, err := findCatalogEntry(entries, opts.EntryName)
 	if err != nil {
 		return ImageMetadata{}, err
 	}
-	if entry.Build == nil {
-		return ImageMetadata{}, fmt.Errorf("%s: catalog entry does not define build recipe", entry.Name)
+	if catalogEntry.Format != osimage.FormatSquashFS {
+		return ImageMetadata{}, fmt.Errorf("%s: catalog format must be squashfs", catalogEntry.Name)
+	}
+	buildEntry, err := findBuildEntry(cfg.Entries, catalogEntry.Name)
+	if err != nil {
+		return ImageMetadata{}, err
+	}
+	if err := validateBuildEntry(catalogEntry.Name, buildEntry); err != nil {
+		return ImageMetadata{}, err
+	}
+	if buildEntry.PackageManager == "" {
+		buildEntry.PackageManager = "apt"
+	}
+	if opts.Processors <= 0 {
+		opts.Processors = 1
 	}
 	runner := opts.CommandRunner
 	if runner == nil {
 		runner = execCommandRunner{}
 	}
-	timeout := opts.Timeout
-	if timeout == "" {
-		timeout = "30m"
+	if strings.TrimSpace(opts.OutDir) == "" {
+		opts.OutDir = defaultOutDir()
 	}
-	maxSize := opts.MaxSize
-	if maxSize == 0 {
-		maxSize = defaultMaxReleaseAssetSize
-	}
-	repoRoot, err := findRepoRoot()
-	if err != nil {
-		return ImageMetadata{}, err
-	}
-	if opts.OutDir == "" {
-		opts.OutDir = filepath.Join(repoRoot, "dist", "os-images")
-	}
-	if opts.WorkDir == "" {
-		opts.WorkDir = filepath.Join(repoRoot, "tmp", "osimage-packer", entry.Name)
-	}
-	if opts.Template == "" {
-		opts.Template = entry.Build.PackerTemplate
-	}
-	if opts.Template == "" {
-		opts.Template = filepath.Join(repoRoot, "tools", "osimage", "packer", "cloud-image")
-	}
-	if !filepath.IsAbs(opts.Template) {
-		opts.Template = filepath.Join(repoRoot, opts.Template)
+	if strings.TrimSpace(opts.WorkDir) == "" {
+		opts.WorkDir = filepath.Join(os.TempDir(), "gomi-osimage-work", catalogEntry.Name)
 	}
 
+	cacheDir := filepath.Join(opts.WorkDir, "cache")
+	rootfsDir := filepath.Join(opts.WorkDir, "rootfs")
 	if err := os.RemoveAll(opts.WorkDir); err != nil {
 		return ImageMetadata{}, err
 	}
-	outputDir := filepath.Join(opts.WorkDir, "output")
-	cacheDir := filepath.Join(opts.WorkDir, "packer-cache")
-	for _, dir := range []string{opts.WorkDir, opts.OutDir, cacheDir} {
+	for _, dir := range []string{cacheDir, rootfsDir, opts.OutDir} {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			return ImageMetadata{}, err
 		}
 	}
 
-	seedISO, err := createSeedISO(ctx, runner, opts.WorkDir, opts.Template, entry.Name)
+	sourcePath, err := downloadSource(ctx, buildEntry.Source, cacheDir)
 	if err != nil {
 		return ImageMetadata{}, err
 	}
-	ovmfCode, ovmfVars, err := copyOVMF(opts.WorkDir)
-	if err != nil {
+	if err := extractSource(ctx, runner, buildEntry.Source, sourcePath, rootfsDir); err != nil {
 		return ImageMetadata{}, err
 	}
-	qemuMachine, qemuCPU, err := qemuSettings(entry.Arch)
-	if err != nil {
+	if err := configureRootFS(ctx, runner, buildEntry, rootfsDir); err != nil {
 		return ImageMetadata{}, err
 	}
-	varFile := filepath.Join(opts.WorkDir, "build.pkrvars.json")
-	if err := writePackerVarsJSON(varFile, entry, outputDir, ovmfCode, ovmfVars, seedISO, qemuMachine, qemuCPU, timeout); err != nil {
+	if err := cleanupRootFS(buildEntry, rootfsDir); err != nil {
+		return ImageMetadata{}, err
+	}
+	if err := verifyModules(buildEntry.VerifyModules, rootfsDir); err != nil {
 		return ImageMetadata{}, err
 	}
 
-	packerEnv := []string{"PACKER_CACHE_DIR=" + cacheDir}
-	if err := runner.Run(ctx, packerEnv, "packer", "init", opts.Template); err != nil {
+	artifact := filepath.Join(opts.OutDir, artifactName(catalogEntry))
+	compression := buildEntry.SquashFS.Compression
+	if compression == "" {
+		compression = "xz"
+	}
+	blockSize := buildEntry.SquashFS.BlockSize
+	if blockSize == "" {
+		blockSize = "1M"
+	}
+	if err := runner.Run(ctx, "mksquashfs", rootfsDir, artifact, "-noappend", "-comp", compression, "-b", blockSize, "-processors", fmt.Sprint(opts.Processors), "-all-root"); err != nil {
 		return ImageMetadata{}, err
 	}
-	if err := runner.Run(ctx, packerEnv, "packer", "build", "-var-file", varFile, opts.Template); err != nil {
-		return ImageMetadata{}, err
-	}
-
-	qcow2 := filepath.Join(outputDir, entry.Name+".qcow2")
-	raw := filepath.Join(opts.OutDir, entry.Name+".raw")
-	zst := raw + ".zst"
-	if err := runner.Run(ctx, nil, "qemu-img", "convert", "-O", "raw", qcow2, raw); err != nil {
-		return ImageMetadata{}, err
-	}
-	if err := runner.Run(ctx, nil, "zstd", "-T0", "-19", "-f", raw, "-o", zst); err != nil {
-		return ImageMetadata{}, err
-	}
-	_ = os.Remove(raw)
-
-	meta, err := writeMetadata(entry, zst, opts.OutDir)
+	meta, err := writeMetadata(catalogEntry, buildEntry, artifact, opts.OutDir)
 	if err != nil {
 		return ImageMetadata{}, err
 	}
-	if meta.SizeBytes > maxSize {
-		return ImageMetadata{}, fmt.Errorf("%s is %d bytes; release assets must be <= %d bytes", filepath.Base(zst), meta.SizeBytes, maxSize)
+	if err := WriteManifest(opts.OutDir); err != nil {
+		return ImageMetadata{}, err
 	}
 	return meta, nil
 }
 
-type packerVars struct {
-	ImageName           string   `json:"image_name"`
-	Architecture        string   `json:"architecture"`
-	DiskSize            string   `json:"disk_size"`
-	OutputDirectory     string   `json:"output_directory"`
-	OVMFCode            string   `json:"ovmf_code"`
-	OVMFVars            string   `json:"ovmf_vars"`
-	QemuCPU             string   `json:"qemu_cpu"`
-	QemuMachine         string   `json:"qemu_machine"`
-	SeedISO             string   `json:"seed_iso"`
-	SourceURL           string   `json:"source_url"`
-	SourceChecksum      string   `json:"source_checksum"`
-	SourceFormat        string   `json:"source_format"`
-	SSHUsername         string   `json:"ssh_username"`
-	SSHPassword         string   `json:"ssh_password"`
-	Timeout             string   `json:"timeout"`
-	CurtinKernelPackage string   `json:"curtin_kernel_package"`
-	AptPackages         []string `json:"apt_packages"`
+func defaultOutDir() string {
+	if root, err := findRepoRoot(); err == nil {
+		return filepath.Join(root, "dist", "os-images")
+	}
+	return filepath.Join("/var/lib/gomi", "os-images")
 }
 
-func createSeedISO(ctx context.Context, runner CommandRunner, workDir, templateDir, imageName string) (string, error) {
-	seedDir := filepath.Join(workDir, "seed")
-	if err := os.MkdirAll(seedDir, 0o755); err != nil {
-		return "", err
-	}
-	metaData := filepath.Join(seedDir, "meta-data")
-	if err := os.WriteFile(metaData, []byte("instance-id: "+imageName+"\nlocal-hostname: "+imageName+"\n"), 0o644); err != nil {
-		return "", err
-	}
-	seedISO := filepath.Join(workDir, "seed.iso")
-	if err := runner.Run(ctx, nil, "cloud-localds", seedISO, filepath.Join(templateDir, "seed", "user-data.yaml"), metaData); err != nil {
-		return "", err
-	}
-	return seedISO, nil
-}
-
-func copyOVMF(workDir string) (string, string, error) {
-	code, err := findOVMF("PACKER_OVMF_CODE", []string{
-		"/usr/share/OVMF/OVMF_CODE_4M.fd",
-		"/usr/share/OVMF/OVMF_CODE.fd",
-	})
-	if err != nil {
-		return "", "", err
-	}
-	vars, err := findOVMF("PACKER_OVMF_VARS", []string{
-		"/usr/share/OVMF/OVMF_VARS_4M.fd",
-		"/usr/share/OVMF/OVMF_VARS.fd",
-	})
-	if err != nil {
-		return "", "", err
-	}
-	codeDst := filepath.Join(workDir, "OVMF_CODE.fd")
-	varsDst := filepath.Join(workDir, "OVMF_VARS.fd")
-	if err := copyFile(code, codeDst); err != nil {
-		return "", "", err
-	}
-	if err := copyFile(vars, varsDst); err != nil {
-		return "", "", err
-	}
-	return codeDst, varsDst, nil
-}
-
-func writePackerVarsJSON(path string, entry oscatalog.Entry, outputDir, ovmfCode, ovmfVars, seedISO, qemuMachine, qemuCPU, timeout string) error {
-	diskSize := entry.Build.DiskSize
-	if diskSize == "" {
-		diskSize = "8G"
-	}
-	aptPackages := entry.Build.AptPackages
-	if aptPackages == nil {
-		aptPackages = []string{}
-	}
-	raw, err := json.MarshalIndent(packerVars{
-		ImageName:           entry.Name,
-		Architecture:        entry.Arch,
-		DiskSize:            diskSize,
-		OutputDirectory:     outputDir,
-		OVMFCode:            ovmfCode,
-		OVMFVars:            ovmfVars,
-		QemuCPU:             qemuCPU,
-		QemuMachine:         qemuMachine,
-		SeedISO:             seedISO,
-		SourceURL:           entry.Build.Source.URL,
-		SourceChecksum:      entry.Build.Source.Checksum,
-		SourceFormat:        string(entry.Build.Source.Format),
-		SSHUsername:         "root",
-		SSHPassword:         "packer",
-		Timeout:             timeout,
-		CurtinKernelPackage: entry.Build.CurtinKernelPackage,
-		AptPackages:         aptPackages,
-	}, "", "  ")
-	if err != nil {
-		return err
-	}
-	return os.WriteFile(path, append(raw, '\n'), 0o644)
-}
-
-func findBuildEntry(entries []oscatalog.Entry, name string) (oscatalog.Entry, error) {
+func findCatalogEntry(entries []oscatalog.Entry, name string) (oscatalog.Entry, error) {
 	name = strings.TrimSpace(name)
 	if name == "" {
-		return oscatalog.Entry{}, errors.New("entry name is required")
+		return oscatalog.Entry{}, fmt.Errorf("entry name is required")
 	}
 	for _, entry := range entries {
 		if entry.Name == name {
@@ -251,47 +152,508 @@ func findBuildEntry(entries []oscatalog.Entry, name string) (oscatalog.Entry, er
 	return oscatalog.Entry{}, fmt.Errorf("catalog entry not found: %s", name)
 }
 
-func findOVMF(envName string, candidates []string) (string, error) {
-	if value := strings.TrimSpace(os.Getenv(envName)); value != "" {
-		return value, nil
+func downloadSource(ctx context.Context, source Source, cacheDir string) (string, error) {
+	sourceURL := strings.TrimSpace(source.URL)
+	if sourceURL == "" {
+		return "", fmt.Errorf("source.url is required")
 	}
-	for _, path := range candidates {
-		if _, err := os.Stat(path); err == nil {
-			return path, nil
-		}
-	}
-	return "", fmt.Errorf("%s not found", envName)
-}
-
-func qemuSettings(arch string) (string, string, error) {
-	switch arch {
-	case "amd64":
-		if defaultCanUseKVM() {
-			return "accel=kvm", "host", nil
-		}
-		return "accel=tcg", "max", nil
-	case "arm64":
-		return "virt", "max", nil
-	default:
-		return "", "", fmt.Errorf("unsupported qemu architecture: %s", arch)
-	}
-}
-
-func defaultCanUseKVM() bool {
-	f, err := os.OpenFile("/dev/kvm", os.O_RDWR, 0)
+	parsed, err := url.Parse(sourceURL)
 	if err != nil {
-		return false
+		return "", fmt.Errorf("parse source url: %w", err)
 	}
-	_ = f.Close()
-	return true
+	name := filepath.Base(parsed.Path)
+	if name == "." || name == "/" || name == "" {
+		name = "source"
+	}
+	dst := filepath.Join(cacheDir, name)
+	tmp := dst + ".download"
+	defer os.Remove(tmp)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, sourceURL, nil)
+	if err != nil {
+		return "", err
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("download source: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		_, _ = io.Copy(io.Discard, resp.Body)
+		return "", fmt.Errorf("download source: status %d", resp.StatusCode)
+	}
+	out, err := os.Create(tmp)
+	if err != nil {
+		return "", err
+	}
+	if _, err := io.Copy(out, resp.Body); err != nil {
+		_ = out.Close()
+		return "", err
+	}
+	if err := out.Close(); err != nil {
+		return "", err
+	}
+	if err := verifyChecksum(ctx, tmp, sourceURL, source.Checksum); err != nil {
+		return "", err
+	}
+	if err := os.Rename(tmp, dst); err != nil {
+		return "", err
+	}
+	return dst, nil
 }
 
-func writeMetadata(entry oscatalog.Entry, zstPath, outDir string) (ImageMetadata, error) {
-	st, err := os.Stat(zstPath)
+func verifyChecksum(ctx context.Context, path, sourceURL, checksum string) error {
+	expected, err := resolveChecksum(ctx, sourceURL, strings.TrimSpace(checksum))
+	if err != nil {
+		return err
+	}
+	if expected.algo == "" {
+		return nil
+	}
+	actual, err := fileDigest(path, expected.algo)
+	if err != nil {
+		return err
+	}
+	if !strings.EqualFold(actual, expected.digest) {
+		return fmt.Errorf("checksum mismatch for %s: expected %s got %s", filepath.Base(path), expected.digest, actual)
+	}
+	return nil
+}
+
+type checksumValue struct {
+	algo   string
+	digest string
+}
+
+func resolveChecksum(ctx context.Context, sourceURL, checksum string) (checksumValue, error) {
+	if checksum == "" {
+		return checksumValue{}, nil
+	}
+	if strings.HasPrefix(checksum, "file:") {
+		filename := filepath.Base(mustURLPath(sourceURL))
+		checksumURL := strings.TrimSpace(strings.TrimPrefix(checksum, "file:"))
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, checksumURL, nil)
+		if err != nil {
+			return checksumValue{}, err
+		}
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			return checksumValue{}, fmt.Errorf("download checksum file: %w", err)
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			_, _ = io.Copy(io.Discard, resp.Body)
+			return checksumValue{}, fmt.Errorf("download checksum file: status %d", resp.StatusCode)
+		}
+		raw, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return checksumValue{}, err
+		}
+		for _, line := range strings.Split(string(raw), "\n") {
+			fields := strings.Fields(line)
+			if len(fields) < 2 {
+				continue
+			}
+			candidate := strings.TrimPrefix(strings.TrimPrefix(fields[len(fields)-1], "*"), "./")
+			if filepath.Base(candidate) == filename {
+				return digestFromValue(fields[0])
+			}
+		}
+		return checksumValue{}, fmt.Errorf("checksum entry not found for %s", filename)
+	}
+	if algo, digest, ok := strings.Cut(checksum, ":"); ok {
+		return parseInlineChecksum(strings.ToLower(strings.TrimSpace(algo)) + ":" + strings.TrimSpace(digest))
+	}
+	return parseInlineChecksum(checksum)
+}
+
+func mustURLPath(raw string) string {
+	parsed, err := url.Parse(raw)
+	if err != nil {
+		return raw
+	}
+	return parsed.Path
+}
+
+func parseInlineChecksum(value string) (checksumValue, error) {
+	value = strings.TrimSpace(value)
+	if algo, digest, ok := strings.Cut(value, ":"); ok {
+		algo = strings.ToLower(strings.TrimSpace(algo))
+		parsed, err := digestFromValue(digest)
+		if err != nil {
+			return checksumValue{}, err
+		}
+		if parsed.algo != algo {
+			return checksumValue{}, fmt.Errorf("%s digest length does not match %s", parsed.algo, algo)
+		}
+		return parsed, nil
+	}
+	return digestFromValue(value)
+}
+
+func digestFromValue(value string) (checksumValue, error) {
+	value = strings.TrimSpace(value)
+	if _, err := hex.DecodeString(value); err != nil {
+		return checksumValue{}, fmt.Errorf("checksum digest must be hex: %w", err)
+	}
+	switch len(value) {
+	case 64:
+		return checksumValue{algo: "sha256", digest: value}, nil
+	case 128:
+		return checksumValue{algo: "sha512", digest: value}, nil
+	default:
+		return checksumValue{}, fmt.Errorf("unsupported checksum digest length: %d", len(value))
+	}
+}
+
+func fileDigest(path, algo string) (string, error) {
+	var h hash.Hash
+	switch strings.ToLower(algo) {
+	case "sha256":
+		h = sha256.New()
+	case "sha512":
+		h = sha512.New()
+	default:
+		return "", fmt.Errorf("unsupported checksum algorithm: %s", algo)
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+	if _, err := io.Copy(h, f); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(h.Sum(nil)), nil
+}
+
+func extractSource(ctx context.Context, runner CommandRunner, source Source, sourcePath, rootfsDir string) error {
+	switch source.Format {
+	case "root-tar":
+		args := []string{"-xf", sourcePath, "-C", rootfsDir, "--numeric-owner"}
+		switch strings.ToLower(source.Compression) {
+		case "xz":
+			args[0] = "-xJf"
+		case "gz", "gzip":
+			args[0] = "-xzf"
+		case "", "none":
+		default:
+			return fmt.Errorf("unsupported root-tar compression: %s", source.Compression)
+		}
+		return runner.Run(ctx, "tar", args...)
+	case "squashfs":
+		return runner.Run(ctx, "unsquashfs", "-f", "-d", rootfsDir, sourcePath)
+	default:
+		return fmt.Errorf("unsupported source.format: %s", source.Format)
+	}
+}
+
+func configureRootFS(ctx context.Context, runner CommandRunner, entry BuildEntry, rootfsDir string) error {
+	if len(entry.Packages) == 0 {
+		return nil
+	}
+	if entry.PackageManager != "apt" {
+		return fmt.Errorf("unsupported packageManager: %s", entry.PackageManager)
+	}
+	return withPreparedChroot(ctx, runner, rootfsDir, func() error {
+		if err := runner.Run(ctx, "chroot", rootfsDir, "env", "DEBIAN_FRONTEND=noninteractive", "apt-get", "update"); err != nil {
+			return err
+		}
+		args := append([]string{rootfsDir, "env", "DEBIAN_FRONTEND=noninteractive", "apt-get", "install", "-y", "--no-install-recommends"}, entry.Packages...)
+		return runner.Run(ctx, "chroot", args...)
+	})
+}
+
+func withPreparedChroot(ctx context.Context, runner CommandRunner, rootfsDir string, fn func() error) (err error) {
+	restoreResolver, err := installResolver(rootfsDir)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if restoreErr := restoreResolver(); err == nil && restoreErr != nil {
+			err = restoreErr
+		}
+	}()
+
+	type chrootMount struct {
+		target string
+		args   []string
+	}
+	mounts := []chrootMount{}
+	for _, bind := range [][2]string{
+		{"/proc", filepath.Join(rootfsDir, "proc")},
+		{"/sys", filepath.Join(rootfsDir, "sys")},
+		{"/dev", filepath.Join(rootfsDir, "dev")},
+		{"/run", filepath.Join(rootfsDir, "run")},
+	} {
+		mounts = append(mounts, chrootMount{
+			target: bind[1],
+			args:   []string{"--bind", bind[0], bind[1]},
+		})
+	}
+	devpts := filepath.Join(rootfsDir, "dev", "pts")
+	mounts = append(mounts, chrootMount{
+		target: devpts,
+		args:   []string{"-t", "devpts", "devpts", devpts},
+	})
+
+	mounted := make([]string, 0, len(mounts))
+	defer func() {
+		for i := len(mounted) - 1; i >= 0; i-- {
+			_ = runner.Run(context.Background(), "umount", mounted[i])
+		}
+	}()
+	for _, mount := range mounts {
+		if err := prepareChrootMountTarget(rootfsDir, mount.target); err != nil {
+			return err
+		}
+		if err := runner.Run(ctx, "mount", mount.args...); err != nil {
+			return err
+		}
+		mounted = append(mounted, mount.target)
+	}
+	return fn()
+}
+
+func prepareChrootMountTarget(rootfsDir, target string) error {
+	if err := ensureNoSymlinkAncestors(rootfsDir, filepath.Dir(target)); err != nil {
+		return err
+	}
+	if err := os.MkdirAll(target, 0o755); err != nil {
+		return err
+	}
+	return ensureNoSymlinkAncestors(rootfsDir, target)
+}
+
+func installResolver(rootfsDir string) (func() error, error) {
+	dst := filepath.Join(rootfsDir, "etc", "resolv.conf")
+	if err := ensureNoSymlinkAncestors(rootfsDir, filepath.Dir(dst)); err != nil {
+		return nil, err
+	}
+	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+		return nil, err
+	}
+	if err := ensureNoSymlinkAncestors(rootfsDir, filepath.Dir(dst)); err != nil {
+		return nil, err
+	}
+
+	backup := dst + ".gomi-build-backup"
+	_ = os.Remove(backup)
+
+	existed := false
+	if _, err := os.Lstat(dst); err == nil {
+		existed = true
+		if err := os.Rename(dst, backup); err != nil {
+			return nil, err
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return nil, err
+	}
+
+	restore := func() error {
+		_ = os.Remove(dst)
+		if !existed {
+			return nil
+		}
+		return os.Rename(backup, dst)
+	}
+	if err := copyFile("/etc/resolv.conf", dst); err != nil {
+		if restoreErr := restore(); restoreErr != nil {
+			return nil, fmt.Errorf("%w; restore resolver: %v", err, restoreErr)
+		}
+		return nil, err
+	}
+	return restore, nil
+}
+
+func cleanupRootFS(entry BuildEntry, rootfsDir string) error {
+	paths := append([]string{
+		"/var/log/cloud-init.log",
+		"/var/log/cloud-init-output.log",
+		"/etc/netplan/50-cloud-init.yaml",
+		"/etc/ssh/ssh_host_rsa_key",
+		"/etc/ssh/ssh_host_rsa_key.pub",
+		"/etc/ssh/ssh_host_ecdsa_key",
+		"/etc/ssh/ssh_host_ecdsa_key.pub",
+		"/etc/ssh/ssh_host_ed25519_key",
+		"/etc/ssh/ssh_host_ed25519_key.pub",
+	}, entry.CleanupPaths...)
+	for _, path := range paths {
+		full, err := rootfsPath(rootfsDir, path)
+		if err != nil {
+			return err
+		}
+		if err := ensureNoSymlinkAncestors(rootfsDir, filepath.Dir(full)); err != nil {
+			return err
+		}
+		if err := os.RemoveAll(full); err != nil {
+			return err
+		}
+	}
+	for _, path := range []string{"/etc/machine-id", "/var/lib/dbus/machine-id"} {
+		full, err := rootfsPath(rootfsDir, path)
+		if err != nil {
+			return err
+		}
+		if err := writeEmptyRegularFile(rootfsDir, full); err != nil {
+			return err
+		}
+	}
+	globs := append([]string{"/var/cache/apt/archives/*", "/var/lib/apt/lists/*"}, entry.CleanupGlobs...)
+	for _, pattern := range globs {
+		globPath, err := rootfsPath(rootfsDir, pattern)
+		if err != nil {
+			return err
+		}
+		matches, err := filepath.Glob(globPath)
+		if err != nil {
+			return err
+		}
+		for _, match := range matches {
+			if err := ensureUnderRoot(rootfsDir, match); err != nil {
+				return err
+			}
+			if err := ensureNoSymlinkAncestors(rootfsDir, filepath.Dir(match)); err != nil {
+				return err
+			}
+			if err := os.RemoveAll(match); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func writeEmptyRegularFile(rootfsDir, full string) error {
+	if err := ensureNoSymlinkAncestors(rootfsDir, filepath.Dir(full)); err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+		return err
+	}
+	if info, err := os.Lstat(full); err == nil && info.Mode()&os.ModeSymlink != 0 {
+		if err := os.Remove(full); err != nil {
+			return err
+		}
+	} else if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	f, err := os.OpenFile(full, os.O_WRONLY|os.O_CREATE|os.O_TRUNC|syscall.O_NOFOLLOW, 0o644)
+	if err != nil {
+		return err
+	}
+	return f.Close()
+}
+
+func ensureNoSymlinkAncestors(rootfsDir, full string) error {
+	rootAbs, err := filepath.Abs(rootfsDir)
+	if err != nil {
+		return err
+	}
+	fullAbs, err := filepath.Abs(full)
+	if err != nil {
+		return err
+	}
+	if err := ensureUnderRoot(rootAbs, fullAbs); err != nil {
+		return err
+	}
+	rel, err := filepath.Rel(rootAbs, fullAbs)
+	if err != nil {
+		return err
+	}
+	if rel == "." {
+		return nil
+	}
+	current := rootAbs
+	for _, part := range strings.Split(rel, string(os.PathSeparator)) {
+		current = filepath.Join(current, part)
+		info, err := os.Lstat(current)
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("rootfs path contains symlink ancestor: %s", current)
+		}
+	}
+	return nil
+}
+
+func rootfsPath(rootfsDir, rel string) (string, error) {
+	raw := strings.TrimSpace(rel)
+	if raw == "" || strings.Contains(raw, "\\") {
+		return "", fmt.Errorf("invalid rootfs path: %s", rel)
+	}
+	clean := path.Clean(strings.TrimPrefix(raw, "/"))
+	if clean == "." || clean == ".." || strings.HasPrefix(clean, "../") {
+		return "", fmt.Errorf("invalid rootfs path: %s", rel)
+	}
+	full := filepath.Join(rootfsDir, filepath.FromSlash(clean))
+	if err := ensureUnderRoot(rootfsDir, full); err != nil {
+		return "", err
+	}
+	return full, nil
+}
+
+func ensureUnderRoot(rootfsDir, full string) error {
+	rootAbs, err := filepath.Abs(rootfsDir)
+	if err != nil {
+		return err
+	}
+	fullAbs, err := filepath.Abs(full)
+	if err != nil {
+		return err
+	}
+	prefix := rootAbs + string(os.PathSeparator)
+	if fullAbs != rootAbs && !strings.HasPrefix(fullAbs, prefix) {
+		return fmt.Errorf("rootfs path escapes rootfs: %s", full)
+	}
+	return nil
+}
+
+func verifyModules(modules []string, rootfsDir string) error {
+	for _, module := range modules {
+		module = strings.TrimSpace(module)
+		if module == "" {
+			continue
+		}
+		found := false
+		root := filepath.Join(rootfsDir, "lib", "modules")
+		err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
+			if err != nil || d.IsDir() {
+				return err
+			}
+			name := filepath.Base(path)
+			if strings.HasPrefix(name, module+".ko") {
+				found = true
+				return filepath.SkipAll
+			}
+			return nil
+		})
+		if err != nil {
+			return err
+		}
+		if !found {
+			return fmt.Errorf("kernel module not found in rootfs: %s", module)
+		}
+	}
+	return nil
+}
+
+func artifactName(entry oscatalog.Entry) string {
+	if name := filepath.Base(mustURLPath(entry.URL)); name != "." && name != "/" && name != "" {
+		return name
+	}
+	return entry.Name + ".rootfs.squashfs"
+}
+
+func writeMetadata(entry oscatalog.Entry, build BuildEntry, artifact, outDir string) (ImageMetadata, error) {
+	sum, err := sha256File(artifact)
 	if err != nil {
 		return ImageMetadata{}, err
 	}
-	sum, err := sha256File(zstPath)
+	info, err := os.Stat(artifact)
 	if err != nil {
 		return ImageMetadata{}, err
 	}
@@ -301,12 +663,12 @@ func writeMetadata(entry oscatalog.Entry, zstPath, outDir string) (ImageMetadata
 		OSVersion: entry.OSVersion,
 		Arch:      entry.Arch,
 		Variant:   string(entry.Variant),
-		Artifact:  filepath.Base(zstPath),
+		Format:    string(osimage.FormatSquashFS),
+		Artifact:  filepath.Base(artifact),
+		RootPath:  defaultRootPath,
 		SHA256:    sum,
-		SizeBytes: st.Size(),
-	}
-	if entry.Build != nil {
-		meta.Packages = append([]string{}, entry.Build.AptPackages...)
+		SizeBytes: info.Size(),
+		Packages:  append([]string{}, build.Packages...),
 	}
 	raw, err := json.MarshalIndent(meta, "", "  ")
 	if err != nil {
@@ -319,29 +681,34 @@ func writeMetadata(entry oscatalog.Entry, zstPath, outDir string) (ImageMetadata
 }
 
 func copyFile(src, dst string) error {
-	raw, err := os.ReadFile(src)
+	in, err := os.Open(src)
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+	defer in.Close()
+	out, err := os.Create(dst)
+	if err != nil {
 		return err
 	}
-	return os.WriteFile(dst, raw, 0o644)
+	if _, err := io.Copy(out, in); err != nil {
+		_ = out.Close()
+		return err
+	}
+	return out.Close()
 }
 
 func findRepoRoot() (string, error) {
-	dir, err := os.Getwd()
+	wd, err := os.Getwd()
 	if err != nil {
 		return "", err
 	}
-	for {
+	for dir := wd; ; dir = filepath.Dir(dir) {
 		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
 			return dir, nil
 		}
-		next := filepath.Dir(dir)
-		if next == dir {
-			return "", errors.New("could not find repository root")
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return "", fmt.Errorf("repository root not found")
 		}
-		dir = next
 	}
 }

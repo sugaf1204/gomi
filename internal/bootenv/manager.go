@@ -477,8 +477,8 @@ func (m *Manager) publishCurrent(name, buildID, artifactDir, logPath string) err
 	if err := os.Symlink(buildID, tmp); err != nil {
 		return err
 	}
+	defer os.Remove(tmp)
 	if err := os.Rename(tmp, current); err != nil {
-		_ = os.Remove(tmp)
 		return err
 	}
 	return m.writeStatusFile(name, artifactDir, logPath)
@@ -496,8 +496,8 @@ func (m *Manager) publishPXECompatibilityFiles(artifactDir string) error {
 		if err := os.Symlink(filepath.Join(artifactDir, name), tmp); err != nil {
 			return err
 		}
+		defer os.Remove(tmp)
 		if err := os.Rename(tmp, dst); err != nil {
-			_ = os.Remove(tmp)
 			return err
 		}
 	}
@@ -643,13 +643,12 @@ func downloadFileOnce(ctx context.Context, client *http.Client, rawURL, dst stri
 	if err != nil {
 		return err
 	}
+	defer os.Remove(tmp)
 	if _, err := io.Copy(f, resp.Body); err != nil {
 		_ = f.Close()
-		_ = os.Remove(tmp)
 		return err
 	}
 	if err := f.Close(); err != nil {
-		_ = os.Remove(tmp)
 		return err
 	}
 	return os.Rename(tmp, dst)
@@ -669,17 +668,15 @@ func copyFile(src, dst string, mode os.FileMode) error {
 	if err != nil {
 		return err
 	}
+	defer os.Remove(tmp)
 	if _, err := io.Copy(out, in); err != nil {
 		_ = out.Close()
-		_ = os.Remove(tmp)
 		return err
 	}
 	if err := out.Close(); err != nil {
-		_ = os.Remove(tmp)
 		return err
 	}
 	if err := os.Chmod(tmp, mode); err != nil {
-		_ = os.Remove(tmp)
 		return err
 	}
 	return os.Rename(tmp, dst)

@@ -57,6 +57,19 @@ func (s *Service) UpdateStatus(ctx context.Context, name string, ready bool, loc
 	return img, nil
 }
 
+func (s *Service) UpdateChecksum(ctx context.Context, name, checksum string) (OSImage, error) {
+	img, err := s.store.Get(ctx, name)
+	if err != nil {
+		return OSImage{}, err
+	}
+	img.Checksum = checksum
+	img.UpdatedAt = time.Now().UTC()
+	if err := s.store.Upsert(ctx, img); err != nil {
+		return OSImage{}, err
+	}
+	return img, nil
+}
+
 func (s *Service) Delete(ctx context.Context, name string) error {
 	return s.store.Delete(ctx, name)
 }

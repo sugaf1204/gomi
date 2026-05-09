@@ -7,39 +7,37 @@ artifacts. The public flow is catalog driven:
 
 ```sh
 curl -H "Authorization: Bearer $GOMI_TOKEN" \
-  -X POST http://gomi.example/api/v1/os-catalog/debian-13-amd64-baremetal/install
+  -X POST http://gomi.example/api/v1/os-catalog/ubuntu-22.04-amd64-baremetal/install
 ```
 
-Installing a catalog entry downloads a raw OS image artifact into GOMI storage
-and ensures the referenced boot environment exists. Catalog entries live in
-YAML, not Go code. A catalog entry can point at any HTTP(S) `.raw` or
-`.raw.zst` URL. Relative artifact URLs are resolved against
+Installing a catalog entry downloads an OS image artifact into GOMI storage and
+ensures the referenced boot environment exists. Catalog entries live in YAML,
+not Go code. A catalog entry can point at any HTTP(S) `.raw`, `.raw.zst`, or
+`.rootfs.squashfs` URL. Relative artifact URLs are resolved against
 `GOMI_OS_IMAGE_SOURCE_URL`; absolute URLs are used as-is. Operators can add or
 replace the built-in catalog with `GOMI_OS_CATALOG_FILE`,
 `GOMI_OS_CATALOG_URL`, and `GOMI_OS_CATALOG_REPLACE=true`.
 
-Packer is only an optional release build recipe attached to catalog entries
-with `build:`. Entries without `build:` are URL-only images and are not included
-in the GitHub Actions build matrix. `gomi-osimage` reads the catalog, validates
-it, generates the workflow matrix, runs Packer for buildable entries, and writes
-release manifests/checksums. OS-specific source URLs and package lists belong
-in catalog YAML, not in workflow YAML, Taskfile commands, or Go switch
-statements.
+Image build inputs are separate from the runtime OS catalog. The runtime
+catalog intentionally has no build recipe fields; it only describes deployable
+artifacts. `gomi-osimage` reads `/usr/share/gomi/osimage/builds.yaml` when
+installed from the Debian package, or its embedded default build config during
+development, then joins build entries to the runtime catalog by entry name.
 
-The Packer template is generic cloud-image QEMU plumbing. OVMF is used only so
-Packer can boot the source cloud image as a UEFI VM while preparing the release
-artifact. GOMI auto-detects OVMF firmware paths and copies `OVMF_VARS` into the
-work directory because QEMU mutates the VM's NVRAM. `PACKER_OVMF_CODE` and
-`PACKER_OVMF_VARS` exist only as build-environment overrides.
+The default build backend creates a rootfs work directory from a catalog source,
+installs the packages declared by build config inside a prepared chroot,
+cleans machine-specific state, verifies requested kernel modules, and publishes
+a `rootfs.squashfs` artifact plus metadata/checksums. GOMI does not run image
+customization from the API process. OS-specific source URLs, packages, cleanup
+rules, and verification belong in the build config, not in server catalog YAML
+or Go switch statements. The build command expects root privileges plus
+`tar`, `mount`, `chroot`, and `mksquashfs` on the build host.
 
-GOMI does not convert qcow2 images, mount raw disks, install packages into the
-target OS, or otherwise mutate target OS images from the API process. Catalog
-sources are raw artifacts only; image conversion, curtin-specific image
-preparation, and variant-specific package installation belong in an
-offline/release build path. The release image workflow injects `/curtin` before
-publishing each raw artifact so curtin can recognize the dd-installed target
-root filesystem during the extract stage; bare-metal variants also include
-`/curtin/CUSTOM_KERNEL`.
+On a GOMI server installed from the Debian package:
+
+```sh
+sudo gomi-osimage build --name ubuntu-22.04-amd64-baremetal --out-dir /var/lib/gomi/os-images
+```
 
 For OS image catalog artifacts, override the release asset base URL with:
 
@@ -129,7 +127,7 @@ the final image written to disk.
 ## Decision
 
 Use a split kernel/initrd/SquashFS rootfs model as the first backend, not an
-all-in-one initrd, Packer target-image flow, or a direct shell/Go port.
+all-in-one initrd or a direct shell/Go port.
 
 `bootenv/` owns the runtime build:
 
@@ -145,7 +143,8 @@ GOMI owns only consumption:
 
 - input: supported OS catalog entry and boot environment name;
 - OS image source: `GOMI_OS_IMAGE_SOURCE_URL`, an HTTP(S) base containing
-  prebuilt variant-qualified `.raw.zst` or `.raw` artifacts;
+  prebuilt variant-qualified `.rootfs.squashfs`, `.raw.zst`, or `.raw`
+  artifacts;
 - bootenv source: `GOMI_BOOTENV_SOURCE_URL`, either a local directory or HTTP(S)
   base;
 - verification: manifest schema/name plus SHA256/size for kernel/initrd/rootfs;

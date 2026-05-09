@@ -1,0 +1,18 @@
+entries:
+  - name: ubuntu-22.04-amd64-baremetal
+    source:
+      url: https://cloud-images.ubuntu.com/jammy/current/jammy-server-cloudimg-amd64-root.tar.xz
+      checksum: file:https://cloud-images.ubuntu.com/jammy/current/SHA256SUMS
+      format: root-tar
+      compression: xz
+    packageManager: apt
+    packages:
+      - linux-image-generic
+      - grub-pc
+      - grub-efi-amd64-bin
+    verifyModules:
+      - igc
+      - r8169
+    squashfs:
+      compression: xz
+      blockSize: 1M

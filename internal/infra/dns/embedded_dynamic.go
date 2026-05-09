@@ -335,17 +335,15 @@ func (s *EmbeddedServer) persistDynamicRecordsLocked() error {
 		return fmt.Errorf("create dynamic dns record temp file: %w", err)
 	}
 	tmpName := tmp.Name()
+	defer os.Remove(tmpName)
 	if _, err := tmp.Write(data); err != nil {
 		_ = tmp.Close()
-		_ = os.Remove(tmpName)
 		return fmt.Errorf("write dynamic dns records: %w", err)
 	}
 	if err := tmp.Close(); err != nil {
-		_ = os.Remove(tmpName)
 		return fmt.Errorf("close dynamic dns records: %w", err)
 	}
 	if err := os.Rename(tmpName, s.dynamicRecordsPath); err != nil {
-		_ = os.Remove(tmpName)
 		return fmt.Errorf("replace dynamic dns records: %w", err)
 	}
 	return nil

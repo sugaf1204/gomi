@@ -13,14 +13,14 @@ import (
 )
 
 func WriteManifest(dir string) error {
-	if dir == "" {
+	if strings.TrimSpace(dir) == "" {
 		dir = filepath.Join("dist", "os-images")
 	}
 	metadataPaths, err := filepath.Glob(filepath.Join(dir, "*.json"))
 	if err != nil {
 		return err
 	}
-	entries := make([]ImageMetadata, 0)
+	entries := make([]ImageMetadata, 0, len(metadataPaths))
 	for _, path := range metadataPaths {
 		if filepath.Base(path) == "manifest-os-images.json" {
 			continue
@@ -44,20 +44,28 @@ func WriteManifest(dir string) error {
 		return err
 	}
 
-	zstPaths, err := filepath.Glob(filepath.Join(dir, "*.raw.zst"))
-	if err != nil {
-		return err
-	}
-	sort.Strings(zstPaths)
 	var checksums strings.Builder
-	for _, path := range zstPaths {
+	seenArtifacts := map[string]struct{}{}
+	for _, entry := range entries {
+		artifact := strings.TrimSpace(entry.Artifact)
+		if artifact == "" {
+			return fmt.Errorf("%s: artifact is required in metadata", entry.Name)
+		}
+		if filepath.Base(artifact) != artifact {
+			return fmt.Errorf("%s: artifact must be a file name, got %q", entry.Name, artifact)
+		}
+		if _, ok := seenArtifacts[artifact]; ok {
+			continue
+		}
+		seenArtifacts[artifact] = struct{}{}
+		path := filepath.Join(dir, artifact)
 		sum, err := sha256File(path)
 		if err != nil {
 			return err
 		}
 		checksums.WriteString(sum)
 		checksums.WriteString("  ")
-		checksums.WriteString(filepath.Base(path))
+		checksums.WriteString(artifact)
 		checksums.WriteByte('\n')
 	}
 	return os.WriteFile(filepath.Join(dir, "checksums-os-images.txt"), []byte(checksums.String()), 0o644)

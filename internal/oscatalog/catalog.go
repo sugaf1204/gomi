@@ -47,22 +47,6 @@ type Entry struct {
 	Checksum          string              `json:"checksum,omitempty" yaml:"checksum,omitempty"`
 	Description       string              `json:"description,omitempty" yaml:"description,omitempty"`
 	BootEnvironment   string              `json:"bootEnvironment" yaml:"bootEnvironment"`
-	Build             *BuildRecipe        `json:"build,omitempty" yaml:"build,omitempty"`
-}
-
-type BuildRecipe struct {
-	Type                string      `json:"type" yaml:"type"`
-	Source              BuildSource `json:"source" yaml:"source"`
-	AptPackages         []string    `json:"aptPackages,omitempty" yaml:"aptPackages,omitempty"`
-	CurtinKernelPackage string      `json:"curtinKernelPackage,omitempty" yaml:"curtinKernelPackage,omitempty"`
-	PackerTemplate      string      `json:"packerTemplate,omitempty" yaml:"packerTemplate,omitempty"`
-	DiskSize            string      `json:"diskSize,omitempty" yaml:"diskSize,omitempty"`
-}
-
-type BuildSource struct {
-	URL      string              `json:"url" yaml:"url"`
-	Checksum string              `json:"checksum" yaml:"checksum"`
-	Format   osimage.ImageFormat `json:"format" yaml:"format"`
 }
 
 type LoadOptions struct {
@@ -73,7 +57,7 @@ type LoadOptions struct {
 }
 
 func (e Entry) OSImage() osimage.OSImage {
-	return osimage.OSImage{
+	img := osimage.OSImage{
 		Name:        e.Name,
 		OSFamily:    e.OSFamily,
 		OSVersion:   e.OSVersion,
@@ -85,6 +69,20 @@ func (e Entry) OSImage() osimage.OSImage {
 		Checksum:    e.Checksum,
 		Description: e.Description,
 	}
+	if e.Format == osimage.FormatSquashFS {
+		img.Manifest = &osimage.Manifest{
+			SchemaVersion: "gomi.osimage.v1alpha1",
+			Name:          e.Name,
+			OSFamily:      e.OSFamily,
+			OSVersion:     e.OSVersion,
+			Arch:          e.Arch,
+			Root: osimage.RootArtifact{
+				Format: e.Format,
+				Path:   "rootfs.squashfs",
+			},
+		}
+	}
+	return img
 }
 
 func List() []Entry {
@@ -204,17 +202,6 @@ func Validate(entry Entry) error {
 		return err
 	}
 	return validateCatalogDocument(doc)
-}
-
-func BuildEntries(entries []Entry) []Entry {
-	out := make([]Entry, 0)
-	for _, entry := range entries {
-		if entry.Build != nil {
-			out = append(out, entry)
-		}
-	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
-	return out
 }
 
 func materializeEntries(entries []Entry, sourceBase string) ([]Entry, error) {

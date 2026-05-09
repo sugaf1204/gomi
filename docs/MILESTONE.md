@@ -128,3 +128,43 @@ the PXE runtime OS with the installed target OS.
 - Keep Packer optional. Standard GOMI usage should work with catalog images plus
   manifest-driven hardware bundles, without requiring users to build images on
   the GOMI server.
+
+## 22. Bug: loginUser cannot override default cloud user password
+
+When deploying a cloud-image VirtualMachine with `loginUser.username=ubuntu` and
+`loginUser.password` set, password SSH login does not work, while a separate
+custom login user such as `gomi/gomi` works. This likely comes from cloud-init
+`users: [default, ubuntu]` merge behavior when the requested login user matches
+the distribution's default cloud user. Fix the cloud-init generation so
+password-backed login works for both default users and custom users, and add an
+integration-style test for Ubuntu cloud images.
+
+## 23. Secure production libvirt authentication
+
+The current VM deploy implementation still uses libvirt TCP from the GOMI
+server to the hypervisor. The lab-only `auth_tcp = "none"` setup must not be the
+production default. Define and implement a production-safe connection/auth model,
+such as SSH transport, TLS client certificates, SASL, or a `gomi-hypervisor`
+agent API, and update the setup/register flow so unauthenticated libvirt TCP is
+clearly limited to local lab/dev testing.
+
+## 24. Multi-OS curtin and artifact deploy design
+
+The current curtin/rootfs deployment path was validated primarily with Ubuntu
+and must not grow into Ubuntu-specific behavior hidden inside generic deploy
+logic. Refactor curtin config generation so OS-family-specific behavior is
+explicitly selected by catalog metadata, image/rootfs artifact capabilities, or
+typed OS family branches.
+
+- Keep curtin YAML generation centralized in a small builder layer rather than
+  scattering `sources`, `storage`, `stages`, `late_commands`, and shell snippets
+  across deploy handlers.
+- Treat whole-disk raw artifacts, rootfs SquashFS artifacts, ISO installers, and
+  future filesystem artifacts as distinct deploy capabilities instead of
+  inferring behavior from filenames or one Ubuntu example.
+- Isolate Ubuntu/Debian-specific cloud-init, netplan, bootloader, package, and
+  post-install assumptions behind clearly named helpers.
+- For Red Hat-family, Fedora, Debian, and Ubuntu paths, either implement the
+  correct behavior or fail early with an explicit unsupported-family error.
+- Add tests that cover at least one non-Ubuntu path, or the explicit
+  unsupported-family error, whenever OS deploy behavior changes.

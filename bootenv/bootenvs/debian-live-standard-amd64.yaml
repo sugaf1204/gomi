@@ -22,6 +22,7 @@ spec:
       - ca-certificates
       - curl
       - wget
+      - rsync
       - lshw
       - dhcpcd-base
       - curtin

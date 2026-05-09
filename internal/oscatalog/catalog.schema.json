@@ -32,6 +32,44 @@
       "type": "object",
       "required": ["name", "osFamily", "osVersion", "arch", "format", "url", "bootEnvironment"],
       "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "format": { "const": "raw" }
+            },
+            "required": ["format"]
+          },
+          "then": {
+            "properties": {
+              "sourceFormat": {
+                "const": "raw"
+              },
+              "sourceCompression": {
+                "enum": ["zstd", ""]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "format": { "const": "squashfs" }
+            },
+            "required": ["format"]
+          },
+          "then": {
+            "properties": {
+              "sourceFormat": {
+                "const": "squashfs"
+              },
+              "sourceCompression": {
+                "const": ""
+              }
+            }
+          }
+        }
+      ],
       "properties": {
         "name": {
           "type": "string",
@@ -54,13 +92,13 @@
           "pattern": "\\S"
         },
         "format": {
-          "const": "raw"
+          "enum": ["raw", "squashfs"]
         },
         "sourceFormat": {
-          "const": "raw"
+          "enum": ["raw", "squashfs"]
         },
         "sourceCompression": {
-          "enum": ["zstd", ""]
+          "type": "string"
         },
         "variant": {
           "type": "string",
@@ -82,58 +120,6 @@
           "type": "string",
           "minLength": 1,
           "pattern": "\\S"
-        },
-        "build": {
-          "$ref": "#/$defs/build"
-        }
-      }
-    },
-    "build": {
-      "type": "object",
-      "required": ["type", "source"],
-      "additionalProperties": false,
-      "properties": {
-        "type": {
-          "const": "packer-qemu-cloud-image"
-        },
-        "source": {
-          "$ref": "#/$defs/buildSource"
-        },
-        "aptPackages": {
-          "type": "array",
-          "items": {
-            "type": "string",
-            "minLength": 1
-          }
-        },
-        "curtinKernelPackage": {
-          "type": "string"
-        },
-        "packerTemplate": {
-          "type": "string"
-        },
-        "diskSize": {
-          "type": "string"
-        }
-      }
-    },
-    "buildSource": {
-      "type": "object",
-      "required": ["url", "checksum", "format"],
-      "additionalProperties": false,
-      "properties": {
-        "url": {
-          "type": "string",
-          "minLength": 1,
-          "pattern": "\\S"
-        },
-        "checksum": {
-          "type": "string",
-          "minLength": 1,
-          "pattern": "\\S"
-        },
-        "format": {
-          "enum": ["qcow2", "raw"]
         }
       }
     }

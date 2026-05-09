@@ -30,6 +30,73 @@ const provisionArtifactImageAppliedAt = "imageAppliedAt"
 const provisionArtifactFailureLogTail = "failureLogTail"
 const maxProvisionFailureLogTailLen = 32 * 1024
 const maxProvisionTimingEvents = 240
+const rootFSBIOSBootPartitionSizeMB int64 = 1
+const rootFSEFIPartitionSizeMB int64 = 512
+const rootFSPartitionReserveMB int64 = 64
+const rootFSMinimumRootPartitionSizeMB int64 = 4096
+
+type curtinInstall struct {
+	LogFile           string   `yaml:"log_file"`
+	PostFiles         []string `yaml:"post_files,omitempty"`
+	SaveInstallConfig string   `yaml:"save_install_config"`
+	SaveInstallLog    string   `yaml:"save_install_log"`
+}
+
+type curtinAptMirrors struct {
+	UbuntuArchive  string `yaml:"ubuntu_archive,omitempty"`
+	UbuntuSecurity string `yaml:"ubuntu_security,omitempty"`
+}
+
+type curtinReportingHook struct {
+	Type     string `yaml:"type"`
+	Endpoint string `yaml:"endpoint"`
+	Level    string `yaml:"level"`
+}
+
+type curtinReporting struct {
+	Gomi curtinReportingHook `yaml:"gomi"`
+}
+
+type curtinBlockMeta struct {
+	Devices []string `yaml:"devices"`
+}
+
+type curtinSource struct {
+	Type string `yaml:"type"`
+	URI  string `yaml:"uri"`
+}
+
+type curtinStorageConfig struct {
+	Version int              `yaml:"version"`
+	Config  []map[string]any `yaml:"config"`
+}
+
+type curtinGrub struct {
+	InstallDevices []string `yaml:"install_devices"`
+}
+
+type curtinStorage struct {
+	Storage curtinStorageConfig `yaml:"storage"`
+	Grub    curtinGrub          `yaml:"grub"`
+}
+
+type curtinConfig struct {
+	Install              curtinInstall           `yaml:"install"`
+	Reporting            curtinReporting         `yaml:"reporting"`
+	AptMirrors           *curtinAptMirrors       `yaml:"apt_mirrors,omitempty"`
+	BlockMeta            curtinBlockMeta         `yaml:"block-meta"`
+	Sources              map[string]curtinSource `yaml:"sources"`
+	Storage              *curtinStorageConfig    `yaml:"storage,omitempty"`
+	Grub                 *curtinGrub             `yaml:"grub,omitempty"`
+	Stages               []string                `yaml:"stages"`
+	PartitioningCommands map[string][]string     `yaml:"partitioning_commands,omitempty"`
+	LateCommands         map[string][]string     `yaml:"late_commands"`
+}
+
+type selectedTargetDisk struct {
+	Path string
+	Info hwinfo.DiskInfo
+}
 
 type deployEventRequest struct {
 	AttemptID        string          `json:"attemptId,omitempty"`
@@ -603,14 +670,18 @@ func (h *Handler) buildCurtinInstallConfig(ctx context.Context, c echo.Context, 
 	if err := validateAttemptParam(m, attemptID); err != nil {
 		return "", err
 	}
-	targetDisk, err := selectTargetDisk(m, info)
+	selectedDisk, err := selectTargetDiskInfo(m, info)
 	if err != nil {
 		return "", err
 	}
+	targetDisk := selectedDisk.Path
 
 	imageURL := ""
 	imageFormat := string(img.Format)
 	imageCompression := ""
+	if !img.Ready {
+		return "", fmt.Errorf("os image %q is not ready", img.Name)
+	}
 	if img.Manifest != nil && strings.TrimSpace(img.Manifest.Root.Path) != "" {
 		imageURL, err = h.artifactURL(base, img, img.Manifest.Root.Path)
 		if err != nil {
@@ -621,9 +692,6 @@ func (h *Handler) buildCurtinInstallConfig(ctx context.Context, c echo.Context, 
 		}
 		imageCompression = strings.ToLower(strings.TrimSpace(img.Manifest.Root.Compression))
 	} else {
-		if !img.Ready {
-			return "", fmt.Errorf("os image %q is not ready", img.Name)
-		}
 		imageURL, err = imageFileURL(base, img)
 		if err != nil {
 			return "", err
@@ -631,6 +699,9 @@ func (h *Handler) buildCurtinInstallConfig(ctx context.Context, c echo.Context, 
 	}
 
 	sourceURI := imageURL
+	sourceType := "dd-raw"
+	var storageConfig *curtinStorage
+	stages := []string{"early", "partitioning", "network", "extract", "late"}
 	switch strings.ToLower(strings.TrimSpace(imageFormat)) {
 	case "", string(osimage.FormatRAW):
 		switch imageCompression {
@@ -639,50 +710,25 @@ func (h *Handler) buildCurtinInstallConfig(ctx context.Context, c echo.Context, 
 		default:
 			return "", fmt.Errorf("curtin deploy requires uncompressed raw image, got compression %q", imageCompression)
 		}
+	case string(osimage.FormatSquashFS):
+		sourceType = "fsimage"
+		sourceURI = appendProvisionQuery(imageURL, token, attemptID)
+		rootSizeMB, err := rootFSRootPartitionSizeMB(selectedDisk.Info)
+		if err != nil {
+			return "", err
+		}
+		storageConfig = buildRootFSStorageConfig(targetDisk, rootSizeMB)
+		stages = []string{"early", "partitioning", "network", "extract", "curthooks", "late"}
 	default:
-		return "", fmt.Errorf("curtin deploy requires raw image, got format %q", imageFormat)
+		return "", fmt.Errorf("curtin deploy requires raw or squashfs image, got format %q", imageFormat)
 	}
 
 	seedURL := fmt.Sprintf("%s/nocloud/%s/", strings.TrimRight(base, "/"), macToken(m.MAC))
 	lateCommands := []string{
 		fmt.Sprintf(`set -e; d="$TARGET_MOUNT_POINT/var/lib/cloud/seed/nocloud"; mkdir -p "$d"; for f in user-data meta-data vendor-data network-config; do curl -fsS -o "$d/$f" %s$f; done`, shellQuote(seedURL)),
-		`mkdir -p "$TARGET_MOUNT_POINT/etc/cloud/cloud.cfg.d"; printf '%s\n' 'datasource_list: [ NoCloud, None ]' 'datasource:' '  NoCloud:' '    seedfrom: /var/lib/cloud/seed/nocloud/' > "$TARGET_MOUNT_POINT/etc/cloud/cloud.cfg.d/99_gomi_nocloud.cfg"; rm -f "$TARGET_MOUNT_POINT"/etc/netplan/*.yaml`,
+		`mkdir -p "$TARGET_MOUNT_POINT/etc/cloud/cloud.cfg.d"; printf '%s\n' 'datasource_list: [ NoCloud, None ]' 'datasource:' '  NoCloud:' '    seedfrom: /var/lib/cloud/seed/nocloud/' 'ssh_deletekeys: false' > "$TARGET_MOUNT_POINT/etc/cloud/cloud.cfg.d/99_gomi_nocloud.cfg"; rm -f "$TARGET_MOUNT_POINT"/etc/netplan/*.yaml`,
+		`if [ -x "$TARGET_MOUNT_POINT/usr/bin/ssh-keygen" ]; then rm -f "$TARGET_MOUNT_POINT"/etc/ssh/ssh_host_*_key "$TARGET_MOUNT_POINT"/etc/ssh/ssh_host_*_key.pub; chroot "$TARGET_MOUNT_POINT" ssh-keygen -A; fi`,
 		`sed -i 's/discard,errors=remount-ro/defaults,errors=remount-ro/g' "$TARGET_MOUNT_POINT/etc/fstab" 2>/dev/null || true; sed -i -E 's/(root=[^ ]+) ro /\1 rw /g' "$TARGET_MOUNT_POINT/boot/grub/grub.cfg" 2>/dev/null || true`,
-	}
-
-	type curtinInstall struct {
-		LogFile           string   `yaml:"log_file"`
-		PostFiles         []string `yaml:"post_files,omitempty"`
-		SaveInstallConfig string   `yaml:"save_install_config"`
-		SaveInstallLog    string   `yaml:"save_install_log"`
-	}
-	type curtinAptMirrors struct {
-		UbuntuArchive  string `yaml:"ubuntu_archive,omitempty"`
-		UbuntuSecurity string `yaml:"ubuntu_security,omitempty"`
-	}
-	type curtinReportingHook struct {
-		Type     string `yaml:"type"`
-		Endpoint string `yaml:"endpoint"`
-		Level    string `yaml:"level"`
-	}
-	type curtinReporting struct {
-		Gomi curtinReportingHook `yaml:"gomi"`
-	}
-	type curtinBlockMeta struct {
-		Devices []string `yaml:"devices"`
-	}
-	type curtinSource struct {
-		Type string `yaml:"type"`
-		URI  string `yaml:"uri"`
-	}
-	type curtinConfig struct {
-		Install      curtinInstall           `yaml:"install"`
-		Reporting    curtinReporting         `yaml:"reporting"`
-		AptMirrors   *curtinAptMirrors       `yaml:"apt_mirrors,omitempty"`
-		BlockMeta    curtinBlockMeta         `yaml:"block-meta"`
-		Sources      map[string]curtinSource `yaml:"sources"`
-		Stages       []string                `yaml:"stages"`
-		LateCommands map[string][]string     `yaml:"late_commands"`
 	}
 
 	cfg := curtinConfig{
@@ -704,17 +750,24 @@ func (h *Handler) buildCurtinInstallConfig(ctx context.Context, c echo.Context, 
 		},
 		Sources: map[string]curtinSource{
 			"00-root": {
-				Type: "dd-raw",
+				Type: sourceType,
 				URI:  sourceURI,
 			},
 		},
-		Stages:       []string{"early", "partitioning", "network", "extract", "late"},
+		Stages:       stages,
 		LateCommands: make(map[string][]string, len(lateCommands)),
 	}
 	if ubuntuMirror := strings.TrimRight(strings.TrimSpace(os.Getenv("GOMI_CURTIN_UBUNTU_MIRROR")), "/"); ubuntuMirror != "" && strings.EqualFold(strings.TrimSpace(img.OSFamily), "ubuntu") {
 		cfg.AptMirrors = &curtinAptMirrors{
 			UbuntuArchive:  ubuntuMirror,
 			UbuntuSecurity: ubuntuMirror,
+		}
+	}
+	if storageConfig != nil {
+		cfg.Storage = &storageConfig.Storage
+		cfg.Grub = &storageConfig.Grub
+		cfg.PartitioningCommands = map[string][]string{
+			"builtin": {"curtin", "block-meta", "custom"},
 		}
 	}
 	for i, cmd := range lateCommands {
@@ -725,6 +778,87 @@ func (h *Handler) buildCurtinInstallConfig(ctx context.Context, c echo.Context, 
 		return "", err
 	}
 	return string(raw), nil
+}
+
+func buildRootFSStorageConfig(targetDisk string, rootSizeMB int64) *curtinStorage {
+	return &curtinStorage{
+		Storage: curtinStorageConfig{
+			Version: 1,
+			Config: []map[string]any{
+				{
+					"id":          "disk0",
+					"type":        "disk",
+					"path":        targetDisk,
+					"ptable":      "gpt",
+					"grub_device": true,
+					"wipe":        "superblock-recursive",
+				},
+				{
+					"id":     "part-bios",
+					"type":   "partition",
+					"device": "disk0",
+					"number": 1,
+					"size":   "1M",
+					"flag":   "bios_grub",
+				},
+				{
+					"id":     "part-efi",
+					"type":   "partition",
+					"device": "disk0",
+					"number": 2,
+					"size":   "512M",
+					"flag":   "boot",
+				},
+				{
+					"id":     "fmt-efi",
+					"type":   "format",
+					"volume": "part-efi",
+					"fstype": "fat32",
+					"label":  "EFI",
+				},
+				{
+					"id":     "part-root",
+					"type":   "partition",
+					"device": "disk0",
+					"number": 3,
+					"size":   fmt.Sprintf("%dM", rootSizeMB),
+				},
+				{
+					"id":     "fmt-root",
+					"type":   "format",
+					"volume": "part-root",
+					"fstype": "ext4",
+					"label":  "rootfs",
+				},
+				{
+					"id":     "mount-root",
+					"type":   "mount",
+					"device": "fmt-root",
+					"path":   "/",
+				},
+				{
+					"id":     "mount-efi",
+					"type":   "mount",
+					"device": "fmt-efi",
+					"path":   "/boot/efi",
+				},
+			},
+		},
+		Grub: curtinGrub{
+			InstallDevices: []string{targetDisk},
+		},
+	}
+}
+
+func rootFSRootPartitionSizeMB(disk hwinfo.DiskInfo) (int64, error) {
+	if disk.SizeMB <= 0 {
+		return 0, fmt.Errorf("target disk size is required for squashfs storage config")
+	}
+	rootSizeMB := disk.SizeMB - rootFSBIOSBootPartitionSizeMB - rootFSEFIPartitionSizeMB - rootFSPartitionReserveMB
+	if rootSizeMB < rootFSMinimumRootPartitionSizeMB {
+		return 0, fmt.Errorf("target disk is too small for squashfs install: size=%dMiB minimum=%dMiB", disk.SizeMB, rootFSMinimumRootPartitionSizeMB+rootFSBIOSBootPartitionSizeMB+rootFSEFIPartitionSizeMB+rootFSPartitionReserveMB)
+	}
+	return rootSizeMB, nil
 }
 
 func (h *Handler) artifactURL(base string, img osimage.OSImage, rel string) (string, error) {
@@ -779,36 +913,56 @@ func artifactBaseDir(img osimage.OSImage) (string, error) {
 }
 
 func selectTargetDisk(m *machine.Machine, info *hwinfo.HardwareInfo) (string, error) {
+	selected, err := selectTargetDiskInfo(m, info)
+	if err != nil {
+		return "", err
+	}
+	return selected.Path, nil
+}
+
+func selectTargetDiskInfo(m *machine.Machine, info *hwinfo.HardwareInfo) (selectedTargetDisk, error) {
 	if info == nil {
-		return "", fmt.Errorf("hardware inventory is required for target disk selection")
+		return selectedTargetDisk{}, fmt.Errorf("hardware inventory is required for target disk selection")
 	}
 	candidates := installableDiskCandidates(info)
 	if m != nil {
 		if disk := strings.TrimSpace(m.TargetDisk); disk != "" {
-			return selectInventoryBackedTargetDiskOverride(disk, candidates)
+			return selectInventoryBackedTargetDiskOverrideInfo(disk, candidates)
 		}
 	}
 	if len(candidates) == 0 {
-		return "", fmt.Errorf("no installable target disk found")
+		return selectedTargetDisk{}, fmt.Errorf("no installable target disk found")
 	}
 	if len(candidates) > 1 {
-		return "", fmt.Errorf("ambiguous target disk: %d installable disks found", len(candidates))
+		return selectedTargetDisk{}, fmt.Errorf("ambiguous target disk: %d installable disks found", len(candidates))
 	}
 	disk := stableDiskPath(candidates[0])
 	if !isWholeDiskPath(disk) {
-		return "", fmt.Errorf("selected target disk is not a whole disk path: %s", disk)
+		return selectedTargetDisk{}, fmt.Errorf("selected target disk is not a whole disk path: %s", disk)
 	}
-	return disk, nil
+	return selectedTargetDisk{Path: disk, Info: candidates[0]}, nil
 }
 
 func selectInventoryBackedTargetDiskOverride(disk string, candidates []hwinfo.DiskInfo) (string, error) {
+	selected, err := selectInventoryBackedTargetDiskOverrideInfo(disk, candidates)
+	if err != nil {
+		return "", err
+	}
+	return selected.Path, nil
+}
+
+func selectInventoryBackedTargetDiskOverrideInfo(disk string, candidates []hwinfo.DiskInfo) (selectedTargetDisk, error) {
 	if !isWholeDiskPath(disk) {
-		return "", fmt.Errorf("targetDisk must be a whole disk path: %s", disk)
+		return selectedTargetDisk{}, fmt.Errorf("targetDisk must be a whole disk path: %s", disk)
 	}
-	if !diskPathInInventory(disk, candidates) {
-		return "", fmt.Errorf("targetDisk is not present in current hardware inventory: %s", disk)
+	for _, candidate := range candidates {
+		for _, path := range diskInventoryPaths(candidate) {
+			if path == disk {
+				return selectedTargetDisk{Path: disk, Info: candidate}, nil
+			}
+		}
 	}
-	return disk, nil
+	return selectedTargetDisk{}, fmt.Errorf("targetDisk is not present in current hardware inventory: %s", disk)
 }
 
 func installableDiskCandidates(info *hwinfo.HardwareInfo) []hwinfo.DiskInfo {
