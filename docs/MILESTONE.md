@@ -84,8 +84,9 @@ Move Hypervisor setup-and-register shell script out of Go raw strings and serve
 it with go:embed. Keep libvirt TCP auth setup in that script, avoid complex
 escaped regex in Go code, and add script-focused tests such as response content
 checks and bash syntax validation. For the current lab/dev TCP flow, configure
-libvirt with auth_tcp = "none"; revisit SSH/TLS/SASL support before production
-use.
+libvirt with auth_tcp = "none" only when explicitly opted in with
+`GOMI_ALLOW_INSECURE_LIBVIRT_TCP=1`; revisit SSH/TLS/SASL support before
+production use.
 
 ## 20. Redesign API following Google AIP guidelines
 
@@ -146,7 +147,8 @@ server to the hypervisor. The lab-only `auth_tcp = "none"` setup must not be the
 production default. Define and implement a production-safe connection/auth model,
 such as SSH transport, TLS client certificates, SASL, or a `gomi-hypervisor`
 agent API, and update the setup/register flow so unauthenticated libvirt TCP is
-clearly limited to local lab/dev testing.
+clearly limited to local lab/dev testing. The setup script currently refuses to
+enable this mode unless `GOMI_ALLOW_INSECURE_LIBVIRT_TCP=1` is provided.
 
 ## 24. Multi-OS curtin and artifact deploy design
 
