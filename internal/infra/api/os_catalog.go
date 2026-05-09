@@ -201,42 +201,36 @@ func (s *Server) downloadCatalogRawArtifact(ctx context.Context, entry oscatalog
 	}
 
 	tmpPath := localPath + ".download"
+	defer os.Remove(tmpPath)
 	if strings.TrimSpace(entry.SourceCompression) == "zstd" {
 		compressedPath := tmpPath + ".zst"
+		defer os.Remove(compressedPath)
 		if err := writeImageFileWithChecksum(compressedPath, resp.Body, img.Checksum); err != nil {
-			_ = os.Remove(compressedPath)
 			return "", "", err
 		}
-		defer os.Remove(compressedPath)
 
 		compressedFile, err := os.Open(compressedPath)
 		if err != nil {
-			_ = os.Remove(tmpPath)
 			return "", "", fmt.Errorf("open downloaded zstd image: %w", err)
 		}
 		defer compressedFile.Close()
 		zstdReader, err := zstd.NewReader(compressedFile)
 		if err != nil {
-			_ = os.Remove(tmpPath)
 			return "", "", fmt.Errorf("open zstd image stream: %w", err)
 		}
 		defer zstdReader.Close()
 
 		if err := writeImageFileWithChecksum(tmpPath, zstdReader, ""); err != nil {
-			_ = os.Remove(tmpPath)
 			return "", "", err
 		}
 	} else if err := writeImageFileWithChecksum(tmpPath, resp.Body, img.Checksum); err != nil {
-		_ = os.Remove(tmpPath)
 		return "", "", err
 	}
 	localChecksum, err := fileSHA256(tmpPath)
 	if err != nil {
-		_ = os.Remove(tmpPath)
 		return "", "", err
 	}
 	if err := os.Rename(tmpPath, localPath); err != nil {
-		_ = os.Remove(tmpPath)
 		return "", "", fmt.Errorf("publish image file: %w", err)
 	}
 	if err := s.publishOSImageFile(localPath); err != nil {
@@ -280,17 +274,15 @@ func (s *Server) downloadCatalogSquashFSArtifact(ctx context.Context, entry osca
 	}
 
 	tmpPath := localPath + ".download"
+	defer os.Remove(tmpPath)
 	if err := writeImageFileWithChecksum(tmpPath, resp.Body, img.Checksum); err != nil {
-		_ = os.Remove(tmpPath)
 		return "", "", err
 	}
 	localChecksum, err := fileSHA256(tmpPath)
 	if err != nil {
-		_ = os.Remove(tmpPath)
 		return "", "", err
 	}
 	if err := os.Rename(tmpPath, localPath); err != nil {
-		_ = os.Remove(tmpPath)
 		return "", "", fmt.Errorf("publish image file: %w", err)
 	}
 	return localDir, localChecksum, nil

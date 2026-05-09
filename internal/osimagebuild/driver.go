@@ -167,6 +167,7 @@ func downloadSource(ctx context.Context, source Source, cacheDir string) (string
 	}
 	dst := filepath.Join(cacheDir, name)
 	tmp := dst + ".download"
+	defer os.Remove(tmp)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, sourceURL, nil)
 	if err != nil {
 		return "", err
@@ -186,19 +187,15 @@ func downloadSource(ctx context.Context, source Source, cacheDir string) (string
 	}
 	if _, err := io.Copy(out, resp.Body); err != nil {
 		_ = out.Close()
-		_ = os.Remove(tmp)
 		return "", err
 	}
 	if err := out.Close(); err != nil {
-		_ = os.Remove(tmp)
 		return "", err
 	}
 	if err := verifyChecksum(ctx, tmp, sourceURL, source.Checksum); err != nil {
-		_ = os.Remove(tmp)
 		return "", err
 	}
 	if err := os.Rename(tmp, dst); err != nil {
-		_ = os.Remove(tmp)
 		return "", err
 	}
 	return dst, nil

@@ -307,6 +307,7 @@ func decompressZstd(ctx context.Context, compressedPath, destPath string) error 
 	if err != nil {
 		return err
 	}
+	defer os.Remove(tmpPath)
 	cmd := exec.CommandContext(ctx, "zstd", "-dc", compressedPath)
 	cmd.Stdout = out
 	var stderr bytes.Buffer
@@ -314,11 +315,9 @@ func decompressZstd(ctx context.Context, compressedPath, destPath string) error 
 	runErr := cmd.Run()
 	closeErr := out.Close()
 	if runErr != nil {
-		os.Remove(tmpPath)
 		return fmt.Errorf("zstd decompress %s: %w: %s", compressedPath, runErr, strings.TrimSpace(stderr.String()))
 	}
 	if closeErr != nil {
-		os.Remove(tmpPath)
 		return closeErr
 	}
 	return os.Rename(tmpPath, destPath)
@@ -330,13 +329,12 @@ func atomicWriteFromReader(destPath string, r io.Reader) error {
 	if err != nil {
 		return err
 	}
+	defer os.Remove(tmpPath)
 	if _, err := io.Copy(f, r); err != nil {
 		f.Close()
-		os.Remove(tmpPath)
 		return err
 	}
 	if err := f.Close(); err != nil {
-		os.Remove(tmpPath)
 		return err
 	}
 	return os.Rename(tmpPath, destPath)

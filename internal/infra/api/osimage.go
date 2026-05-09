@@ -181,12 +181,11 @@ func (s *Server) downloadURLImageFile(ctx context.Context, img osimage.OSImage) 
 	}
 
 	tmpPath := payloadPath + ".download"
+	defer os.Remove(tmpPath)
 	if err := writeImageFileWithChecksum(tmpPath, resp.Body, img.Checksum); err != nil {
-		_ = os.Remove(tmpPath)
 		return "", err
 	}
 	if err := os.Rename(tmpPath, payloadPath); err != nil {
-		_ = os.Remove(tmpPath)
 		return "", fmt.Errorf("publish image file: %w", err)
 	}
 	if err := s.publishOSImageFile(localPath); err != nil {
@@ -257,8 +256,8 @@ func (s *Server) publishOSImageFile(localPath string) error {
 	if err := os.Symlink(src, tmp); err != nil {
 		return fmt.Errorf("publish image symlink: %w", err)
 	}
+	defer os.Remove(tmp)
 	if err := os.Rename(tmp, dst); err != nil {
-		_ = os.Remove(tmp)
 		return fmt.Errorf("publish image symlink: %w", err)
 	}
 	return nil
