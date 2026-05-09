@@ -167,10 +167,13 @@ tasks:
     generates:
       - packages/debian/build/gomi-osimage
       - packages/debian/build/builds.yaml
+      - packages/debian/build/definitions
     cmds:
       - mkdir -p packages/debian/build
       - CGO_ENABLED=0 GOOS=linux GOARCH="{{.ARCH}}" go build -trimpath -ldflags "-s -w" -o packages/debian/build/gomi-osimage ./cmd/gomi-osimage
       - cp internal/osimagebuild/default-builds.yaml packages/debian/build/builds.yaml
+      - rm -rf packages/debian/build/definitions
+      - cp -R internal/osimagebuild/definitions packages/debian/build/definitions
 
   build:deb-hypervisor-agent:
     desc: Build hypervisor agent binaries for the Debian package
@@ -227,6 +230,7 @@ tasks:
       - packages/debian/build/gomi
       - packages/debian/build/gomi-osimage
       - packages/debian/build/builds.yaml
+      - packages/debian/build/definitions
       - packages/debian/build/gomi-hypervisor-linux-amd64
       - packages/debian/build/gomi-hypervisor-linux-arm64
       - packages/debian/build/gomi-wol-daemon-linux-amd64
@@ -666,7 +670,7 @@ tasks:
       - go run ./cmd/gomi-osimage catalog matrix
 
   os-image:build:
-    desc: Build one target OS rootfs SquashFS image from catalog
+    desc: Build one target OS rootfs SquashFS image from catalog (requires distrobuilder and squashfs-tools on Linux)
     vars:
       NAME: '{{.NAME | default .IMAGE_NAME}}'
     cmds:
@@ -676,7 +680,7 @@ tasks:
       - sudo -E /tmp/gomi-osimage build --name "{{.NAME}}"
 
   os-image:build-all:
-    desc: Build every rootfs SquashFS build config entry
+    desc: Build every rootfs SquashFS build config entry (requires distrobuilder and squashfs-tools on Linux)
     cmds:
       - |
         set -euo pipefail

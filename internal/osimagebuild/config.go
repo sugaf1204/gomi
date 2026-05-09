@@ -2,10 +2,11 @@ package osimagebuild
 
 import (
 	"context"
+	"embed"
 	_ "embed"
 	"fmt"
-	"net/url"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 
@@ -19,28 +20,23 @@ const SystemBuildConfigPath = "/usr/share/gomi/osimage/builds.yaml"
 //go:embed default-builds.yaml
 var defaultBuildConfigYAML []byte
 
+//go:embed definitions/*.yaml
+var embeddedDefinitions embed.FS
+
 type LoadOptions = oscatalog.LoadOptions
 
 type Config struct {
 	Entries []BuildEntry `yaml:"entries" json:"entries"`
+
+	baseDir                string
+	useEmbeddedDefinitions bool
 }
 
 type BuildEntry struct {
-	Name           string   `yaml:"name" json:"name"`
-	Source         Source   `yaml:"source" json:"source"`
-	PackageManager string   `yaml:"packageManager" json:"packageManager"`
-	Packages       []string `yaml:"packages" json:"packages"`
-	VerifyModules  []string `yaml:"verifyModules,omitempty" json:"verifyModules,omitempty"`
-	CleanupPaths   []string `yaml:"cleanupPaths,omitempty" json:"cleanupPaths,omitempty"`
-	CleanupGlobs   []string `yaml:"cleanupGlobs,omitempty" json:"cleanupGlobs,omitempty"`
-	SquashFS       SquashFS `yaml:"squashfs,omitempty" json:"squashfs,omitempty"`
-}
-
-type Source struct {
-	URL         string `yaml:"url" json:"url"`
-	Checksum    string `yaml:"checksum" json:"checksum"`
-	Format      string `yaml:"format" json:"format"`
-	Compression string `yaml:"compression,omitempty" json:"compression,omitempty"`
+	Name       string   `yaml:"name" json:"name"`
+	Backend    string   `yaml:"backend,omitempty" json:"backend,omitempty"`
+	Definition string   `yaml:"definition" json:"definition"`
+	SquashFS   SquashFS `yaml:"squashfs,omitempty" json:"squashfs,omitempty"`
 }
 
 type SquashFS struct {
@@ -61,7 +57,7 @@ func LoadCatalog(ctx context.Context, opts LoadOptions) ([]oscatalog.Entry, erro
 }
 
 func LoadConfig(path string) (Config, error) {
-	raw, err := loadConfigBytes(path)
+	raw, baseDir, useEmbeddedDefinitions, err := loadConfigBytes(path)
 	if err != nil {
 		return Config{}, err
 	}
@@ -72,24 +68,32 @@ func LoadConfig(path string) (Config, error) {
 	if err := validateConfig(cfg); err != nil {
 		return Config{}, err
 	}
+	cfg.baseDir = baseDir
+	cfg.useEmbeddedDefinitions = useEmbeddedDefinitions
 	return cfg, nil
 }
 
-func loadConfigBytes(path string) ([]byte, error) {
+func loadConfigBytes(path string) ([]byte, string, bool, error) {
 	path = strings.TrimSpace(path)
 	if path != "" {
 		raw, err := os.ReadFile(path)
 		if err != nil {
-			return nil, fmt.Errorf("read OS image build config: %w", err)
+			return nil, "", false, fmt.Errorf("read OS image build config: %w", err)
 		}
-		return raw, nil
+		return raw, filepath.Dir(path), false, nil
 	}
 	if raw, err := os.ReadFile(SystemBuildConfigPath); err == nil {
-		return raw, nil
+		return raw, filepath.Dir(SystemBuildConfigPath), false, nil
 	} else if !os.IsNotExist(err) {
-		return nil, fmt.Errorf("read system OS image build config: %w", err)
+		return nil, "", false, fmt.Errorf("read system OS image build config: %w", err)
 	}
-	return defaultBuildConfigYAML, nil
+	if root, err := findRepoRoot(); err == nil {
+		repoPath := filepath.Join(root, "internal", "osimagebuild", "default-builds.yaml")
+		if raw, err := os.ReadFile(repoPath); err == nil {
+			return raw, filepath.Dir(repoPath), false, nil
+		}
+	}
+	return defaultBuildConfigYAML, "", true, nil
 }
 
 func validateConfig(cfg Config) error {
@@ -114,42 +118,15 @@ func validateConfig(cfg Config) error {
 }
 
 func validateBuildEntry(name string, entry BuildEntry) error {
-	if strings.TrimSpace(entry.Source.URL) == "" {
-		return fmt.Errorf("%s: source.url is required", name)
+	if strings.TrimSpace(entry.Definition) == "" {
+		return fmt.Errorf("%s: definition is required", name)
 	}
-	if strings.TrimSpace(entry.Source.Checksum) == "" {
-		return fmt.Errorf("%s: source.checksum is required", name)
-	}
-	if err := validateChecksumReference(entry.Source.Checksum); err != nil {
-		return fmt.Errorf("%s: source.checksum: %w", name, err)
-	}
-	if strings.TrimSpace(entry.Source.Format) == "" {
-		return fmt.Errorf("%s: source.format is required", name)
+	switch normalizeBackend(entry.Backend) {
+	case "distrobuilder":
+	default:
+		return fmt.Errorf("%s: unsupported backend: %s", name, entry.Backend)
 	}
 	return nil
-}
-
-func validateChecksumReference(checksum string) error {
-	checksum = strings.TrimSpace(checksum)
-	if strings.HasPrefix(checksum, "file:") {
-		checksumURL := strings.TrimSpace(strings.TrimPrefix(checksum, "file:"))
-		if checksumURL == "" {
-			return fmt.Errorf("checksum file URL is required")
-		}
-		parsed, err := url.Parse(checksumURL)
-		if err != nil {
-			return fmt.Errorf("parse checksum file URL: %w", err)
-		}
-		if parsed.Scheme != "http" && parsed.Scheme != "https" {
-			return fmt.Errorf("checksum file URL must use http or https")
-		}
-		if parsed.Host == "" {
-			return fmt.Errorf("checksum file URL host is required")
-		}
-		return nil
-	}
-	_, err := parseInlineChecksum(checksum)
-	return err
 }
 
 func BuildMatrix(entries []oscatalog.Entry, cfg Config) (Matrix, error) {
@@ -187,4 +164,12 @@ func findBuildEntry(entries []BuildEntry, name string) (BuildEntry, error) {
 		}
 	}
 	return BuildEntry{}, fmt.Errorf("build config entry not found: %s", name)
+}
+
+func normalizeBackend(value string) string {
+	value = strings.ToLower(strings.TrimSpace(value))
+	if value == "" {
+		return "distrobuilder"
+	}
+	return value
 }

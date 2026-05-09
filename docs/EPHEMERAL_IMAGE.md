@@ -21,17 +21,20 @@ replace the built-in catalog with `GOMI_OS_CATALOG_FILE`,
 Image build inputs are separate from the runtime OS catalog. The runtime
 catalog intentionally has no build recipe fields; it only describes deployable
 artifacts. `gomi-osimage` reads `/usr/share/gomi/osimage/builds.yaml` when
-installed from the Debian package, or its embedded default build config during
+installed from the Debian package, or the repo default build config during
 development, then joins build entries to the runtime catalog by entry name.
+Each build entry points at a `distrobuilder` definition file under
+`/usr/share/gomi/osimage/definitions/` in packaged installs or
+`internal/osimagebuild/definitions/` in the repo.
 
-The default build backend creates a rootfs work directory from a catalog source,
-installs the packages declared by build config inside a prepared chroot,
-cleans machine-specific state, verifies requested kernel modules, and publishes
-a `rootfs.squashfs` artifact plus metadata/checksums. GOMI does not run image
-customization from the API process. OS-specific source URLs, packages, cleanup
-rules, and verification belong in the build config, not in server catalog YAML
-or Go switch statements. The build command expects root privileges plus
-`tar`, `mount`, `chroot`, and `mksquashfs` on the build host.
+The default build backend is `distrobuilder build-dir`. `gomi-osimage` creates
+a work directory, asks `distrobuilder` to populate the rootfs from the selected
+definition, then publishes a `rootfs.squashfs` artifact plus metadata and
+checksums. GOMI does not run image customization from the API process.
+OS-specific package sets, cleanup rules, generated files, and custom actions
+belong in the distrobuilder definition, not in server catalog YAML or Go
+switch statements. The build command expects root privileges plus
+`distrobuilder` and `mksquashfs` on the build host.
 
 On a GOMI server installed from the Debian package:
 
