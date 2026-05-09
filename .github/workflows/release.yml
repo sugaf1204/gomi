@@ -1,7 +1,7 @@
 name: Release
 
 on:
-  pull_request:
+  pull_request_target:
     types:
       - opened
       - reopened
@@ -9,13 +9,13 @@ on:
       - labeled
   push:
     branches:
-      - "**"
+      - main
     tags:
       - "v*"
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: deb-release-${{ github.ref }}
@@ -24,13 +24,15 @@ concurrency:
 jobs:
   deb:
     name: Build Debian package
-    if: github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ci:approved')
+    if: github.event_name != 'pull_request_target' || contains(github.event.pull_request.labels.*.name, 'ci:approved')
     runs-on: ubuntu-latest
     env:
       ARCH: amd64
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event_name == 'pull_request_target' && github.event.pull_request.head.sha || github.sha }}
 
       - name: Set up Go
         uses: actions/setup-go@v6
@@ -72,19 +74,49 @@ jobs:
           printf 'deb=%s\n' "${debs[0]}" >> "$GITHUB_OUTPUT"
           printf 'sha256=%s.sha256\n' "${debs[0]}" >> "$GITHUB_OUTPUT"
 
+      - name: Upload package artifact
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: actions/upload-artifact@v4
+        with:
+          name: deb-package
+          path: |
+            ${{ steps.package.outputs.deb }}
+            ${{ steps.package.outputs.sha256 }}
+          if-no-files-found: error
+          retention-days: 1
+
+  publish:
+    name: Publish release assets
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: deb
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download package artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: deb-package
+          path: packages/deb
+
       - name: Publish release assets
-        if: startsWith(github.ref, 'refs/tags/') && env.ACT_SKIP_PUBLISH != 'true'
+        if: env.ACT_SKIP_PUBLISH != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.ref_name }}
-          DEB: ${{ steps.package.outputs.deb }}
-          SHA256: ${{ steps.package.outputs.sha256 }}
         run: |
           set -euo pipefail
+          shopt -s nullglob
+          debs=(packages/deb/*.deb)
+          sums=(packages/deb/*.deb.sha256)
+          if [ "${#debs[@]}" -ne 1 ] || [ "${#sums[@]}" -ne 1 ]; then
+            printf 'Expected one .deb and one checksum, found %s debs and %s checksums\n' "${#debs[@]}" "${#sums[@]}" >&2
+            exit 1
+          fi
           if ! gh release view "$TAG" >/dev/null 2>&1; then
             gh release create "$TAG" --verify-tag --generate-notes || {
               status=$?
               gh release view "$TAG" >/dev/null 2>&1 || exit "$status"
             }
           fi
-          gh release upload "$TAG" "$DEB" "$SHA256" --clobber
+          gh release upload "$TAG" "${debs[0]}" "${sums[0]}" --clobber

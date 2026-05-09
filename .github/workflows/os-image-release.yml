@@ -2,7 +2,7 @@ name: Release OS Images
 
 on:
   workflow_dispatch:
-  pull_request:
+  pull_request_target:
     types:
       - opened
       - reopened
@@ -18,7 +18,7 @@ on:
       - "go.sum"
   push:
     branches:
-      - "**"
+      - main
     paths:
       - ".github/workflows/os-image-release.yml"
       - "cmd/gomi-osimage/**"
@@ -31,7 +31,7 @@ on:
       - "v*"
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: os-image-release-${{ github.ref }}
@@ -40,12 +40,14 @@ concurrency:
 jobs:
   matrix:
     name: Build matrix
-    if: github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ci:approved')
+    if: github.event_name != 'pull_request_target' || contains(github.event.pull_request.labels.*.name, 'ci:approved')
     runs-on: ubuntu-latest
     outputs:
       matrix: ${{ steps.matrix.outputs.matrix }}
     steps:
       - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event_name == 'pull_request_target' && github.event.pull_request.head.sha || github.sha }}
       - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
@@ -60,7 +62,7 @@ jobs:
 
   build:
     name: Build ${{ matrix.name }}
-    if: github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ci:approved')
+    if: github.event_name != 'pull_request_target' || contains(github.event.pull_request.labels.*.name, 'ci:approved')
     needs: matrix
     runs-on: ubuntu-latest
     strategy:
@@ -68,6 +70,8 @@ jobs:
       matrix: ${{ fromJSON(needs.matrix.outputs.matrix) }}
     steps:
       - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event_name == 'pull_request_target' && github.event.pull_request.head.sha || github.sha }}
       - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
@@ -103,9 +107,11 @@ jobs:
 
   publish:
     name: Publish release assets
-    if: (github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ci:approved'))
+    if: github.event_name != 'pull_request_target'
     needs: build
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-go@v6
