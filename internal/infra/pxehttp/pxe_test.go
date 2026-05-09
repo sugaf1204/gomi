@@ -2853,6 +2853,7 @@ func TestPXENocloudUserData_DHCPMachineInjectsWakeOnLANNetplan(t *testing.T) {
 		MAC:      "84:47:09:1f:1c:d6",
 		Arch:     "amd64",
 		Firmware: machine.FirmwareUEFI,
+		IP:       "192.168.2.101",
 		Power: power.PowerConfig{
 			Type: power.PowerTypeWoL,
 			WoL:  &power.WoLConfig{WakeMAC: "84:47:09:1f:1c:d6"},
@@ -2891,6 +2892,9 @@ func TestPXENocloudUserData_DHCPMachineInjectsWakeOnLANNetplan(t *testing.T) {
 	}
 	if !strings.Contains(body, "dhcp4: true") {
 		t.Fatalf("expected dhcp4 enabled in netplan config, got:\n%s", body)
+	}
+	if strings.Contains(body, "addresses:") || strings.Contains(body, "dhcp4: false") {
+		t.Fatalf("DHCP machine must not inject stale Machine.IP as static netplan config, got:\n%s", body)
 	}
 	if !strings.Contains(body, "wakeonlan: true") {
 		t.Fatalf("expected wakeonlan enabled in netplan config, got:\n%s", body)

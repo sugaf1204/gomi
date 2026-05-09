@@ -1,3 +1,9 @@
+gomi (0.0.10) unstable; urgency=medium
+
+  * Keep DHCP bare-metal netplan DHCP even when a prior reported IP exists.
+
+ -- sugaf1204 <sugaf1204@example.invalid>  Sun, 10 May 2026 00:35:00 +0900
+
 gomi (0.0.9) unstable; urgency=medium
 
   * Inject Wake-on-LAN netplan settings for DHCP bare-metal installs.

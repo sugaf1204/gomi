@@ -1721,7 +1721,10 @@ func injectNetplanConfigFromParams(cloudConfig string, params netplanParams, spe
 // injectBridgedNetplanConfig injects a bridged netplan config into cloud-config
 // write_files so that the hypervisor machine gets a bridge with a static IP.
 func injectBridgedNetplanConfig(cloudConfig string, m *machine.Machine, spec *subnet.SubnetSpec) string {
-	ip := m.StaticIP()
+	ip := ""
+	if m.GetIPAssignment() == resource.IPAssignmentStatic {
+		ip = m.StaticIP()
+	}
 	if ip == "" && strings.TrimSpace(m.PrimaryMAC()) == "" {
 		return cloudConfig
 	}
@@ -1781,7 +1784,10 @@ func injectBridgedNetplanConfig(cloudConfig string, m *machine.Machine, spec *su
 }
 
 func injectNetplanConfigForHost(cloudConfig string, h node.Node, spec *subnet.SubnetSpec) string {
-	ip := h.StaticIP()
+	ip := ""
+	if h.GetIPAssignment() == resource.IPAssignmentStatic {
+		ip = h.StaticIP()
+	}
 	if ip == "" && strings.TrimSpace(h.PrimaryMAC()) == "" {
 		return cloudConfig
 	}
