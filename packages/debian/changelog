@@ -1,3 +1,9 @@
+gomi (0.0.6) unstable; urgency=medium
+
+  * Add cloud-init and SSH runtime packages to bare-metal rootfs images.
+
+ -- sugaf1204 <sugaf1204@example.invalid>  Sat, 09 May 2026 20:25:00 +0900
+
 gomi (0.0.5) unstable; urgency=medium
 
   * Fix release asset publishing from artifact-only jobs.

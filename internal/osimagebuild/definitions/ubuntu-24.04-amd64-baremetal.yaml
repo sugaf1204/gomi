@@ -20,6 +20,11 @@ packages:
         - linux-image-generic
         - grub-pc
         - grub-efi-amd64-bin
+        - ca-certificates
+        - cloud-init
+        - curl
+        - openssh-server
+        - sudo
 
 files:
   - generator: remove
