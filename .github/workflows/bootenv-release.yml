@@ -10,7 +10,7 @@ on:
       - labeled
   push:
     branches:
-      - main
+      - "**"
     tags:
       - "v*"
 

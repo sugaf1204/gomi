@@ -9,7 +9,7 @@ on:
       - labeled
   push:
     branches:
-      - main
+      - "**"
     tags:
       - "v*"
   workflow_dispatch:

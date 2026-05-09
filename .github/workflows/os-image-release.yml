@@ -18,7 +18,7 @@ on:
       - "go.sum"
   push:
     branches:
-      - main
+      - "**"
     paths:
       - ".github/workflows/os-image-release.yml"
       - "cmd/gomi-osimage/**"
