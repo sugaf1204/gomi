@@ -76,6 +76,7 @@ jobs:
           path: bootenv/dist/ubuntu-minimal-cloud-amd64
 
       - name: Publish release assets
+        if: env.ACT_SKIP_PUBLISH != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}

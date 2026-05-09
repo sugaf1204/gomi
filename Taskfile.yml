@@ -536,6 +536,8 @@ tasks:
         ssh_cmd="${ACT_SSH_CMD:-ssh}"
         rsync_ssh="${ACT_RSYNC_SSH:-ssh}"
         extra="${ACT_EXTRA_ARGS:---bind --container-options=--privileged}"
+        artifact_path="${ACT_ARTIFACT_PATH:-$remote_root/artifacts}"
+        case "$artifact_path" in *"'"*) echo "ERROR: ACT_ARTIFACT_PATH must not contain single quotes" >&2; exit 1 ;; esac
 
         version="$(sed -n '1s/^gomi (\([^)]*\)).*/\1/p' packages/debian/changelog)"
         test -n "$version" || { echo "ERROR: unable to read package version from packages/debian/changelog" >&2; exit 1; }
@@ -544,7 +546,7 @@ tasks:
         tag="${ACT_TAG:-v$upstream}"
         case "$tag" in *"'"*) echo "ERROR: ACT_TAG must not contain single quotes" >&2; exit 1 ;; esac
 
-        $ssh_cmd "$remote" "cd '$remote_root/src' && act workflow_dispatch -W .github/workflows/release.yml -j deb --env GITHUB_REF_TYPE=tag --env GITHUB_REF_NAME='$tag' -P ubuntu-latest='$runner_image' $extra"
+        $ssh_cmd "$remote" "mkdir -p '$artifact_path' && cd '$remote_root/src' && act workflow_dispatch -W .github/workflows/release.yml -j deb --env GITHUB_REF_TYPE=tag --env GITHUB_REF_NAME='$tag' --env ACT_SKIP_PUBLISH=true -P ubuntu-latest='$runner_image' --artifact-server-path '$artifact_path' $extra"
 
   act:release:bootenv:
     desc: Run the boot environment release workflow with act on the remote Linux host
@@ -560,8 +562,10 @@ tasks:
         case "$runner_image" in *"'"*) echo "ERROR: ACT_RUNNER_IMAGE must not contain single quotes" >&2; exit 1 ;; esac
         ssh_cmd="${ACT_SSH_CMD:-ssh}"
         extra="${ACT_EXTRA_ARGS:---bind --container-options=--privileged}"
+        artifact_path="${ACT_ARTIFACT_PATH:-$remote_root/artifacts}"
+        case "$artifact_path" in *"'"*) echo "ERROR: ACT_ARTIFACT_PATH must not contain single quotes" >&2; exit 1 ;; esac
 
-        $ssh_cmd "$remote" "cd '$remote_root/src' && act workflow_dispatch -W .github/workflows/bootenv-release.yml -j build -P ubuntu-latest='$runner_image' $extra"
+        $ssh_cmd "$remote" "mkdir -p '$artifact_path' && cd '$remote_root/src' && act workflow_dispatch -W .github/workflows/bootenv-release.yml -j build --env ACT_SKIP_PUBLISH=true -P ubuntu-latest='$runner_image' --artifact-server-path '$artifact_path' $extra"
 
   act:release:os-images:
     desc: Run the OS image release workflow with act on the remote Linux host
@@ -580,7 +584,7 @@ tasks:
         artifact_path="${ACT_ARTIFACT_PATH:-$remote_root/artifacts}"
         case "$artifact_path" in *"'"*) echo "ERROR: ACT_ARTIFACT_PATH must not contain single quotes" >&2; exit 1 ;; esac
 
-        $ssh_cmd "$remote" "mkdir -p '$artifact_path' && cd '$remote_root/src' && act workflow_dispatch -W .github/workflows/os-image-release.yml -P ubuntu-latest='$runner_image' --artifact-server-path '$artifact_path' $extra"
+        $ssh_cmd "$remote" "mkdir -p '$artifact_path' && cd '$remote_root/src' && act workflow_dispatch -W .github/workflows/os-image-release.yml --env ACT_SKIP_PUBLISH=true -P ubuntu-latest='$runner_image' --artifact-server-path '$artifact_path' $extra"
 
   act:release:all:
     desc: Run all release workflows with act on the remote Linux host

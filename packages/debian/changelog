@@ -1,3 +1,9 @@
+gomi (0.0.8) unstable; urgency=medium
+
+  * Use Debian kernel package selection for curtin rootfs deploys.
+
+ -- sugaf1204 <sugaf1204@example.invalid>  Sat, 09 May 2026 22:10:00 +0900
+
 gomi (0.0.7) unstable; urgency=medium
 
   * Ensure curtin target rootfs has /dev/null before SSH host key generation.

@@ -75,6 +75,11 @@ type curtinGrub struct {
 	InstallDevices []string `yaml:"install_devices"`
 }
 
+type curtinKernel struct {
+	Package         string `yaml:"package"`
+	FallbackPackage string `yaml:"fallback-package,omitempty"`
+}
+
 type curtinStorage struct {
 	Storage curtinStorageConfig `yaml:"storage"`
 	Grub    curtinGrub          `yaml:"grub"`
@@ -88,6 +93,7 @@ type curtinConfig struct {
 	Sources              map[string]curtinSource `yaml:"sources"`
 	Storage              *curtinStorageConfig    `yaml:"storage,omitempty"`
 	Grub                 *curtinGrub             `yaml:"grub,omitempty"`
+	Kernel               *curtinKernel           `yaml:"kernel,omitempty"`
 	Stages               []string                `yaml:"stages"`
 	PartitioningCommands map[string][]string     `yaml:"partitioning_commands,omitempty"`
 	LateCommands         map[string][]string     `yaml:"late_commands"`
@@ -767,6 +773,7 @@ func (h *Handler) buildCurtinInstallConfig(ctx context.Context, c echo.Context, 
 	if storageConfig != nil {
 		cfg.Storage = &storageConfig.Storage
 		cfg.Grub = &storageConfig.Grub
+		cfg.Kernel = curtinKernelForOSFamily(img.OSFamily)
 		cfg.PartitioningCommands = map[string][]string{
 			"builtin": {"curtin", "block-meta", "custom"},
 		}
@@ -779,6 +786,18 @@ func (h *Handler) buildCurtinInstallConfig(ctx context.Context, c echo.Context, 
 		return "", err
 	}
 	return string(raw), nil
+}
+
+func curtinKernelForOSFamily(osFamily string) *curtinKernel {
+	switch strings.ToLower(strings.TrimSpace(osFamily)) {
+	case "debian":
+		return &curtinKernel{
+			Package:         "linux-image-amd64",
+			FallbackPackage: "linux-image-amd64",
+		}
+	default:
+		return nil
+	}
 }
 
 func buildRootFSStorageConfig(targetDisk string, rootSizeMB int64) *curtinStorage {

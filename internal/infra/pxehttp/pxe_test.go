@@ -1645,8 +1645,105 @@ func TestPXECurtinConfig_SquashFSImageUsesFSImageAndStorageConfig(t *testing.T) 
 			t.Fatalf("expected curtin squashfs config to contain %q, got:\n%s", want, body)
 		}
 	}
+	if strings.Contains(body, "package: linux-image-amd64") {
+		t.Fatalf("ubuntu squashfs config should keep curtin default kernel selection, got:\n%s", body)
+	}
 	if strings.Contains(body, "size: -1") {
 		t.Fatalf("expected concrete root partition size, got:\n%s", body)
+	}
+}
+
+func TestPXECurtinConfig_DebianSquashFSUsesDebianKernelPackage(t *testing.T) {
+	backend := memory.New()
+	machineSvc := machine.NewService(backend.Machines())
+	hwInfoSvc := hwinfo.NewService(backend.HWInfo())
+	osImageSvc := osimage.NewService(backend.OSImages())
+	now := time.Now().UTC()
+
+	img := osimage.OSImage{
+		Name:      "debian-13-amd64-baremetal",
+		OSFamily:  "debian",
+		OSVersion: "13",
+		Arch:      "amd64",
+		Format:    osimage.FormatSquashFS,
+		Source:    osimage.SourceURL,
+		Ready:     true,
+		LocalPath: "/var/lib/gomi/data/images/debian-13-amd64-baremetal",
+		Manifest: &osimage.Manifest{
+			Root: osimage.RootArtifact{
+				Format: osimage.FormatSquashFS,
+				Path:   "rootfs.squashfs",
+			},
+		},
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	if err := backend.OSImages().Upsert(context.Background(), img); err != nil {
+		t.Fatalf("upsert os image: %v", err)
+	}
+	target := machine.Machine{
+		Name:     "bm-debian-squashfs-plan",
+		Hostname: "bm-debian-squashfs-plan",
+		MAC:      "52:54:00:aa:bb:14",
+		Arch:     "amd64",
+		Firmware: machine.FirmwareUEFI,
+		OSPreset: machine.OSPreset{
+			Family:   machine.OSTypeDebian,
+			Version:  "13",
+			ImageRef: "debian-13-amd64-baremetal",
+		},
+		Phase: machine.PhaseProvisioning,
+		Provision: &machine.ProvisionProgress{
+			Active:          true,
+			AttemptID:       "attempt-debian-squashfs-plan",
+			CompletionToken: "token-debian-squashfs-plan",
+		},
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	if err := backend.Machines().Upsert(context.Background(), target); err != nil {
+		t.Fatalf("upsert machine: %v", err)
+	}
+	if _, err := hwInfoSvc.Upsert(context.Background(), hwinfo.HardwareInfo{
+		Name:        "bm-debian-squashfs-plan-hwinfo",
+		MachineName: "bm-debian-squashfs-plan",
+		AttemptID:   "attempt-debian-squashfs-plan",
+		Disks: []hwinfo.DiskInfo{
+			{
+				Name:   "nvme0n1",
+				Path:   "/dev/nvme0n1",
+				Type:   "disk",
+				SizeMB: 65536,
+			},
+		},
+	}); err != nil {
+		t.Fatalf("upsert hwinfo: %v", err)
+	}
+
+	e := echo.New()
+	req := httptest.NewRequest(http.MethodGet, "/pxe/curtin-config?token=token-debian-squashfs-plan&attempt_id=attempt-debian-squashfs-plan", nil)
+	req.Host = "192.168.2.254:8080"
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+
+	h := &Handler{machines: machineSvc, hwinfo: hwInfoSvc, osimages: osImageSvc}
+	if err := h.PXECurtinConfig(c); err != nil {
+		t.Fatalf("PXECurtinConfig: %v", err)
+	}
+	if rec.Code != http.StatusOK {
+		t.Fatalf("unexpected status: %d body=%s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	for _, want := range []string{
+		"type: fsimage",
+		"- curthooks",
+		"kernel:",
+		"package: linux-image-amd64",
+		"fallback-package: linux-image-amd64",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("expected debian squashfs curtin config to contain %q, got:\n%s", want, body)
+		}
 	}
 }
 
