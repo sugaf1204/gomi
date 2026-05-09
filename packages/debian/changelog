@@ -1,3 +1,9 @@
+gomi (0.0.9) unstable; urgency=medium
+
+  * Inject Wake-on-LAN netplan settings for DHCP bare-metal installs.
+
+ -- sugaf1204 <sugaf1204@example.invalid>  Sat, 09 May 2026 23:05:00 +0900
+
 gomi (0.0.8) unstable; urgency=medium
 
   * Use Debian kernel package selection for curtin rootfs deploys.
