@@ -40,7 +40,7 @@ concurrency:
 jobs:
   matrix:
     name: Build matrix
-    if: github.event_name != 'pull_request_target' || contains(github.event.pull_request.labels.*.name, 'ci:approved')
+    if: github.event_name != 'pull_request_target' || github.event.pull_request.author_association == 'OWNER' || github.event.pull_request.author_association == 'MEMBER' || github.event.pull_request.author_association == 'COLLABORATOR' || contains(github.event.pull_request.labels.*.name, 'ci:approved')
     runs-on: ubuntu-latest
     outputs:
       matrix: ${{ steps.matrix.outputs.matrix }}
@@ -62,7 +62,7 @@ jobs:
 
   build:
     name: Build ${{ matrix.name }}
-    if: github.event_name != 'pull_request_target' || contains(github.event.pull_request.labels.*.name, 'ci:approved')
+    if: github.event_name != 'pull_request_target' || github.event.pull_request.author_association == 'OWNER' || github.event.pull_request.author_association == 'MEMBER' || github.event.pull_request.author_association == 'COLLABORATOR' || contains(github.event.pull_request.labels.*.name, 'ci:approved')
     needs: matrix
     runs-on: ubuntu-latest
     strategy:
