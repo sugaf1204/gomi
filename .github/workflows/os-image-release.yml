@@ -8,9 +8,25 @@ on:
       - reopened
       - synchronize
       - labeled
+    paths:
+      - ".github/workflows/os-image-release.yml"
+      - "cmd/gomi-osimage/**"
+      - "internal/osimage/**"
+      - "internal/osimagebuild/**"
+      - "internal/oscatalog/**"
+      - "go.mod"
+      - "go.sum"
   push:
     branches:
       - "**"
+    paths:
+      - ".github/workflows/os-image-release.yml"
+      - "cmd/gomi-osimage/**"
+      - "internal/osimage/**"
+      - "internal/osimagebuild/**"
+      - "internal/oscatalog/**"
+      - "go.mod"
+      - "go.sum"
     tags:
       - "v*"
 
