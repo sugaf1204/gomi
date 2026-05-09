@@ -2,6 +2,11 @@ name: Release
 
 on:
   pull_request:
+    types:
+      - opened
+      - reopened
+      - synchronize
+      - labeled
   push:
     branches:
       - "**"
@@ -19,6 +24,7 @@ concurrency:
 jobs:
   deb:
     name: Build Debian package
+    if: github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ci:approved')
     runs-on: ubuntu-latest
     env:
       ARCH: amd64

@@ -3,6 +3,11 @@ name: Release OS Images
 on:
   workflow_dispatch:
   pull_request:
+    types:
+      - opened
+      - reopened
+      - synchronize
+      - labeled
   push:
     branches:
       - "**"
@@ -19,6 +24,7 @@ concurrency:
 jobs:
   matrix:
     name: Build matrix
+    if: github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ci:approved')
     runs-on: ubuntu-latest
     outputs:
       matrix: ${{ steps.matrix.outputs.matrix }}
@@ -38,6 +44,7 @@ jobs:
 
   build:
     name: Build ${{ matrix.name }}
+    if: github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ci:approved')
     needs: matrix
     runs-on: ubuntu-latest
     strategy:
@@ -50,7 +57,7 @@ jobs:
           go-version-file: go.mod
           cache-dependency-path: go.sum
 
-      - name: Install image build tools
+      - name: Install distrobuilder image build tools
         run: |
           if [ -f /etc/apt/apt-mirrors.txt ]; then
             printf 'https://archive.ubuntu.com/ubuntu\n' | sudo tee /etc/apt/apt-mirrors.txt >/dev/null
@@ -58,9 +65,10 @@ jobs:
           sudo find /etc/apt -type f \( -name '*.list' -o -name '*.sources' \) -print0 \
             | sudo xargs -0 sed -i 's|http://azure.archive.ubuntu.com/ubuntu|https://archive.ubuntu.com/ubuntu|g'
           sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update
-          sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y squashfs-tools xz-utils
+          sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y debootstrap gpg rsync squashfs-tools
+          sudo snap install distrobuilder --classic
 
-      - name: Build rootfs SquashFS OS image artifact
+      - name: Build rootfs SquashFS OS image artifact with distrobuilder
         run: |
           set -euo pipefail
           rm -rf dist/os-images
@@ -79,6 +87,7 @@ jobs:
 
   publish:
     name: Publish release assets
+    if: (github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ci:approved'))
     needs: build
     runs-on: ubuntu-latest
     steps:
