@@ -1,7 +1,19 @@
 entries:
+  - name: debian-13-amd64-baremetal
+    backend: distrobuilder
+    definition: definitions/debian-13-amd64-baremetal.yaml
+    squashfs:
+      compression: xz
+      blockSize: 1M
   - name: ubuntu-22.04-amd64-baremetal
     backend: distrobuilder
     definition: definitions/ubuntu-22.04-amd64-baremetal.yaml
+    squashfs:
+      compression: xz
+      blockSize: 1M
+  - name: ubuntu-24.04-amd64-baremetal
+    backend: distrobuilder
+    definition: definitions/ubuntu-24.04-amd64-baremetal.yaml
     squashfs:
       compression: xz
       blockSize: 1M

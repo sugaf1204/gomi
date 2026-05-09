@@ -21,7 +21,7 @@ func TestListUsesPrebuiltArtifacts(t *testing.T) {
 	for _, entry := range entries {
 		seen[entry.Name] = struct{}{}
 		switch entry.Name {
-		case "ubuntu-22.04-amd64-baremetal":
+		case "debian-13-amd64-baremetal", "ubuntu-22.04-amd64-baremetal", "ubuntu-24.04-amd64-baremetal":
 			if !strings.HasPrefix(entry.URL, "https://images.example.test/gomi/") {
 				t.Fatalf("%s URL = %q, want configured source base", entry.Name, entry.URL)
 			}
