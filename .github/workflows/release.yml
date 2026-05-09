@@ -104,6 +104,7 @@ jobs:
         if: env.ACT_SKIP_PUBLISH != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
           TAG: ${{ github.ref_name }}
         run: |
           set -euo pipefail
