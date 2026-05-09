@@ -1166,8 +1166,14 @@ func TestSetupAndRegisterScriptPublic(t *testing.T) {
 	if !strings.Contains(body, `HOSTNAME="${GOMI_HOSTNAME:-$(hostname -f)}"`) {
 		t.Fatalf("expected setup script to support GOMI_HOSTNAME override, got:\n%s", body)
 	}
+	if !strings.Contains(body, "GOMI_ALLOW_INSECURE_LIBVIRT_TCP") {
+		t.Fatalf("expected setup script to require explicit insecure TCP opt-in, got:\n%s", body)
+	}
+	if !strings.Contains(body, `Re-run with GOMI_ALLOW_INSECURE_LIBVIRT_TCP=1`) {
+		t.Fatalf("expected setup script to explain insecure TCP opt-in, got:\n%s", body)
+	}
 	if !strings.Contains(body, `auth_tcp = "none"`) {
-		t.Fatalf("expected setup script to disable libvirt TCP auth for lab hypervisors, got:\n%s", body)
+		t.Fatalf("expected setup script to keep lab-only libvirt TCP configuration behind opt-in, got:\n%s", body)
 	}
 	if !strings.Contains(body, `/files/gomi-hypervisor.service`) {
 		t.Fatalf("expected setup script to install packaged hypervisor unit file, got:\n%s", body)
