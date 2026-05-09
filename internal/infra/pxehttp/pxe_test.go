@@ -1428,6 +1428,8 @@ func TestPXECurtinConfig_UsesInventoryAndRawArtifact(t *testing.T) {
 		"late_commands:",
 		"var/lib/cloud/seed/nocloud",
 		"ssh_deletekeys: false",
+		"dev/null",
+		"mknod -m 666",
 		"ssh-keygen -A",
 	} {
 		if !strings.Contains(body, want) {
@@ -1524,6 +1526,8 @@ func TestPXECurtinConfig_DirectCloudImage(t *testing.T) {
 		"late_commands:",
 		"var/lib/cloud/seed/nocloud",
 		"ssh_deletekeys: false",
+		"dev/null",
+		"mknod -m 666",
 		"ssh-keygen -A",
 	} {
 		if !strings.Contains(body, want) {
@@ -1633,6 +1637,8 @@ func TestPXECurtinConfig_SquashFSImageUsesFSImageAndStorageConfig(t *testing.T) 
 		"- block-meta",
 		"- custom",
 		"ssh_deletekeys: false",
+		"dev/null",
+		"mknod -m 666",
 		"ssh-keygen -A",
 	} {
 		if !strings.Contains(body, want) {
