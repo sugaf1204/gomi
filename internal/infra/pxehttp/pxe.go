@@ -896,7 +896,7 @@ func (h *Handler) resolvePXEBaseURL(c echo.Context) string {
 	}
 	hostStr := strings.TrimSpace(c.Request().Host)
 	if hostStr == "" {
-		hostStr = "127.0.0.1:8080"
+		hostStr = "127.0.0.1:5392"
 	}
 	return "http://" + hostStr + "/pxe"
 }

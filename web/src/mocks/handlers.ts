@@ -1,7 +1,7 @@
 import { http, HttpResponse } from 'msw'
 import { auditEvents, machines, subnets } from './fixtures'
 
-const API_BASE = 'http://localhost:8080/api/v1'
+const API_BASE = 'http://localhost:5392/api/v1'
 
 export const handlers = [
   http.post(`${API_BASE}/auth/login`, () => {

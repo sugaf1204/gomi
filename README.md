@@ -37,11 +37,11 @@ sudo gomi setup admin \
 rm -f /tmp/gomi-admin-password
 ```
 
-Open the web console at `http://<host>:8080/` and sign in.
+Open the web console at `http://<host>:5392/` and sign in.
 
 ### First-time checklist
 
-1. Confirm `http://<host>:8080/healthz` responds.
+1. Confirm `http://<host>:5392/healthz` responds.
 2. Create the first admin user (above).
 3. Sign in and create additional users with appropriate roles.
 4. Configure network and provisioning resources.
@@ -55,7 +55,7 @@ Open the web console at `http://<host>:8080/` and sign in.
 
 | Endpoint | URL |
 |---|---|
-| Web console | `http://<host>:8080/` |
+| Web console | `http://<host>:5392/` |
 | API base | `/api/v1` |
 | Health check | `/healthz` |
 | OpenAPI spec | [`openapi/openapi.yaml`](openapi/openapi.yaml) |
@@ -105,7 +105,7 @@ Configuration is loaded from three sources in order (later sources override earl
 
 | Key | Default |
 |---|---|
-| Listen address | `0.0.0.0:8080` |
+| Listen address | `0.0.0.0:5392` |
 | Data directory | `/var/lib/gomi/data` |
 | Database | SQLite at `/var/lib/gomi/data/gomi.db` |
 | DHCP mode | `full` |
@@ -166,7 +166,7 @@ task run
 task operator
 ```
 
-The server starts on `http://127.0.0.1:8080` unless overridden via `--listen` or `GOMI_LISTEN_ADDR`.
+The server starts on `http://127.0.0.1:5392` unless overridden via `--listen` or `GOMI_LISTEN_ADDR`.
 
 ### Frontend development
 

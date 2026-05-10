@@ -238,7 +238,7 @@ func resolvePXEBaseURLFromListen(listenAddr string, detect primaryIPDetector) (s
 		return "", err
 	}
 	if port == "" {
-		port = "8080"
+		port = "5392"
 	}
 	if host == "" || isUnspecifiedHost(host) {
 		primaryIP, err := detect()
@@ -267,7 +267,7 @@ func detectPrimaryIP() (string, error) {
 func splitListenAddr(addr string) (string, string, error) {
 	trimmed := strings.TrimSpace(addr)
 	if trimmed == "" {
-		return "", "8080", nil
+		return "", "5392", nil
 	}
 	if strings.HasPrefix(trimmed, ":") {
 		return "", strings.TrimPrefix(trimmed, ":"), nil
@@ -279,7 +279,7 @@ func splitListenAddr(addr string) (string, string, error) {
 	if strings.Contains(trimmed, ":") {
 		return "", "", fmt.Errorf("invalid listen_addr %q: %w", listenAddrForError(trimmed), err)
 	}
-	return strings.Trim(trimmed, "[]"), "8080", nil
+	return strings.Trim(trimmed, "[]"), "5392", nil
 }
 
 func isUnspecifiedHost(host string) bool {

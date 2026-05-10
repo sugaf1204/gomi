@@ -40,12 +40,12 @@ tasks:
   run:
     desc: Run GOMI locally with background sync
     cmds:
-      - go run ./cmd/gomi --listen=:8080 --background-sync-enabled=true
+      - go run ./cmd/gomi --listen=:5392 --background-sync-enabled=true
 
   operator:
     desc: Run GOMI locally without background sync
     cmds:
-      - go run ./cmd/gomi --listen=:8080
+      - go run ./cmd/gomi --listen=:5392
 
   web:install:
     desc: Install web dependencies
@@ -622,10 +622,10 @@ tasks:
       - task: env:check
       - |
         HOST_IP="${HOST#*@}"
-        echo "==> Health check http://${HOST_IP}:8080/healthz"
+        echo "==> Health check http://${HOST_IP}:5392/healthz"
         for i in $(seq 1 15); do
-          if curl -sf "http://${HOST_IP}:8080/healthz" >/dev/null 2>&1; then
-            curl -sf "http://${HOST_IP}:8080/healthz" | python3 -m json.tool 2>/dev/null || true
+          if curl -sf "http://${HOST_IP}:5392/healthz" >/dev/null 2>&1; then
+            curl -sf "http://${HOST_IP}:5392/healthz" | python3 -m json.tool 2>/dev/null || true
             version="$(sed -n '1s/^gomi (\([^)]*\)).*/\1/p' packages/debian/changelog)"
             echo "==> Deploy complete. version=$version host=$HOST"
             exit 0

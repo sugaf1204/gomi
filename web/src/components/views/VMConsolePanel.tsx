@@ -29,7 +29,7 @@ export function VMConsolePanel({ vm, onClose }: Props) {
     setStatus('connecting')
     setErrorMsg('')
 
-    const apiBase = import.meta.env.VITE_API_BASE ?? 'http://localhost:8080/api/v1'
+    const apiBase = import.meta.env.VITE_API_BASE ?? 'http://localhost:5392/api/v1'
     const wsBase = apiBase.replace(/^http/, 'ws')
     const name = vm.name
     const wsUrl = `${wsBase}/virtual-machines/${encodeURIComponent(name)}/vnc`

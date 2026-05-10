@@ -942,7 +942,7 @@ func listenPort(addr string) string {
 			return port
 		}
 	}
-	return "8080"
+	return "5392"
 }
 
 func (r *Runtime) SetFrontendFS(fsys fs.FS) {

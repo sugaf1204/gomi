@@ -38,7 +38,7 @@ type Config struct {
 	DHCPIface             string // network interface for DHCP; empty = auto-detect
 	TFTPAddr              string // TFTP listen address (default :69)
 	TFTPRoot              string // TFTP root directory
-	PXEHTTPBaseURL        string // PXE HTTP base URL (e.g. http://192.168.1.10:8080/pxe)
+	PXEHTTPBaseURL        string // PXE HTTP base URL (e.g. http://192.168.1.10:5392/pxe)
 	PXEBootFileBIOS       string // BIOS PXE first-stage bootfile
 	PXEBootFileUEFI       string // UEFI PXE first-stage bootfile
 	BootenvSourceURL      string // Release-style boot environment manifest URL or local artifact directory
@@ -139,7 +139,7 @@ func Defaults() Config {
 	return Config{
 		DBDriver:              "sqlite",
 		DBDsn:                 "",
-		ListenAddr:            "0.0.0.0:8080",
+		ListenAddr:            "0.0.0.0:5392",
 		DataDir:               dataDir,
 		SessionTTL:            12 * time.Hour,
 		BackgroundSyncEnabled: true,

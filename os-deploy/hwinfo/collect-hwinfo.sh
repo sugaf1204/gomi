@@ -1,7 +1,7 @@
 #!/bin/bash
 # collect-hwinfo.sh — Collect hardware information and POST to GOMI API.
 # Usage: collect-hwinfo.sh <gomi-api-base> <machine-name> [namespace]
-# Example: collect-hwinfo.sh http://10.0.0.1:8080/api/v1 node-01 default
+# Example: collect-hwinfo.sh http://10.0.0.1:5392/api/v1 node-01 default
 #
 # Runs on PXE-booted environment or as a provisioning late-command.
 

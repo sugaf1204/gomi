@@ -28,7 +28,7 @@ export function ConsoleTab({ machine }: Props) {
     setStatus('connecting')
     setErrorMsg('')
 
-    const apiBase = import.meta.env.VITE_API_BASE ?? 'http://localhost:8080/api/v1'
+    const apiBase = import.meta.env.VITE_API_BASE ?? 'http://localhost:5392/api/v1'
     const wsBase = apiBase.replace(/^http/, 'ws')
     const name = machine.name
     const wsUrl = `${wsBase}/machines/${encodeURIComponent(name)}/vnc`

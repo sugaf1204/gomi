@@ -6,7 +6,7 @@
 # files directly. Catalog entries come from the running GOMI server.
 set -euo pipefail
 
-GOMI_URL="${1:-${GOMI_URL:-http://localhost:8080}}"
+GOMI_URL="${1:-${GOMI_URL:-http://localhost:5392}}"
 shift || true
 
 if [[ -z "${GOMI_TOKEN:-}" ]]; then
