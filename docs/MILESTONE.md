@@ -168,3 +168,10 @@ typed OS family branches.
   correct behavior or fail early with an explicit unsupported-family error.
 - Add tests that cover at least one non-Ubuntu path, or the explicit
   unsupported-family error, whenever OS deploy behavior changes.
+
+## 25. Future macOS host support
+
+Keep the architecture open so the GOMI server itself can run on macOS in the
+future, not only on Linux. This goal is limited to server runtime support; OS
+image build and other Linux-specific artifact build workflows do not need to
+run on macOS.
