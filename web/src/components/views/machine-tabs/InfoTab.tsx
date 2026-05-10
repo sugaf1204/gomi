@@ -9,6 +9,7 @@ export function InfoTab({ machine }: Props) {
   const timings = machine.provision?.timings ?? []
   const visibleTimings = timings.slice(-24).reverse()
   const summary = buildTimingSummary(machine, timings)
+  const timeline = buildDeployTimeline(machine, timings)
 
   return (
     <div className="pt-[0.65rem] grid gap-[1rem]">
@@ -56,6 +57,44 @@ export function InfoTab({ machine }: Props) {
         </div>
         {visibleTimings.length > 0 ? (
           <div className="grid gap-[0.75rem]">
+            <div className="border border-line bg-panel-2 px-[0.72rem] py-[0.7rem]">
+              <div className="flex items-start justify-between gap-[0.8rem] mb-[0.72rem] max-sm:grid">
+                <div>
+                  <p className="m-0 text-[0.72rem] uppercase text-ink-soft">Current stage</p>
+                  <p className="m-0 mt-[0.16rem] text-[1rem] font-medium">{timeline.currentStage?.label ?? 'Waiting for timing'}</p>
+                </div>
+                <div className="text-right max-sm:text-left">
+                  <p className="m-0 text-[0.72rem] uppercase text-ink-soft">Latest event</p>
+                  <p className="m-0 mt-[0.16rem] text-[0.84rem] leading-[1.35] text-ink-soft break-anywhere">
+                    {timeline.latestEvent ? `${timeline.latestEvent.name} (${formatTimingTime(timeline.latestEvent)})` : '-'}
+                  </p>
+                </div>
+              </div>
+              <ol className="m-0 p-0 list-none grid grid-cols-[repeat(6,minmax(128px,1fr))] gap-0 overflow-x-auto">
+                {timeline.stages.map((stage, index) => (
+                  <li key={stage.id} className="relative min-w-[128px] pr-[0.5rem]">
+                    {index < timeline.stages.length - 1 && (
+                      <span
+                        className={`absolute left-[1.75rem] right-[-0.25rem] top-[0.72rem] h-[2px] ${stage.connectorComplete ? 'bg-brand' : 'bg-line-strong'}`}
+                        aria-hidden="true"
+                      />
+                    )}
+                    <div className="relative z-[1] grid grid-cols-[1.45rem_minmax(0,1fr)] gap-[0.42rem] items-start">
+                      <span className={stageMarkerClass(stage.status)} aria-hidden="true">
+                        {stage.status === 'failed' ? '!' : stage.status === 'done' ? 'OK' : stage.status === 'current' ? '>' : ''}
+                      </span>
+                      <div className="min-w-0">
+                        <p className={stageLabelClass(stage.status)}>{stage.label}</p>
+                        <p className="m-0 mt-[0.1rem] text-[0.72rem] text-ink-soft leading-[1.3] min-h-[1.85rem]">
+                          {stage.event ? stage.event.name : stage.status === 'current' ? 'in progress' : 'not reached'}
+                        </p>
+                        <p className="m-0 mt-[0.2rem] text-[0.78rem] tabular-nums text-ink-soft">{stage.event ? formatDuration(stage.event) : '-'}</p>
+                      </div>
+                    </div>
+                  </li>
+                ))}
+              </ol>
+            </div>
             <div className="grid grid-cols-[repeat(auto-fit,minmax(150px,1fr))] gap-[0.55rem]">
               {summary.map((item) => (
                 <div key={item.label} className="border border-line bg-surface-muted px-[0.65rem] py-[0.55rem]">
@@ -101,6 +140,93 @@ export function InfoTab({ machine }: Props) {
   )
 }
 
+type DeployStageID = 'boot' | 'network' | 'inventory' | 'artifacts' | 'install' | 'finalize'
+type DeployStageStatus = 'pending' | 'current' | 'done' | 'failed'
+
+type DeployStage = {
+  id: DeployStageID
+  label: string
+  match: (event: ProvisionTiming) => boolean
+}
+
+type DeployTimelineStage = DeployStage & {
+  event?: ProvisionTiming
+  status: DeployStageStatus
+  connectorComplete: boolean
+}
+
+const deployStages: DeployStage[] = [
+  {
+    id: 'boot',
+    label: 'Boot',
+    match: (event) => event.source === 'initramfs' || event.name.startsWith('initramfs.'),
+  },
+  {
+    id: 'network',
+    label: 'Network',
+    match: (event) => ['runner.select_interface', 'runner.link_up', 'runner.dhcp'].includes(event.name),
+  },
+  {
+    id: 'inventory',
+    label: 'Inventory',
+    match: (event) => event.name.startsWith('runner.inventory') || event.name.startsWith('server.inventory.'),
+  },
+  {
+    id: 'artifacts',
+    label: 'Artifacts',
+    match: (event) => event.name === 'runner.fetch_curtin_config' || event.name.includes('file_transfer') || event.name.includes('artifact_transfer'),
+  },
+  {
+    id: 'install',
+    label: 'Install',
+    match: (event) => event.name === 'runner.curtin_install' || event.name === 'cmd-install' || event.name.startsWith('cmd-install/'),
+  },
+  {
+    id: 'finalize',
+    label: 'Finalize',
+    match: (event) => ['runner.sync', 'runner.reboot'].includes(event.name),
+  },
+]
+
+function buildDeployTimeline(machine: Machine, timings: ProvisionTiming[]) {
+  const stages: DeployTimelineStage[] = deployStages.map((stage) => ({ ...stage, event: latestMatchingTiming(timings, stage.match), status: 'pending', connectorComplete: false }))
+  const latestEvent = latestTimelineEvent(timings)
+  const failedIndex = stages.findIndex((stage) => stage.event && isFailure(stage.event))
+  const latestIndex = latestEvent ? stages.findIndex((stage) => stage.match(latestEvent)) : -1
+  const completed = isProvisionComplete(machine)
+  const failed = failedIndex >= 0 || isProvisionFailed(machine)
+  let currentIndex = -1
+
+  if (failedIndex >= 0) {
+    currentIndex = failedIndex
+  } else if (failed && latestIndex >= 0) {
+    currentIndex = latestIndex
+  } else if (!completed && latestIndex >= 0) {
+    currentIndex = Math.min(latestIndex + 1, stages.length - 1)
+  } else if (!completed && timings.length === 0 && isProvisionActive(machine)) {
+    currentIndex = 0
+  }
+
+  stages.forEach((stage, index) => {
+    if (failed && index === currentIndex) {
+      stage.status = 'failed'
+    } else if (completed || (currentIndex >= 0 && index < currentIndex) || (currentIndex < 0 && stage.event)) {
+      stage.status = stage.event && isFailure(stage.event) ? 'failed' : 'done'
+    } else if (index === currentIndex) {
+      stage.status = 'current'
+    } else {
+      stage.status = 'pending'
+    }
+    stage.connectorComplete = stage.status === 'done' && stages[index + 1]?.status !== 'pending'
+  })
+
+  return {
+    stages,
+    latestEvent,
+    currentStage: stages.find((stage) => stage.status === 'current' || stage.status === 'failed') ?? [...stages].reverse().find((stage) => stage.status === 'done'),
+  }
+}
+
 function buildTimingSummary(machine: Machine, timings: ProvisionTiming[]) {
   const slowest = [...timings]
     .filter((event) => typeof event.durationMs === 'number' && event.durationMs > 0)
@@ -130,6 +256,37 @@ function latestTiming(timings: ProvisionTiming[], name: string) {
   return undefined
 }
 
+function latestMatchingTiming(timings: ProvisionTiming[], match: (event: ProvisionTiming) => boolean) {
+  for (let index = timings.length - 1; index >= 0; index -= 1) {
+    if (match(timings[index])) return timings[index]
+  }
+  return undefined
+}
+
+function latestTimelineEvent(timings: ProvisionTiming[]) {
+  for (let index = timings.length - 1; index >= 0; index -= 1) {
+    const event = timings[index]
+    if (deployStages.some((stage) => stage.match(event))) return event
+  }
+  return timings[timings.length - 1]
+}
+
+function isFailure(event: ProvisionTiming) {
+  return event.result?.toLowerCase() === 'failure' || event.result?.toLowerCase() === 'failed' || event.eventType?.toLowerCase() === 'failure'
+}
+
+function isProvisionActive(machine: Machine) {
+  return machine.phase.toLowerCase() === 'provisioning' || Boolean(machine.provision?.startedAt && !machine.provision.completedAt && !machine.provision.finishedAt)
+}
+
+function isProvisionComplete(machine: Machine) {
+  return Boolean(machine.provision?.completedAt || machine.provision?.finishedAt) && !isProvisionFailed(machine)
+}
+
+function isProvisionFailed(machine: Machine) {
+  return machine.phase.toLowerCase() === 'error' || Boolean(machine.lastError)
+}
+
 function durationBetween(start?: string, end?: string) {
   if (!start || !end) return undefined
   const startMs = Date.parse(start)
@@ -156,4 +313,25 @@ function formatMillis(ms: number) {
 
 function formatTimingTime(event: ProvisionTiming) {
   return formatDate(event.finishedAt ?? event.timestamp ?? event.startedAt)
+}
+
+function stageMarkerClass(status: DeployStageStatus) {
+  const base = 'inline-grid h-[1.45rem] w-[1.45rem] place-items-center border text-[0.82rem] font-medium leading-none'
+  switch (status) {
+    case 'done':
+      return `${base} border-brand bg-brand text-white`
+    case 'current':
+      return `${base} border-brand bg-panel text-brand`
+    case 'failed':
+      return `${base} border-error bg-error text-white`
+    default:
+      return `${base} border-line-strong bg-panel text-ink-soft`
+  }
+}
+
+function stageLabelClass(status: DeployStageStatus) {
+  const base = 'm-0 text-[0.84rem] font-medium'
+  if (status === 'current') return `${base} text-brand-strong`
+  if (status === 'failed') return `${base} text-error`
+  return `${base} text-ink`
 }

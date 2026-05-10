@@ -47,7 +47,19 @@ export const machines: Machine[] = [
     ipAssignment: 'static',
     subnetRef: 'default',
     phase: 'Provisioning',
-    provision: { message: 'Downloading image...', startedAt: '2025-12-10T10:00:00Z', trigger: 'manual', requestedBy: 'admin' },
+    provision: {
+      message: 'Downloading image...',
+      startedAt: '2025-12-10T10:00:00Z',
+      trigger: 'manual',
+      requestedBy: 'admin',
+      timings: [
+        { source: 'initramfs', name: 'initramfs.init_top', eventType: 'marker', message: 'initramfs init-top reached', monotonicSeconds: 4.28 },
+        { source: 'runner', name: 'runner.dhcp', eventType: 'timing', message: 'waiting for DHCP lease', result: 'success', startedAt: '2025-12-10T10:00:08Z', finishedAt: '2025-12-10T10:00:11Z', durationMs: 3000 },
+        { source: 'runner', name: 'runner.inventory', eventType: 'timing', message: 'posting hardware inventory', result: 'success', startedAt: '2025-12-10T10:00:12Z', finishedAt: '2025-12-10T10:00:14Z', durationMs: 2100 },
+        { source: 'server', name: 'server.inventory.store', eventType: 'timing', message: 'store hardware inventory', result: 'success', startedAt: '2025-12-10T10:00:14Z', finishedAt: '2025-12-10T10:00:15Z', durationMs: 620 },
+        { source: 'server', name: 'server.artifact_transfer', eventType: 'timing', message: 'serve OS artifact rootfs.squashfs', result: 'success', startedAt: '2025-12-10T10:00:16Z', finishedAt: '2025-12-10T10:01:02Z', durationMs: 46000 }
+      ]
+    },
     updatedAt: '2025-12-10T10:01:00Z'
   },
   {

@@ -1,3 +1,9 @@
+gomi (0.0.12) unstable; urgency=medium
+
+  * Add deploy timing timeline to the machine info view.
+
+ -- sugaf1204 <sugaf1204@example.invalid>  Sun, 10 May 2026 21:25:18 +0900
+
 gomi (0.0.11) unstable; urgency=medium
 
   * Use current NoCloud datasource line config and keep libvirt TCP setup
