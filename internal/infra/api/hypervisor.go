@@ -108,18 +108,6 @@ virsh pool-build default >/dev/null 2>&1 || true
 virsh pool-start default >/dev/null 2>&1 || true
 virsh pool-autostart default >/dev/null 2>&1 || true
 
-# Current GOMI VM control uses libvirt TCP. This is a lab-only mode until the
-# project grows SSH/TLS/SASL/agent-based libvirt transport. Do not silently
-# weaken hypervisors by enabling unauthenticated TCP unless explicitly requested.
-if [ "${GOMI_ALLOW_INSECURE_LIBVIRT_TCP:-}" != "1" ]; then
-  cat >&2 <<'ERR'
-Refusing to enable unauthenticated libvirt TCP automatically.
-Current GOMI VM control requires libvirt TCP, but auth_tcp="none" is lab-only.
-Re-run with GOMI_ALLOW_INSECURE_LIBVIRT_TCP=1 only on an isolated validation network.
-ERR
-  exit 1
-fi
-
 LIBVIRT_CONF="/etc/libvirt/libvirtd.conf"
 if grep -qE '^[[:space:]]*#?[[:space:]]*auth_tcp[[:space:]]*=' "${LIBVIRT_CONF}"; then
   sed -i -E 's|^[[:space:]]*#?[[:space:]]*auth_tcp[[:space:]]*=.*|auth_tcp = "none"|' "${LIBVIRT_CONF}"

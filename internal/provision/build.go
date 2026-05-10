@@ -133,9 +133,9 @@ func buildLinuxCloudInit(m machine.Machine, sshKeys []sshkey.SSHKey) string {
 func buildPXEEntry(m machine.Machine, artifacts map[string]string) string {
 	label := m.Name
 	if m.Firmware == machine.FirmwareUEFI {
-		return fmt.Sprintf("set default=install\nmenuentry 'Install %s' {\n  linux %s initrd=boot-initrd ip=dhcp overlayroot=tmpfs:recurse=0 rw root=squash:%s ds=nocloud-net;s=%s\n  initrd %s\n}\n", label, artifacts["kernel"], artifacts["rootfs"], artifacts["configURL"], artifacts["initrd"])
+		return fmt.Sprintf("set default=install\nmenuentry 'Install %s' {\n  linux %s initrd=boot-initrd ip=dhcp overlayroot=tmpfs:recurse=0 rw root=squash:%s ds=nocloud;s=%s\n  initrd %s\n}\n", label, artifacts["kernel"], artifacts["rootfs"], artifacts["configURL"], artifacts["initrd"])
 	}
-	return fmt.Sprintf("DEFAULT install\nLABEL install\n  KERNEL %s\n  INITRD %s\n  APPEND initrd=boot-initrd ip=dhcp overlayroot=tmpfs:recurse=0 rw root=squash:%s ds=nocloud-net;s=%s\n", artifacts["kernel"], artifacts["initrd"], artifacts["rootfs"], artifacts["configURL"])
+	return fmt.Sprintf("DEFAULT install\nLABEL install\n  KERNEL %s\n  INITRD %s\n  APPEND initrd=boot-initrd ip=dhcp overlayroot=tmpfs:recurse=0 rw root=squash:%s ds=nocloud;s=%s\n", artifacts["kernel"], artifacts["initrd"], artifacts["rootfs"], artifacts["configURL"])
 }
 
 func buildCoreDHCPSnippet(m machine.Machine, tftpServer string) string {

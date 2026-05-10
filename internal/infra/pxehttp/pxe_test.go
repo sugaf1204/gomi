@@ -359,7 +359,7 @@ func TestPXEBootScript_CurtinForUbuntuVMUsesLocalBootScript(t *testing.T) {
 
 func TestRenderPXENoCloudLineConfig_Curtin(t *testing.T) {
 	got := RenderNoCloudLineConfig("http://192.168.2.254:8080/pxe", vm.InstallConfigCurtin, "52:54:00:44:55:66")
-	want := "ds=nocloud-net;s=http://192.168.2.254:8080/pxe/nocloud/525400445566/"
+	want := "ds=nocloud;s=http://192.168.2.254:8080/pxe/nocloud/525400445566/"
 	if got != want {
 		t.Fatalf("unexpected line config: got=%q want=%q", got, want)
 	}

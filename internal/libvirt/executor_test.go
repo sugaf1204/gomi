@@ -604,7 +604,7 @@ func TestGenerateDomainXML_WithSMBIOSSerial(t *testing.T) {
 		MemoryMB:     2048,
 		DiskPath:     "/images/test.qcow2",
 		DiskFormat:   "qcow2",
-		SMBIOSSerial: "ds=nocloud-net;s=http://192.168.2.254:8080/pxe/nocloud/525400000001/",
+		SMBIOSSerial: "ds=nocloud;s=http://192.168.2.254:8080/pxe/nocloud/525400000001/",
 	}
 
 	xmlStr, err := GenerateDomainXML(cfg)
@@ -615,7 +615,7 @@ func TestGenerateDomainXML_WithSMBIOSSerial(t *testing.T) {
 	expectedFragments := []string{
 		`<smbios mode="sysinfo"></smbios>`,
 		`<sysinfo type="smbios">`,
-		`<entry name="serial">ds=nocloud-net;s=http://192.168.2.254:8080/pxe/nocloud/525400000001/</entry>`,
+		`<entry name="serial">ds=nocloud;s=http://192.168.2.254:8080/pxe/nocloud/525400000001/</entry>`,
 	}
 	for _, frag := range expectedFragments {
 		if !strings.Contains(xmlStr, frag) {

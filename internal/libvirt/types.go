@@ -13,7 +13,7 @@ type DomainConfig struct {
 	Networks     []NetworkConfig
 	CloudInit    string         // path to cloud-init ISO on the hypervisor (optional)
 	BootDev      string         // "hd" (default) or "network" (PXE)
-	SMBIOSSerial string         // optional NoCloud line config (e.g. ds=nocloud-net;s=http://...)
+	SMBIOSSerial string         // optional NoCloud line config (e.g. ds=nocloud;s=http://...)
 	CPUPinning   map[int]string // vCPU→pCPU mapping (e.g. 0:"0", 1:"2")
 	CPUMode      string         // libvirt CPU mode: host-passthrough, host-model, maximum
 	IOThreads    int            // number of IO threads

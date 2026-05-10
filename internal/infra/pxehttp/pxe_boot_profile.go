@@ -81,7 +81,7 @@ func (ubuntuCurtinPXEBootProfile) NoCloudLineConfig(ctx pxeBootScriptContext) st
 	if token == "" {
 		return ""
 	}
-	return fmt.Sprintf("ds=nocloud-net;s=%s/nocloud/%s/", ctx.baseURL, token)
+	return fmt.Sprintf("ds=nocloud;s=%s/nocloud/%s/", ctx.baseURL, token)
 }
 
 type debianPreseedPXEBootProfile struct{}
@@ -137,7 +137,7 @@ func (ubuntuDesktopCurtinPXEBootProfile) NoCloudLineConfig(ctx pxeBootScriptCont
 	if token == "" {
 		return ""
 	}
-	return fmt.Sprintf("ds=nocloud-net;s=%s/nocloud/%s/", ctx.baseURL, token)
+	return fmt.Sprintf("ds=nocloud;s=%s/nocloud/%s/", ctx.baseURL, token)
 }
 
 type linuxMachineCurtinPXEBootProfile struct{}
@@ -181,7 +181,7 @@ func (ubuntuDesktopAutoinstallPXEBootProfile) Script(ctx pxeBootScriptContext) s
 	return fmt.Sprintf(`#!ipxe
 dhcp
 set base %s
-kernel ${base}/files/ubuntu/vmlinuz initrd=initrd ip=dhcp url=${base}/files/ubuntu/ubuntu.iso autoinstall ds=nocloud-net;s=${base}/nocloud/%s/ ---
+kernel ${base}/files/ubuntu/vmlinuz initrd=initrd ip=dhcp url=${base}/files/ubuntu/ubuntu.iso autoinstall ds=nocloud;s=${base}/nocloud/%s/ ---
 initrd ${base}/files/ubuntu/initrd
 boot || shell
 `, ctx.baseURL, macToken(ctx.mac))
@@ -192,7 +192,7 @@ func (ubuntuDesktopAutoinstallPXEBootProfile) NoCloudLineConfig(ctx pxeBootScrip
 	if token == "" {
 		return ""
 	}
-	return fmt.Sprintf("ds=nocloud-net;s=%s/nocloud/%s/", ctx.baseURL, token)
+	return fmt.Sprintf("ds=nocloud;s=%s/nocloud/%s/", ctx.baseURL, token)
 }
 
 var defaultPXEBootScriptProfiles = func() pxeBootScriptProfiles {
