@@ -157,4 +157,27 @@ jobs:
               gh release view "$TAG" >/dev/null 2>&1 || exit "$status"
             }
           fi
-          gh release upload "$TAG" dist/os-images/*.rootfs.squashfs dist/os-images/checksums-os-images.txt dist/os-images/manifest-os-images.json --clobber
+          shopt -s nullglob
+          upload_asset() {
+            asset="$1"
+            for attempt in 1 2 3; do
+              if gh release upload "$TAG" "$asset" --clobber; then
+                return 0
+              fi
+              status=$?
+              printf 'Failed to upload %s on attempt %s\n' "$asset" "$attempt" >&2
+              sleep "$((attempt * 10))"
+            done
+            return "$status"
+          }
+
+          images=(dist/os-images/*.rootfs.squashfs)
+          if [ "${#images[@]}" -eq 0 ]; then
+            printf 'No rootfs SquashFS assets found in dist/os-images\n' >&2
+            exit 1
+          fi
+          for image in "${images[@]}"; do
+            upload_asset "$image"
+          done
+          upload_asset dist/os-images/checksums-os-images.txt
+          upload_asset dist/os-images/manifest-os-images.json
