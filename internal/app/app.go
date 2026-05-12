@@ -275,7 +275,7 @@ func (r *Runtime) syncProvisioningStates(ctx context.Context) {
 			continue
 		}
 		sshKeys, _ := r.sshkeyStore.List(ctx)
-		artifacts, cfg, buildErr := provision.BuildArtifacts(m, r.Config.BootHTTPBaseURL, sshKeys)
+		artifacts, cfg, buildErr := provision.BuildArtifacts(m, r.currentBootHTTPBaseURL(), sshKeys)
 		result := machine.SyncState(m, artifacts, cfg, buildErr)
 		if result.NeedsSave {
 			if err := r.machineStore.Upsert(ctx, result.Machine); err != nil {
@@ -312,7 +312,7 @@ func (r *Runtime) configureDNSController() {
 	switch r.Config.DNSMode {
 	case config.DNSModeEmbedded:
 		r.dnsController = dns.NewEmbeddedServer(dns.EmbeddedConfig{
-			Addr:               r.Config.DNSEmbeddedAddr,
+			Addr:               r.resolveDNSEmbeddedAddr(),
 			TTL:                r.Config.DNSTTL,
 			DynamicRecordsPath: r.Config.DataDir + "/dns-records.json",
 			Machines:           r.machineStore,
@@ -337,6 +337,23 @@ func (r *Runtime) configureDNSController() {
 	default:
 		r.dnsController = nil
 	}
+}
+
+func (r *Runtime) resolveDNSEmbeddedAddr() string {
+	if strings.TrimSpace(r.Config.DNSEmbeddedAddr) != "" {
+		return strings.TrimSpace(r.Config.DNSEmbeddedAddr)
+	}
+	if iface := strings.TrimSpace(r.Config.DHCPIface); iface != "" {
+		if ip := detectIfaceIP(iface); ip != nil {
+			return net.JoinHostPort(ip.String(), "53")
+		}
+	}
+	if iface := detectDefaultIface(); iface != "" {
+		if ip := detectIfaceIP(iface); ip != nil {
+			return net.JoinHostPort(ip.String(), "53")
+		}
+	}
+	return ":53"
 }
 
 func (r *Runtime) subscribeEmbeddedDNSChanges(ctx context.Context) {
@@ -928,6 +945,57 @@ func (r *Runtime) resolvePXEHTTPBaseURL(serverIP net.IP) string {
 	}
 	port := listenPort(r.Config.ListenAddr)
 	return fmt.Sprintf("http://%s:%s/pxe", serverIP.String(), port)
+}
+
+func (r *Runtime) currentBootHTTPBaseURL() string {
+	if strings.TrimSpace(r.Config.BootHTTPBaseURL) != "" {
+		return strings.TrimRight(r.Config.BootHTTPBaseURL, "/")
+	}
+	_, state := r.currentPXEState()
+	if ip := net.ParseIP(strings.TrimSpace(state.serverIP)); ip != nil {
+		return r.resolveBootHTTPBaseURL(ip)
+	}
+	if ip := listenAddrIP(r.Config.ListenAddr); ip != nil {
+		return r.resolveBootHTTPBaseURL(ip)
+	}
+	if ip := r.detectBootHTTPServerIP(); ip != nil {
+		return r.resolveBootHTTPBaseURL(ip)
+	}
+	return r.resolveBootHTTPBaseURL(net.IPv4(127, 0, 0, 1))
+}
+
+func (r *Runtime) resolveBootHTTPBaseURL(serverIP net.IP) string {
+	if strings.TrimSpace(r.Config.BootHTTPBaseURL) != "" {
+		return strings.TrimRight(r.Config.BootHTTPBaseURL, "/")
+	}
+	port := listenPort(r.Config.ListenAddr)
+	return fmt.Sprintf("http://%s:%s", serverIP.String(), port)
+}
+
+func (r *Runtime) detectBootHTTPServerIP() net.IP {
+	if iface := strings.TrimSpace(r.Config.DHCPIface); iface != "" {
+		if ip := detectIfaceIP(iface); ip != nil {
+			return ip
+		}
+	}
+	if iface := detectDefaultIface(); iface != "" {
+		if ip := detectIfaceIP(iface); ip != nil {
+			return ip
+		}
+	}
+	return nil
+}
+
+func listenAddrIP(addr string) net.IP {
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil || strings.TrimSpace(host) == "" {
+		return nil
+	}
+	ip := net.ParseIP(strings.Trim(host, "[]"))
+	if ip == nil || ip.IsUnspecified() {
+		return nil
+	}
+	return ip
 }
 
 func listenPort(addr string) string {

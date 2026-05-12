@@ -79,6 +79,31 @@ func TestLoginUserPasswordConfigured(t *testing.T) {
 	}
 }
 
+func TestApplyLoginUserPasswordPreservesExistingChpasswd(t *testing.T) {
+	cfg := map[string]any{
+		"chpasswd": map[string]any{
+			"expire": true,
+			"list":   "root:rootpass\n",
+		},
+	}
+
+	provision.ApplyLoginUserPassword(cfg, &machine.LoginUserSpec{
+		Username: "ubuntu",
+		Password: "ubuntu",
+	})
+
+	chpasswd, ok := cfg["chpasswd"].(map[string]any)
+	if !ok {
+		t.Fatalf("chpasswd = %#v, want map", cfg["chpasswd"])
+	}
+	if chpasswd["expire"] != true {
+		t.Fatalf("expire = %#v, want preserved true", chpasswd["expire"])
+	}
+	if got, want := chpasswd["list"], "root:rootpass\nubuntu:ubuntu\n"; got != want {
+		t.Fatalf("list = %#v, want %#v", got, want)
+	}
+}
+
 func TestSelectKeysForRefs(t *testing.T) {
 	all := []sshkey.SSHKey{
 		{Name: "alice", PublicKey: "ssh-ed25519 a"},
@@ -196,6 +221,36 @@ func TestBuildArtifacts_LoginUserPasswordEnablesSSHPWAuth(t *testing.T) {
 		"plain_text_passwd: gomi",
 		"lock_passwd: false",
 		"ssh_pwauth: true",
+		"chpasswd:",
+		"gomi:gomi",
+		"expire: false",
+	} {
+		if !strings.Contains(installCfg, want) {
+			t.Fatalf("expected %q in cloud-config, got:\n%s", want, installCfg)
+		}
+	}
+}
+
+func TestBuildArtifacts_DefaultUserPasswordUsesChpasswd(t *testing.T) {
+	_, installCfg, err := provision.BuildArtifacts(machine.Machine{
+		Name:     "bm-ubuntu-password",
+		Hostname: "bm-ubuntu-password",
+		Firmware: machine.FirmwareUEFI,
+		LoginUser: &machine.LoginUserSpec{
+			Username: "ubuntu",
+			Password: "ubuntu",
+		},
+	}, "http://boot.local/pxe", nil)
+	if err != nil {
+		t.Fatalf("BuildArtifacts: %v", err)
+	}
+	for _, want := range []string{
+		"name: ubuntu",
+		"plain_text_passwd: ubuntu",
+		"ssh_pwauth: true",
+		"chpasswd:",
+		"ubuntu:ubuntu",
+		"expire: false",
 	} {
 		if !strings.Contains(installCfg, want) {
 			t.Fatalf("expected %q in cloud-config, got:\n%s", want, installCfg)

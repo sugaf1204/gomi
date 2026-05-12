@@ -1,16 +1,8 @@
 #!/bin/sh
 set -e
 
-if ! getent group gomi >/dev/null 2>&1; then
-    addgroup --system gomi
-fi
-
-if ! getent passwd gomi >/dev/null 2>&1; then
-    adduser --system --ingroup gomi --no-create-home --home /var/lib/gomi --shell /usr/sbin/nologin gomi
-fi
-
-install -d -o gomi -g gomi -m 0750 /var/lib/gomi /var/lib/gomi/data /var/lib/gomi/data/files
-chown gomi:gomi /var/lib/gomi /var/lib/gomi/data /var/lib/gomi/data/files
+install -d -o root -g root -m 0750 /var/lib/gomi /var/lib/gomi/data /var/lib/gomi/data/files
+chown root:root /var/lib/gomi /var/lib/gomi/data /var/lib/gomi/data/files
 chmod 750 /var/lib/gomi /var/lib/gomi/data /var/lib/gomi/data/files
 
 if command -v systemctl >/dev/null 2>&1; then

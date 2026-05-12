@@ -5,7 +5,7 @@
 
 data_dir: /var/lib/gomi/data
 
-# listen_addr: "0.0.0.0:5392"
+# listen_addr: ":5392"
 # session_ttl: 12h
 # background_sync_enabled: true
 
@@ -25,8 +25,9 @@ data_dir: /var/lib/gomi/data
 #   dsn: postgres://gomi:gomi@localhost:5432/gomi?sslmode=disable
 
 # dns:
-#   mode: off
-#   embedded_addr: ":53"
+#   mode: embedded
+#   # When unset, gomi binds embedded DNS to the active interface IP on port 53.
+#   embedded_addr: ""
 #   ttl: 300s
 #   powerdns:
 #     base_url: ""
@@ -40,7 +41,9 @@ data_dir: /var/lib/gomi/data
 #     tsig_algorithm: hmac-sha256.
 #     transport: udp
 
-# boot_http_base_url: http://gomi-boot.local
+# Optional: externally reachable HTTP base URL for boot assets.
+# When unset, gomi auto-resolves this from the active PXE interface IP.
+# boot_http_base_url: http://192.168.1.10:5392
 
 # dhcp:
 #   mode: full
@@ -51,7 +54,9 @@ data_dir: /var/lib/gomi/data
 #   root: /var/lib/gomi/data/tftp
 
 # pxe:
-#   http_base_url: ""
+#   # Optional: externally reachable PXE HTTP base URL.
+#   # When unset, gomi auto-resolves this from the active PXE interface IP.
+#   http_base_url: http://192.168.1.10:5392/pxe
 #   bootfile_bios: undionly.kpxe
 #   bootfile_uefi: ipxe.efi
 

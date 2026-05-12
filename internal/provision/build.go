@@ -99,6 +99,45 @@ func LoginUserConfigured(loginUser *machine.LoginUserSpec) bool {
 	return loginUser != nil && strings.TrimSpace(loginUser.Username) != ""
 }
 
+func ApplyLoginUserPassword(cfg map[string]any, loginUser *machine.LoginUserSpec) {
+	if !LoginUserPasswordConfigured(loginUser) || strings.TrimSpace(loginUser.Username) == "" {
+		return
+	}
+	entry := fmt.Sprintf("%s:%s", strings.TrimSpace(loginUser.Username), strings.TrimSpace(loginUser.Password))
+	chpasswd, ok := cfg["chpasswd"].(map[string]any)
+	if !ok {
+		chpasswd = map[string]any{
+			"expire": false,
+		}
+	}
+	if _, exists := chpasswd["expire"]; !exists {
+		chpasswd["expire"] = false
+	}
+	chpasswd["list"] = appendChpasswdList(chpasswd["list"], entry)
+	cfg["chpasswd"] = chpasswd
+}
+
+func appendChpasswdList(current any, entry string) any {
+	switch list := current.(type) {
+	case string:
+		if strings.TrimSpace(list) == "" {
+			return entry + "\n"
+		}
+		if strings.HasSuffix(list, "\n") {
+			return list + entry + "\n"
+		}
+		return list + "\n" + entry + "\n"
+	case []string:
+		out := append([]string{}, list...)
+		return append(out, entry)
+	case []any:
+		out := append([]any{}, list...)
+		return append(out, entry)
+	default:
+		return entry + "\n"
+	}
+}
+
 func buildLinuxCloudInit(m machine.Machine, sshKeys []sshkey.SSHKey) string {
 	selected := SelectKeysForRefs(sshKeys, m.SSHKeyRefs)
 	pubKeys := collectPublicKeys(selected)
@@ -122,6 +161,7 @@ func buildLinuxCloudInit(m machine.Machine, sshKeys []sshkey.SSHKey) string {
 		// distribution's default user (the YAML `default` token in users[0]).
 		cfg["ssh_authorized_keys"] = pubKeys
 	}
+	ApplyLoginUserPassword(cfg, m.LoginUser)
 
 	raw, err := yaml.Marshal(cfg)
 	if err != nil {

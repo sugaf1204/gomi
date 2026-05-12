@@ -11,14 +11,14 @@ func TestFromEnvDNSDefaults(t *testing.T) {
 	clearConfigEnv(t)
 
 	cfg := FromEnv()
-	if cfg.ListenAddr != "0.0.0.0:5392" {
-		t.Fatalf("expected listen addr 0.0.0.0:5392, got %q", cfg.ListenAddr)
+	if cfg.ListenAddr != ":5392" {
+		t.Fatalf("expected listen addr :5392, got %q", cfg.ListenAddr)
 	}
-	if cfg.DNSMode != DNSModeOff {
-		t.Fatalf("expected DNSMode off, got %q", cfg.DNSMode)
+	if cfg.DNSMode != DNSModeEmbedded {
+		t.Fatalf("expected DNSMode embedded, got %q", cfg.DNSMode)
 	}
-	if cfg.DNSEmbeddedAddr != ":53" {
-		t.Fatalf("expected embedded addr :53, got %q", cfg.DNSEmbeddedAddr)
+	if cfg.DNSEmbeddedAddr != "" {
+		t.Fatalf("expected embedded addr to be auto-resolved by runtime, got %q", cfg.DNSEmbeddedAddr)
 	}
 	if cfg.DNSTTL != 300*time.Second {
 		t.Fatalf("expected DNS TTL 300s, got %s", cfg.DNSTTL)
@@ -40,6 +40,15 @@ func TestFromEnvBootenvSourceURLDefaultsToGOMIRelease(t *testing.T) {
 	cfg := FromEnv()
 	if cfg.BootenvSourceURL != "https://github.com/sugaf1204/gomi/releases/latest/download" {
 		t.Fatalf("unexpected bootenv source URL: %q", cfg.BootenvSourceURL)
+	}
+}
+
+func TestFromEnvLeavesBootHTTPBaseURLUnsetByDefault(t *testing.T) {
+	clearConfigEnv(t)
+
+	cfg := FromEnv()
+	if cfg.BootHTTPBaseURL != "" {
+		t.Fatalf("boot HTTP base URL must be auto-resolved by runtime when unset, got %q", cfg.BootHTTPBaseURL)
 	}
 }
 

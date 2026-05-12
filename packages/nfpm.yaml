@@ -14,7 +14,6 @@ description: |-
    Bare-metal server management system for provisioning,
    power control, and lifecycle management.
 depends:
-  - adduser
   - ca-certificates
   - grub-efi-amd64-bin
   - ipxe

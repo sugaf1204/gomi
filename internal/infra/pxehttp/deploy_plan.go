@@ -732,7 +732,7 @@ func (h *Handler) buildCurtinInstallConfig(ctx context.Context, c echo.Context, 
 	seedURL := fmt.Sprintf("%s/nocloud/%s/", strings.TrimRight(base, "/"), macToken(m.MAC))
 	lateCommands := []string{
 		fmt.Sprintf(`set -e; d="$TARGET_MOUNT_POINT/var/lib/cloud/seed/nocloud"; mkdir -p "$d"; for f in user-data meta-data vendor-data network-config; do curl -fsS -o "$d/$f" %s$f; done`, shellQuote(seedURL)),
-		`mkdir -p "$TARGET_MOUNT_POINT/etc/cloud/cloud.cfg.d"; printf '%s\n' 'datasource_list: [ NoCloud, None ]' 'datasource:' '  NoCloud:' '    seedfrom: /var/lib/cloud/seed/nocloud/' 'ssh_deletekeys: false' > "$TARGET_MOUNT_POINT/etc/cloud/cloud.cfg.d/99_gomi_nocloud.cfg"; rm -f "$TARGET_MOUNT_POINT"/etc/netplan/*.yaml`,
+		`mkdir -p "$TARGET_MOUNT_POINT/etc/cloud/cloud.cfg.d"; printf '%s\n' 'datasource_list: [ NoCloud, None ]' 'datasource:' '  NoCloud:' '    seedfrom: /var/lib/cloud/seed/nocloud/' 'ssh_deletekeys: false' > "$TARGET_MOUNT_POINT/etc/cloud/cloud.cfg.d/99_gomi_nocloud.cfg"; rm -f "$TARGET_MOUNT_POINT"/etc/cloud/cloud.cfg.d/50-curtin-networking.cfg "$TARGET_MOUNT_POINT"/etc/netplan/*.yaml`,
 		`mkdir -p "$TARGET_MOUNT_POINT/dev"; if [ ! -e "$TARGET_MOUNT_POINT/dev/null" ]; then mknod -m 666 "$TARGET_MOUNT_POINT/dev/null" c 1 3; else chmod 666 "$TARGET_MOUNT_POINT/dev/null"; fi`,
 		`if [ -x "$TARGET_MOUNT_POINT/usr/bin/ssh-keygen" ]; then rm -f "$TARGET_MOUNT_POINT"/etc/ssh/ssh_host_*_key "$TARGET_MOUNT_POINT"/etc/ssh/ssh_host_*_key.pub; chroot "$TARGET_MOUNT_POINT" ssh-keygen -A; fi`,
 		`sed -i 's/discard,errors=remount-ro/defaults,errors=remount-ro/g' "$TARGET_MOUNT_POINT/etc/fstab" 2>/dev/null || true; sed -i -E 's/(root=[^ ]+) ro /\1 rw /g' "$TARGET_MOUNT_POINT/boot/grub/grub.cfg" 2>/dev/null || true`,
