@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/sugaf1204/gomi/internal/infra/config"
 	"github.com/sugaf1204/gomi/internal/subnet"
 )
 
@@ -121,5 +122,19 @@ func TestPXESubnetReadyAllowsProxyModeWithoutAddressRange(t *testing.T) {
 	spec := subnet.SubnetSpec{CIDR: "192.168.2.0/24"}
 	if !pxeSubnetReady("proxy", spec) {
 		t.Fatal("proxy DHCP mode should not require a lease address range")
+	}
+}
+
+func TestResolveDNSEmbeddedAddrUsesExplicitAddress(t *testing.T) {
+	r := &Runtime{Config: config.Config{DNSEmbeddedAddr: "127.0.0.1:1053"}}
+	if got, want := r.resolveDNSEmbeddedAddr(), "127.0.0.1:1053"; got != want {
+		t.Fatalf("embedded DNS address = %q, want %q", got, want)
+	}
+}
+
+func TestCurrentBootHTTPBaseURLFallsBackToListenAddress(t *testing.T) {
+	r := &Runtime{Config: config.Config{ListenAddr: "192.168.2.10:5392"}}
+	if got, want := r.currentBootHTTPBaseURL(), "http://192.168.2.10:5392"; got != want {
+		t.Fatalf("boot HTTP base URL = %q, want %q", got, want)
 	}
 }

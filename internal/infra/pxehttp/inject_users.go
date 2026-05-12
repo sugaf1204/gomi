@@ -89,6 +89,7 @@ func (h *Handler) injectSSHKeysAndLoginUser(ctx context.Context, cloudConfig str
 	if len(pubKeys) > 0 || loginUser != nil {
 		cfg["users"] = provision.BuildCloudInitUsers(pubKeys, loginUser)
 	}
+	provision.ApplyLoginUserPassword(cfg, loginUser)
 
 	raw, err := yaml.Marshal(cfg)
 	if err != nil {

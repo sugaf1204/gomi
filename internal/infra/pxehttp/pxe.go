@@ -431,7 +431,11 @@ func injectHypervisorSetup(cloudConfig, pxeBaseURL, hypervisorName, registration
 	if serverBase != "" && strings.TrimSpace(registrationToken) != "" {
 		setupURL := serverBase + "/api/v1/hypervisors/setup-and-register.sh"
 		registerCmd := fmt.Sprintf(
-			"set -euo pipefail; curl -sfL %s | GOMI_SERVER=%s GOMI_TOKEN=%s GOMI_HOSTNAME=%s bash",
+			`set -euo pipefail; tmp=$(mktemp); trap 'rm -f "$tmp"' EXIT; for i in $(seq 1 60); do if curl -sfL -o "$tmp" %s; then GOMI_SERVER=%s GOMI_TOKEN=%s GOMI_HOSTNAME=%s bash "$tmp"; exit $?; fi; sleep 2; done; curl -sfL -o "$tmp" %s; GOMI_SERVER=%s GOMI_TOKEN=%s GOMI_HOSTNAME=%s bash "$tmp"`,
+			shellQuote(setupURL),
+			shellQuote(serverBase),
+			shellQuote(strings.TrimSpace(registrationToken)),
+			shellQuote(strings.TrimSpace(hypervisorName)),
 			shellQuote(setupURL),
 			shellQuote(serverBase),
 			shellQuote(strings.TrimSpace(registrationToken)),
@@ -1336,7 +1340,7 @@ func injectCloudConfigCompletion(content, completeURL, hostname string) string {
 	if completeURL != "" {
 		escaped := strings.ReplaceAll(completeURL, `"`, `\"`)
 		callback := fmt.Sprintf(
-			`sh -c 'IP=$(hostname -I 2>/dev/null | awk "{print \$1}"); DEV=$(ip -o route get 1 2>/dev/null | awk "{for(i=1;i<=NF;i++){if(\$i==\"dev\"){print \$(i+1);exit}}}"); MAC=$(cat /sys/class/net/${DEV}/address 2>/dev/null); curl -fsS -X POST -H "Content-Type: application/json" -d "{\"token\":\"%s\",\"type\":\"%s\",\"ip\":\"${IP}\",\"mac\":\"${MAC}\"}" "%s" || curl -fsS -X POST "%s" || true'`,
+			`sh -c 'for i in $(seq 1 60); do IP=$(hostname -I 2>/dev/null | awk "{print \$1}"); DEV=$(ip -o route get 1 2>/dev/null | awk "{for(i=1;i<=NF;i++){if(\$i==\"dev\"){print \$(i+1);exit}}}"); MAC=$(cat /sys/class/net/${DEV}/address 2>/dev/null); curl -fsS -X POST -H "Content-Type: application/json" -d "{\"token\":\"%s\",\"type\":\"%s\",\"ip\":\"${IP}\",\"mac\":\"${MAC}\"}" "%s" && exit 0; curl -fsS -X POST "%s" && exit 0; sleep 2; done; true'`,
 			"__TOKEN__", "__TYPE__", escaped, escaped,
 		)
 		// Replace token/type placeholders with actual values parsed from completeURL.
@@ -1701,7 +1705,7 @@ func injectNetplanConfigFromParams(cloudConfig string, params netplanParams, spe
 	cfg["write_files"] = writeFiles
 
 	netplanCmds := []any{
-		"rm -f /etc/netplan/50-cloud-init.yaml /etc/netplan/01-netcfg.yaml /etc/netplan/00-installer-config.yaml",
+		"rm -f /etc/cloud/cloud.cfg.d/50-curtin-networking.cfg /etc/netplan/50-cloud-init.yaml /etc/netplan/01-netcfg.yaml /etc/netplan/00-installer-config.yaml",
 		"netplan apply",
 	}
 	runCmd := []any{}
@@ -1766,7 +1770,7 @@ func injectBridgedNetplanConfig(cloudConfig string, m *machine.Machine, spec *su
 	cfg["write_files"] = writeFiles
 
 	netplanCmds := []any{
-		"rm -f /etc/netplan/50-cloud-init.yaml /etc/netplan/01-netcfg.yaml /etc/netplan/00-installer-config.yaml",
+		"rm -f /etc/cloud/cloud.cfg.d/50-curtin-networking.cfg /etc/netplan/50-cloud-init.yaml /etc/netplan/01-netcfg.yaml /etc/netplan/00-installer-config.yaml",
 		"netplan apply",
 	}
 	runCmd := []any{}

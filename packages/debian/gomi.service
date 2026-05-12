@@ -5,8 +5,6 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-User=gomi
-Group=gomi
 ExecStart=/usr/bin/gomi --config=/etc/gomi/gomi.yaml
 AmbientCapabilities=CAP_NET_BIND_SERVICE
 Restart=on-failure
