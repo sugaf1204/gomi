@@ -1,3 +1,9 @@
+gomi (0.0.15) unstable; urgency=medium
+
+  * Make fresh Debian package installs deploy PXE hypervisors out of the box.
+
+ -- sugaf1204 <sugaf1204@example.invalid>  Wed, 13 May 2026 02:16:00 +0900
+
 gomi (0.0.14) unstable; urgency=medium
 
   * Expand README setup and workflow documentation.
