@@ -36,6 +36,28 @@
         {
           "if": {
             "properties": {
+              "format": { "const": "qcow2" }
+            },
+            "required": ["format"]
+          },
+          "then": {
+            "required": ["variant"],
+            "properties": {
+              "variant": {
+                "const": "cloud"
+              },
+              "sourceFormat": {
+                "const": "qcow2"
+              },
+              "sourceCompression": {
+                "const": ""
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
               "format": { "const": "raw" }
             },
             "required": ["format"]
@@ -92,10 +114,10 @@
           "pattern": "\\S"
         },
         "format": {
-          "enum": ["raw", "squashfs"]
+          "enum": ["qcow2", "raw", "squashfs"]
         },
         "sourceFormat": {
-          "enum": ["raw", "squashfs"]
+          "enum": ["qcow2", "raw", "squashfs"]
         },
         "sourceCompression": {
           "type": "string"

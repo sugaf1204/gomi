@@ -34,6 +34,19 @@ func TestListUsesPrebuiltArtifacts(t *testing.T) {
 			if !strings.HasSuffix(entry.URL, ".rootfs.squashfs") {
 				t.Fatalf("%s URL = %q, want prebuilt .rootfs.squashfs artifact", entry.Name, entry.URL)
 			}
+		case "debian-13-amd64-cloud":
+			if entry.URL != "https://cloud.debian.org/images/cloud/trixie/latest/debian-13-genericcloud-amd64.qcow2" {
+				t.Fatalf("%s URL = %q, want Debian official qcow2", entry.Name, entry.URL)
+			}
+			if entry.Format != osimage.FormatQCOW2 || entry.SourceFormat != osimage.FormatQCOW2 {
+				t.Fatalf("%s formats = %s/%s, want qcow2", entry.Name, entry.Format, entry.SourceFormat)
+			}
+			if entry.SourceCompression != "" {
+				t.Fatalf("%s sourceCompression = %q, want empty", entry.Name, entry.SourceCompression)
+			}
+			if entry.Checksum != "" {
+				t.Fatalf("%s checksum = %q, want empty for rolling official image URL", entry.Name, entry.Checksum)
+			}
 		default:
 			if !strings.HasPrefix(entry.URL, "https://github.com/sugaf1204/gomi/releases/download/v0.0.2/") {
 				t.Fatalf("%s URL = %q, want fixed legacy release asset URL", entry.Name, entry.URL)
@@ -217,7 +230,7 @@ entries:
 	}
 }
 
-func TestCatalogSchemaRejectsUnsupportedInstallFormat(t *testing.T) {
+func TestCatalogSchemaAcceptsCloudQCOW2(t *testing.T) {
 	path := writeCatalog(t, `
 entries:
   - name: qcow2-image
@@ -230,12 +243,37 @@ entries:
     url: invalid.qcow2
     bootEnvironment: ubuntu-minimal-cloud-amd64
 `)
+	entries, err := Load(context.Background(), LoadOptions{
+		CatalogFile:     path,
+		ReplaceExternal: true,
+	})
+	if err != nil {
+		t.Fatalf("expected cloud qcow2 to be accepted, got %v", err)
+	}
+	if len(entries) != 1 || entries[0].Format != osimage.FormatQCOW2 {
+		t.Fatalf("entries = %#v, want qcow2", entries)
+	}
+}
+
+func TestCatalogSchemaRejectsBareMetalQCOW2(t *testing.T) {
+	path := writeCatalog(t, `
+entries:
+  - name: qcow2-baremetal-image
+    osFamily: custom
+    osVersion: "1"
+    arch: amd64
+    variant: baremetal
+    format: qcow2
+    sourceFormat: qcow2
+    url: invalid.qcow2
+    bootEnvironment: ubuntu-minimal-cloud-amd64
+`)
 	_, err := Load(context.Background(), LoadOptions{
 		CatalogFile:     path,
 		ReplaceExternal: true,
 	})
 	if err == nil || !strings.Contains(err.Error(), "validate OS catalog schema") {
-		t.Fatalf("expected schema validation error for unsupported install format, got %v", err)
+		t.Fatalf("expected schema validation error for bare-metal qcow2, got %v", err)
 	}
 }
 

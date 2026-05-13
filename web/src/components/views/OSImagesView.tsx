@@ -142,20 +142,25 @@ export function OSImagesView({ osImages, onRefresh }: OSImagesViewProps) {
   }
 
   function bootEnvBadge(item: OSCatalogItem) {
+    if (!catalogNeedsBootEnvironment(item)) return phaseClass('ready')
     if (item.bootEnvironment.phase === 'ready') return phaseClass('ready')
     if (item.bootEnvironment.phase === 'building' || item.bootEnvironment.phase === 'missing') return phaseClass('pending')
     return phaseClass('error')
   }
 
+  function catalogNeedsBootEnvironment(item: OSCatalogItem) {
+    return item.entry.format === 'squashfs' || item.entry.variant === 'baremetal'
+  }
+
   function catalogActionLabel(item: OSCatalogItem) {
     if (installingCatalog === item.entry.name || item.installing) return 'Installing'
     if (item.installed) return 'Installed'
-    if (item.osImageReady && item.bootEnvironment.phase === 'building') return 'Building'
+    if (item.osImageReady && catalogNeedsBootEnvironment(item) && item.bootEnvironment.phase === 'building') return 'Building'
     return 'Install'
   }
 
   function catalogActionDisabled(item: OSCatalogItem) {
-    return item.installed || item.installing || item.bootEnvironment.phase === 'building' || installingCatalog !== null
+    return item.installed || item.installing || (catalogNeedsBootEnvironment(item) && item.bootEnvironment.phase === 'building') || installingCatalog !== null
   }
 
   return (
@@ -279,7 +284,9 @@ export function OSImagesView({ osImages, onRefresh }: OSImagesViewProps) {
                   <td className="py-[0.52rem] pr-[0.75rem] whitespace-nowrap font-ui font-medium">{item.entry.name}</td>
                   <td className="py-[0.52rem] pr-[0.75rem] whitespace-nowrap">{item.entry.osFamily} {item.entry.osVersion} / {item.entry.arch}</td>
                   <td className="py-[0.52rem] pr-[0.75rem] whitespace-nowrap">
-                    <span className={bootEnvBadge(item)}>{item.bootEnvironment.phase}</span>
+                    <span className={bootEnvBadge(item)}>
+                      {catalogNeedsBootEnvironment(item) ? item.bootEnvironment.phase : 'Not required'}
+                    </span>
                   </td>
                   <td className="py-[0.52rem] pr-[0.75rem] whitespace-nowrap">
                     <span className={item.installed ? phaseClass('ready') : item.osImageError ? phaseClass('error') : phaseClass('pending')}>

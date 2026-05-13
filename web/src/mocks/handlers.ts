@@ -126,11 +126,10 @@ export const handlers = [
             osFamily: 'debian',
             osVersion: '13',
             arch: 'amd64',
-            format: 'raw',
-            sourceFormat: 'raw',
-            sourceCompression: 'zstd',
+            format: 'qcow2',
+            sourceFormat: 'qcow2',
             variant: 'cloud',
-            url: 'https://github.com/sugaf1204/gomi/releases/latest/download/debian-13-amd64-cloud.raw.zst',
+            url: 'https://cloud.debian.org/images/cloud/trixie/latest/debian-13-genericcloud-amd64.qcow2',
             bootEnvironment: 'ubuntu-minimal-cloud-amd64'
           },
           installed: false,
@@ -145,11 +144,15 @@ export const handlers = [
   http.post(`${API_BASE}/os-catalog/:name/install`, ({ params }) => {
     const name = String(params.name)
     const isUbuntu = name.startsWith('ubuntu-')
+    const isDebianCloud = name === 'debian-13-amd64-cloud'
     const isBareMetal = name.endsWith('-baremetal')
-    const format = isBareMetal ? 'squashfs' : 'raw'
-    const sourceFormat = isBareMetal ? 'squashfs' : 'raw'
-    const sourceCompression = isBareMetal ? undefined : 'zstd'
-    const suffix = isBareMetal ? '.rootfs.squashfs' : '.raw.zst'
+    const format = isDebianCloud ? 'qcow2' : isBareMetal ? 'squashfs' : 'raw'
+    const sourceFormat = format
+    const sourceCompression = isBareMetal || isDebianCloud ? undefined : 'zstd'
+    const suffix = isDebianCloud ? '.qcow2' : isBareMetal ? '.rootfs.squashfs' : '.raw.zst'
+    const imageURL = isDebianCloud
+      ? 'https://cloud.debian.org/images/cloud/trixie/latest/debian-13-genericcloud-amd64.qcow2'
+      : `https://github.com/sugaf1204/gomi/releases/latest/download/${name}${suffix}`
     return HttpResponse.json({
       entry: {
         name,
@@ -160,7 +163,7 @@ export const handlers = [
         sourceFormat,
         sourceCompression,
         variant: isBareMetal ? 'baremetal' : 'cloud',
-        url: `https://github.com/sugaf1204/gomi/releases/latest/download/${name}${suffix}`,
+        url: imageURL,
         bootEnvironment: 'ubuntu-minimal-cloud-amd64'
       },
       installed: false,

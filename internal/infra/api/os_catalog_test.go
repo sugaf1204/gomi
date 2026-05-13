@@ -37,6 +37,57 @@ func TestValidateCatalogArtifactRejectsConversion(t *testing.T) {
 	}
 }
 
+func TestValidateCatalogArtifactAcceptsCloudQCOW2(t *testing.T) {
+	entry := oscatalog.Entry{
+		Name:         "debian-13-amd64-cloud",
+		Variant:      osimage.VariantCloud,
+		Format:       osimage.FormatQCOW2,
+		SourceFormat: osimage.FormatQCOW2,
+		URL:          "https://cloud.debian.org/images/cloud/trixie/latest/debian-13-genericcloud-amd64.qcow2",
+	}
+
+	if err := validateCatalogArtifact(entry); err != nil {
+		t.Fatalf("expected qcow2 cloud artifact to be accepted, got %v", err)
+	}
+}
+
+func TestValidateCatalogArtifactRejectsCompressedQCOW2(t *testing.T) {
+	entry := oscatalog.Entry{
+		Name:              "debian-13-amd64-cloud",
+		Variant:           osimage.VariantCloud,
+		Format:            osimage.FormatQCOW2,
+		SourceFormat:      osimage.FormatQCOW2,
+		SourceCompression: "zstd",
+		URL:               "https://images.example.test/debian-13-amd64-cloud.qcow2.zst",
+	}
+
+	err := validateCatalogArtifact(entry)
+	if err == nil {
+		t.Fatal("expected compressed qcow2 source to be rejected")
+	}
+	if !strings.Contains(err.Error(), "unsupported qcow2 catalog source compression") {
+		t.Fatalf("expected qcow2 compression error, got %v", err)
+	}
+}
+
+func TestValidateCatalogArtifactRejectsBareMetalQCOW2(t *testing.T) {
+	entry := oscatalog.Entry{
+		Name:         "debian-13-amd64-baremetal",
+		Variant:      osimage.VariantBareMetal,
+		Format:       osimage.FormatQCOW2,
+		SourceFormat: osimage.FormatQCOW2,
+		URL:          "https://images.example.test/debian-13-amd64-baremetal.qcow2",
+	}
+
+	err := validateCatalogArtifact(entry)
+	if err == nil {
+		t.Fatal("expected bare-metal qcow2 to be rejected")
+	}
+	if !strings.Contains(err.Error(), "only supported for cloud variants") {
+		t.Fatalf("expected qcow2 variant error, got %v", err)
+	}
+}
+
 func TestValidateCatalogArtifactAcceptsRaw(t *testing.T) {
 	entry := oscatalog.Entry{
 		Name:         "ubuntu-24.04-amd64",
@@ -47,6 +98,51 @@ func TestValidateCatalogArtifactAcceptsRaw(t *testing.T) {
 
 	if err := validateCatalogArtifact(entry); err != nil {
 		t.Fatalf("expected raw artifact to be accepted, got %v", err)
+	}
+}
+
+func TestDownloadCatalogQCOW2ArtifactStoresOfficialImageAsIs(t *testing.T) {
+	payload := []byte("qcow2-image")
+	sum := sha256.Sum256(payload)
+	restore := stubCatalogHTTPClient(t, func(req *http.Request) (*http.Response, error) {
+		if req.URL.String() != "https://cloud.debian.org/images/cloud/trixie/latest/debian-13-genericcloud-amd64.qcow2" {
+			t.Fatalf("unexpected download URL: %s", req.URL.String())
+		}
+		return httpResponse(200, payload), nil
+	})
+	defer restore()
+
+	storageDir := t.TempDir()
+	s := &Server{imageStorageDir: storageDir}
+	entry := oscatalog.Entry{
+		Name:         "debian-13-amd64-cloud",
+		OSFamily:     "debian",
+		OSVersion:    "13",
+		Arch:         "amd64",
+		Variant:      osimage.VariantCloud,
+		Format:       osimage.FormatQCOW2,
+		SourceFormat: osimage.FormatQCOW2,
+		URL:          "https://cloud.debian.org/images/cloud/trixie/latest/debian-13-genericcloud-amd64.qcow2",
+		Checksum:     "sha256:" + hex.EncodeToString(sum[:]),
+	}
+	img := entry.OSImage()
+
+	localPath, localChecksum, err := s.downloadCatalogArtifact(context.Background(), entry, img)
+	if err != nil {
+		t.Fatalf("download catalog qcow2 artifact: %v", err)
+	}
+	if filepath.Base(localPath) != "debian-13-amd64-cloud.qcow2" {
+		t.Fatalf("local path = %q, want .qcow2 output", localPath)
+	}
+	got, err := os.ReadFile(localPath)
+	if err != nil {
+		t.Fatalf("read local qcow2 image: %v", err)
+	}
+	if !bytes.Equal(got, payload) {
+		t.Fatalf("qcow2 payload = %q, want %q", got, payload)
+	}
+	if localChecksum != hex.EncodeToString(sum[:]) {
+		t.Fatalf("local checksum = %q, want qcow2 checksum", localChecksum)
 	}
 }
 

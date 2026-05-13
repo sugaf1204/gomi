@@ -2325,7 +2325,11 @@ func TestOSCatalogListsSupportedImages(t *testing.T) {
 		expectedFormat := "raw"
 		expectedCompression := "zstd"
 		expectedSuffix := ".raw.zst"
-		if variant == "baremetal" {
+		if name == "debian-13-amd64-cloud" {
+			expectedFormat = "qcow2"
+			expectedCompression = ""
+			expectedSuffix = ".qcow2"
+		} else if variant == "baremetal" {
 			expectedFormat = "squashfs"
 			expectedCompression = ""
 			expectedSuffix = ".rootfs.squashfs"
@@ -2344,8 +2348,11 @@ func TestOSCatalogListsSupportedImages(t *testing.T) {
 			t.Fatalf("expected %s catalog sourceCompression %q, got %v", name, expectedCompression, entry["sourceCompression"])
 		}
 		url, _ := entry["url"].(string)
-		if strings.Contains(url, ".qcow2") || strings.Contains(url, "cloud-images.ubuntu.com") || !strings.HasSuffix(url, expectedSuffix) {
-			t.Fatalf("expected %s catalog URL to reference prebuilt %s artifact, got %q", name, expectedSuffix, url)
+		if !strings.HasSuffix(url, expectedSuffix) {
+			t.Fatalf("expected %s catalog URL to reference %s artifact, got %q", name, expectedSuffix, url)
+		}
+		if name == "debian-13-amd64-cloud" && !strings.Contains(url, "cloud.debian.org") {
+			t.Fatalf("expected %s catalog URL to reference Debian official cloud image, got %q", name, url)
 		}
 		seen[name] = bootEnv
 	}

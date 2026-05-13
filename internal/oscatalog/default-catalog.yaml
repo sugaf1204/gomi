@@ -14,12 +14,10 @@ entries:
     osVersion: "13"
     arch: amd64
     variant: cloud
-    format: raw
-    sourceFormat: raw
-    sourceCompression: zstd
-    url: https://github.com/sugaf1204/gomi/releases/download/v0.0.2/debian-13-amd64-cloud.raw.zst
-    checksum: sha256:d1b5857652935a01420284f2a689591560058cd9e49ca92ea02663bdad1f6b85
-    description: Debian 13 amd64 cloud raw image
+    format: qcow2
+    sourceFormat: qcow2
+    url: https://cloud.debian.org/images/cloud/trixie/latest/debian-13-genericcloud-amd64.qcow2
+    description: Debian 13 amd64 official genericcloud qcow2 image
     bootEnvironment: ubuntu-minimal-cloud-amd64
   - name: ubuntu-22.04-amd64-baremetal
     osFamily: ubuntu
