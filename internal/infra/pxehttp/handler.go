@@ -38,6 +38,7 @@ type Handler struct {
 	pxeTFTPRoot      string
 	provisionTimeout time.Duration
 	vmRuntimeSyncer  *vm.RuntimeSyncer
+	machineSSHProbe  func(context.Context, string) error
 }
 
 type Config struct {

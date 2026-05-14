@@ -220,6 +220,7 @@ type pxeTarget struct {
 	node        node.Node
 	installType vm.InstallConfigType
 	variant     string
+	osFamily   string
 }
 
 func (h *Handler) PXEBootScript(c echo.Context) error {
@@ -289,7 +290,11 @@ func (h *Handler) PXENocloudUserData(c echo.Context) error {
 		body = defaultPXEUserDataByInstallType(sourceType)
 	}
 
-	result := injectCloudConfigCompletion(body, completeURL, hostname)
+	completeRetries := 60
+	if isDebianOSFamily(target.osFamily) {
+		completeRetries = 600
+	}
+	result := injectCloudConfigCompletion(body, completeURL, hostname, completeRetries)
 
 	// Inject registered SSH keys and any per-target login user. Without a
 	// login user, keys go to the distribution default user; with one, only
@@ -310,9 +315,9 @@ func (h *Handler) PXENocloudUserData(c echo.Context) error {
 
 	if target.node != nil && strings.TrimSpace(target.node.PrimaryMAC()) != "" {
 		if m, ok := target.node.(*machine.Machine); ok && m.Role == machine.RoleHypervisor {
-			result = injectBridgedNetplanConfig(result, m, h.resolveSubnetSpec(ctx, target.node))
+			result = injectBridgedNetplanConfig(result, m, target.osFamily, base, h.resolveSubnetSpec(ctx, target.node))
 		} else {
-			result = injectNetplanConfigForHost(result, target.node, h.resolveSubnetSpec(ctx, target.node))
+			result = injectNetplanConfigForHost(result, target.node, target.osFamily, base, h.resolveSubnetSpec(ctx, target.node))
 		}
 	}
 
@@ -511,6 +516,7 @@ func shellQuote(value string) string {
 
 type netplanConfig struct {
 	Version   int                      `yaml:"version"`
+	Renderer  string                   `yaml:"renderer,omitempty"`
 	Ethernets map[string]netplanNIC    `yaml:"ethernets,omitempty"`
 	Bridges   map[string]netplanBridge `yaml:"bridges,omitempty"`
 }
@@ -625,6 +631,7 @@ func buildDirectNetplanConfig(mac, ip string, prefixLen int, gateway string, nam
 	}
 	return netplanConfig{
 		Version:   2,
+		Renderer:  "networkd",
 		Ethernets: map[string]netplanNIC{"gomi-nic": nic},
 	}
 }
@@ -655,6 +662,7 @@ func buildBridgedNetplanConfig(mac, bridgeName, ip string, prefixLen int, gatewa
 	}
 	return netplanConfig{
 		Version:   2,
+		Renderer:  "networkd",
 		Ethernets: map[string]netplanNIC{"gomi-nic": nic},
 		Bridges:   map[string]netplanBridge{bridgeName: bridge},
 	}
@@ -724,6 +732,9 @@ func (h *Handler) PXEInstallComplete(c echo.Context) error {
 			}
 			return c.JSON(gohttp.StatusOK, installCompleteVMResponse{Status: "already-finalized", VM: *targetVM})
 		}
+		if err := h.ensureVirtualMachineSSHReachable(c.Request().Context(), *targetVM, report); err != nil {
+			return c.JSON(gohttp.StatusConflict, jsonErrorErr(err))
+		}
 
 		now := time.Now().UTC()
 		updated := *targetVM
@@ -777,6 +788,9 @@ func (h *Handler) PXEInstallComplete(c echo.Context) error {
 			return c.JSON(gohttp.StatusConflict, jsonError("provisioning token is expired"))
 		}
 		return c.JSON(gohttp.StatusOK, installCompleteMachineResponse{Status: "already-finalized", Machine: *targetMachine})
+	}
+	if err := h.ensureMachineSSHReachable(c.Request().Context(), *targetMachine, report); err != nil {
+		return c.JSON(gohttp.StatusConflict, jsonErrorErr(err))
 	}
 
 	now := time.Now().UTC()
@@ -894,6 +908,78 @@ func (h *Handler) PXEFile(c echo.Context) error {
 
 // --- helpers ---
 
+func (h *Handler) ensureMachineSSHReachable(ctx context.Context, m machine.Machine, report node.InstallCompleteReport) error {
+	if !strings.EqualFold(strings.TrimSpace(string(m.OSPreset.Family)), string(machine.OSTypeDebian)) {
+		return nil
+	}
+	ip := installCompleteSSHProbeIP(report, m.IP)
+	if ip == "" {
+		return fmt.Errorf("debian install-complete is waiting for a reported SSH address")
+	}
+	if err := h.probeInstallCompleteSSH(ctx, ip); err != nil {
+		return fmt.Errorf("debian install-complete is waiting for SSH on %s: %w", ip, err)
+	}
+	return nil
+}
+
+func (h *Handler) ensureVirtualMachineSSHReachable(ctx context.Context, v vm.VirtualMachine, report node.InstallCompleteReport) error {
+	if !h.virtualMachineIsDebian(ctx, v) {
+		return nil
+	}
+	ip := installCompleteSSHProbeIP(report, v.StaticIP())
+	if ip == "" {
+		for _, candidate := range v.IPAddresses {
+			ip = strings.TrimSpace(candidate)
+			if ip != "" {
+				break
+			}
+		}
+	}
+	if ip == "" {
+		return fmt.Errorf("debian install-complete is waiting for a reported SSH address")
+	}
+	if err := h.probeInstallCompleteSSH(ctx, ip); err != nil {
+		return fmt.Errorf("debian install-complete is waiting for SSH on %s: %w", ip, err)
+	}
+	return nil
+}
+
+func installCompleteSSHProbeIP(report node.InstallCompleteReport, fallback string) string {
+	ip := strings.TrimSpace(report.IP)
+	if ip == "" {
+		ip = strings.TrimSpace(fallback)
+	}
+	return ip
+}
+
+func (h *Handler) probeInstallCompleteSSH(ctx context.Context, ip string) error {
+	probe := h.machineSSHProbe
+	if probe == nil {
+		probe = probeSSHPort
+	}
+	return probe(ctx, ip)
+}
+
+func (h *Handler) virtualMachineIsDebian(ctx context.Context, v vm.VirtualMachine) bool {
+	if h.osimages == nil || strings.TrimSpace(v.OSImageRef) == "" {
+		return false
+	}
+	img, err := h.osimages.Get(ctx, strings.TrimSpace(v.OSImageRef))
+	if err != nil {
+		return false
+	}
+	return strings.EqualFold(strings.TrimSpace(img.OSFamily), string(machine.OSTypeDebian))
+}
+
+func probeSSHPort(ctx context.Context, ip string) error {
+	d := net.Dialer{Timeout: 5 * time.Second}
+	conn, err := d.DialContext(ctx, "tcp", net.JoinHostPort(ip, "22"))
+	if err != nil {
+		return err
+	}
+	return conn.Close()
+}
+
 func (h *Handler) resolvePXEBaseURL(c echo.Context) string {
 	if strings.TrimSpace(h.pxeHTTPBaseURL) != "" {
 		return strings.TrimRight(h.pxeHTTPBaseURL, "/")
@@ -966,6 +1052,7 @@ func (h *Handler) resolvePXETarget(ctx context.Context, rawMAC string) (pxeTarge
 			node:        targetVM,
 			installType: vm.InstallConfigType(targetVM.PXEInstallType()),
 			variant:     h.resolveOSImageVariant(ctx, targetVM.OSImageVariantRef()),
+			osFamily:   h.resolveOSImageFamily(ctx, targetVM.OSImageVariantRef()),
 		}, true, nil
 	}
 
@@ -981,6 +1068,7 @@ func (h *Handler) resolvePXETarget(ctx context.Context, rawMAC string) (pxeTarge
 			node:        targetMachine,
 			installType: vm.InstallConfigType(targetMachine.PXEInstallType()),
 			variant:     h.resolveOSImageVariant(ctx, targetMachine.OSImageVariantRef()),
+			osFamily:   string(targetMachine.OSPreset.Family),
 		}, true, nil
 	}
 
@@ -996,6 +1084,17 @@ func (h *Handler) resolveOSImageVariant(ctx context.Context, osImageRef string) 
 		return ""
 	}
 	return string(img.Variant)
+}
+
+func (h *Handler) resolveOSImageFamily(ctx context.Context, osImageRef string) string {
+	if h.osimages == nil || strings.TrimSpace(osImageRef) == "" {
+		return ""
+	}
+	img, err := h.osimages.Get(ctx, strings.TrimSpace(osImageRef))
+	if err != nil {
+		return ""
+	}
+	return img.OSFamily
 }
 
 func osImageVariantIsDesktop(variant string) bool {
@@ -1311,7 +1410,7 @@ func buildAutoinstallUserData(inlineCloudConfig, hostname, completeURL string) s
 	return "#cloud-config\n" + string(raw)
 }
 
-func injectCloudConfigCompletion(content, completeURL, hostname string) string {
+func injectCloudConfigCompletion(content, completeURL, hostname string, completeRetries int) string {
 	trimmed := strings.TrimSpace(content)
 	if trimmed == "" {
 		trimmed = defaultLinuxCurtinUserData
@@ -1338,10 +1437,13 @@ func injectCloudConfigCompletion(content, completeURL, hostname string) string {
 	runCmd = append(runCmd, "systemctl enable serial-getty@ttyS0.service || true")
 	injectTargetUEFIBootOrderCleanup(cfg, &runCmd)
 	if completeURL != "" {
+		if completeRetries <= 0 {
+			completeRetries = 60
+		}
 		escaped := strings.ReplaceAll(completeURL, `"`, `\"`)
 		callback := fmt.Sprintf(
-			`sh -c 'for i in $(seq 1 60); do IP=$(hostname -I 2>/dev/null | awk "{print \$1}"); DEV=$(ip -o route get 1 2>/dev/null | awk "{for(i=1;i<=NF;i++){if(\$i==\"dev\"){print \$(i+1);exit}}}"); MAC=$(cat /sys/class/net/${DEV}/address 2>/dev/null); curl -fsS -X POST -H "Content-Type: application/json" -d "{\"token\":\"%s\",\"type\":\"%s\",\"ip\":\"${IP}\",\"mac\":\"${MAC}\"}" "%s" && exit 0; curl -fsS -X POST "%s" && exit 0; sleep 2; done; true'`,
-			"__TOKEN__", "__TYPE__", escaped, escaped,
+			`sh -c 'for i in $(seq 1 %d); do IP=$(hostname -I 2>/dev/null | awk "{print \$1}"); DEV=$(ip -o route get 1 2>/dev/null | awk "{for(i=1;i<=NF;i++){if(\$i==\"dev\"){print \$(i+1);exit}}}"); MAC=$(cat /sys/class/net/${DEV}/address 2>/dev/null); curl -fsS -X POST -H "Content-Type: application/json" -d "{\"token\":\"%s\",\"type\":\"%s\",\"ip\":\"${IP}\",\"mac\":\"${MAC}\"}" "%s" && exit 0; curl -fsS -X POST "%s" && exit 0; sleep 2; done; true'`,
+			completeRetries, "__TOKEN__", "__TYPE__", escaped, escaped,
 		)
 		// Replace token/type placeholders with actual values parsed from completeURL.
 		tokenVal, typeVal := parseTokenAndTypeFromURL(completeURL)
@@ -1635,6 +1737,101 @@ type netplanParams struct {
 	MAC         string
 	Gateway     string
 	NameServers []string
+	OSFamily    string
+	PXEBaseURL  string
+}
+
+const debianNetplanNetworkdSwitchScript = `#!/bin/sh
+set -eu
+
+if ! command -v netplan >/dev/null 2>&1; then
+	echo "netplan command is missing; install netplan.io before switching Debian networking" >&2
+	exit 1
+fi
+
+netplan generate
+
+cat >/usr/local/sbin/gomi-rollback-networking <<'EOF'
+#!/bin/sh
+set -eu
+systemctl unmask networking.service 2>/dev/null || true
+systemctl enable networking.service 2>/dev/null || true
+systemctl disable systemd-networkd.service systemd-networkd.socket 2>/dev/null || true
+systemctl stop systemd-networkd.service systemd-networkd.socket 2>/dev/null || true
+if [ -f /etc/network/interfaces.gomi-netplan-save ]; then
+	mv -f /etc/network/interfaces.gomi-netplan-save /etc/network/interfaces
+fi
+if [ -f /etc/default/netplan.gomi-save ]; then
+	mv -f /etc/default/netplan.gomi-save /etc/default/netplan
+else
+	rm -f /etc/default/netplan
+fi
+systemctl restart networking.service 2>/dev/null || true
+EOF
+chmod 0755 /usr/local/sbin/gomi-rollback-networking
+
+cat >/etc/systemd/system/gomi-network-rollback.service <<'EOF'
+[Unit]
+Description=Rollback GOMI netplan networkd switch
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/gomi-rollback-networking
+EOF
+
+cat >/etc/systemd/system/gomi-network-rollback.timer <<'EOF'
+[Unit]
+Description=Rollback GOMI netplan networkd switch unless cancelled
+
+[Timer]
+OnActiveSec=10min
+AccuracySec=5s
+Unit=gomi-network-rollback.service
+
+[Install]
+WantedBy=timers.target
+EOF
+
+systemctl daemon-reload
+systemctl enable --now gomi-network-rollback.timer
+if [ -f /etc/network/interfaces ]; then
+	mv -f /etc/network/interfaces /etc/network/interfaces.gomi-netplan-save
+fi
+if [ -e /etc/default/netplan ]; then
+	cp -a /etc/default/netplan /etc/default/netplan.gomi-save
+fi
+printf '%s\n' 'ENABLED=1' > /etc/default/netplan
+systemctl enable systemd-networkd.service
+systemctl restart systemd-networkd.service
+systemctl disable --now networking.service 2>/dev/null || true
+systemctl mask networking.service 2>/dev/null || true
+
+if command -v networkctl >/dev/null 2>&1; then
+	networkctl status --no-pager || true
+	networkctl is-online --timeout=30 || true
+fi
+ip addr show
+ip route show
+`
+
+func debianNetplanNetworkdConfirmScript(pxeBaseURL string) string {
+	healthURL := strings.TrimRight(strings.TrimSpace(pxeBaseURL), "/")
+	healthURL = strings.TrimSuffix(healthURL, "/pxe")
+	healthURL += "/healthz"
+return fmt.Sprintf(`#!/bin/sh
+set -eu
+
+if ! systemctl is-active --quiet systemd-networkd.service; then
+	exit 0
+fi
+if command -v networkctl >/dev/null 2>&1; then
+	networkctl is-online --timeout=30
+fi
+curl -fsS --connect-timeout 5 --max-time 15 %s >/dev/null
+systemctl disable --now gomi-network-rollback.timer
+rm -f /etc/systemd/system/gomi-network-rollback.timer /etc/systemd/system/gomi-network-rollback.service /usr/local/sbin/gomi-rollback-networking /usr/local/sbin/gomi-confirm-netplan-networkd /etc/network/interfaces.gomi-netplan-save /etc/default/netplan.gomi-save
+systemctl daemon-reload
+`, shellQuote(healthURL))
 }
 
 func injectNetplanConfigFromParams(cloudConfig string, params netplanParams, spec *subnet.SubnetSpec) string {
@@ -1674,7 +1871,8 @@ func injectNetplanConfigFromParams(cloudConfig string, params netplanParams, spe
 		Network netplanConfig `yaml:"network"`
 	}{
 		Network: netplanConfig{
-			Version: 2,
+			Version:  2,
+			Renderer: "networkd",
 			Ethernets: map[string]netplanNIC{
 				"id0": nic,
 			},
@@ -1700,19 +1898,30 @@ func injectNetplanConfigFromParams(cloudConfig string, params netplanParams, spe
 	writeFiles = append(writeFiles, map[string]any{
 		"path":        "/etc/netplan/99-gomi-network.yaml",
 		"content":     netplanYAML,
-		"permissions": "0644",
+		"permissions": "0600",
 	})
+	if isDebianOSFamily(params.OSFamily) {
+		writeFiles = append(writeFiles, map[string]any{
+			"path":        "/usr/local/sbin/gomi-apply-netplan-networkd",
+			"content":     debianNetplanNetworkdSwitchScript,
+			"permissions": "0755",
+		}, map[string]any{
+			"path":        "/usr/local/sbin/gomi-confirm-netplan-networkd",
+			"content":     debianNetplanNetworkdConfirmScript(params.PXEBaseURL),
+			"permissions": "0755",
+		})
+	}
 	cfg["write_files"] = writeFiles
 
-	netplanCmds := []any{
-		"rm -f /etc/cloud/cloud.cfg.d/50-curtin-networking.cfg /etc/netplan/50-cloud-init.yaml /etc/netplan/01-netcfg.yaml /etc/netplan/00-installer-config.yaml",
-		"netplan apply",
-	}
+	netplanCmds := netplanActivationCommands(params.OSFamily)
 	runCmd := []any{}
 	if existing, ok := cfg["runcmd"].([]any); ok {
 		runCmd = existing
 	}
 	runCmd = append(netplanCmds, runCmd...)
+	if isDebianOSFamily(params.OSFamily) {
+		runCmd = append(runCmd, "/usr/local/sbin/gomi-confirm-netplan-networkd")
+	}
 	cfg["runcmd"] = runCmd
 
 	raw, err := yaml.Marshal(cfg)
@@ -1724,7 +1933,7 @@ func injectNetplanConfigFromParams(cloudConfig string, params netplanParams, spe
 
 // injectBridgedNetplanConfig injects a bridged netplan config into cloud-config
 // write_files so that the hypervisor machine gets a bridge with a static IP.
-func injectBridgedNetplanConfig(cloudConfig string, m *machine.Machine, spec *subnet.SubnetSpec) string {
+func injectBridgedNetplanConfig(cloudConfig string, m *machine.Machine, osFamily, pxeBaseURL string, spec *subnet.SubnetSpec) string {
 	ip := ""
 	if m.GetIPAssignment() == resource.IPAssignmentStatic {
 		ip = m.StaticIP()
@@ -1765,19 +1974,30 @@ func injectBridgedNetplanConfig(cloudConfig string, m *machine.Machine, spec *su
 	writeFiles = append(writeFiles, map[string]any{
 		"path":        "/etc/netplan/99-gomi-network.yaml",
 		"content":     netplanYAML,
-		"permissions": "0644",
+		"permissions": "0600",
 	})
+	if isDebianOSFamily(osFamily) {
+		writeFiles = append(writeFiles, map[string]any{
+			"path":        "/usr/local/sbin/gomi-apply-netplan-networkd",
+			"content":     debianNetplanNetworkdSwitchScript,
+			"permissions": "0755",
+		}, map[string]any{
+			"path":        "/usr/local/sbin/gomi-confirm-netplan-networkd",
+			"content":     debianNetplanNetworkdConfirmScript(pxeBaseURL),
+			"permissions": "0755",
+		})
+	}
 	cfg["write_files"] = writeFiles
 
-	netplanCmds := []any{
-		"rm -f /etc/cloud/cloud.cfg.d/50-curtin-networking.cfg /etc/netplan/50-cloud-init.yaml /etc/netplan/01-netcfg.yaml /etc/netplan/00-installer-config.yaml",
-		"netplan apply",
-	}
+	netplanCmds := netplanActivationCommands(osFamily)
 	runCmd := []any{}
 	if existing, ok := cfg["runcmd"].([]any); ok {
 		runCmd = existing
 	}
 	runCmd = append(netplanCmds, runCmd...)
+	if isDebianOSFamily(osFamily) {
+		runCmd = append(runCmd, "/usr/local/sbin/gomi-confirm-netplan-networkd")
+	}
 	cfg["runcmd"] = runCmd
 
 	raw, err := yaml.Marshal(cfg)
@@ -1787,7 +2007,7 @@ func injectBridgedNetplanConfig(cloudConfig string, m *machine.Machine, spec *su
 	return "#cloud-config\n" + string(raw)
 }
 
-func injectNetplanConfigForHost(cloudConfig string, h node.Node, spec *subnet.SubnetSpec) string {
+func injectNetplanConfigForHost(cloudConfig string, h node.Node, osFamily, pxeBaseURL string, spec *subnet.SubnetSpec) string {
 	ip := ""
 	if h.GetIPAssignment() == resource.IPAssignmentStatic {
 		ip = h.StaticIP()
@@ -1796,9 +2016,25 @@ func injectNetplanConfigForHost(cloudConfig string, h node.Node, spec *subnet.Su
 		return cloudConfig
 	}
 	return injectNetplanConfigFromParams(cloudConfig, netplanParams{
-		IP:  ip,
-		MAC: h.PrimaryMAC(),
+		IP:       ip,
+		MAC:      h.PrimaryMAC(),
+		OSFamily: osFamily,
+		PXEBaseURL: pxeBaseURL,
 	}, spec)
+}
+
+func netplanActivationCommands(osFamily string) []any {
+	cmds := []any{
+		"rm -f /etc/cloud/cloud.cfg.d/50-curtin-networking.cfg /etc/netplan/50-cloud-init.yaml /etc/netplan/01-netcfg.yaml /etc/netplan/00-installer-config.yaml",
+	}
+	if isDebianOSFamily(osFamily) {
+		return append(cmds, "/usr/local/sbin/gomi-apply-netplan-networkd")
+	}
+	return append(cmds, "netplan apply")
+}
+
+func isDebianOSFamily(osFamily string) bool {
+	return strings.EqualFold(strings.TrimSpace(osFamily), "debian")
 }
 
 func (h *Handler) leaseIPsByMAC(ctx context.Context) (map[string]string, error) {

@@ -3,6 +3,7 @@ package pxehttp
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -988,6 +989,96 @@ func TestPXEInstallComplete_ByToken(t *testing.T) {
 	}
 }
 
+func TestPXEInstallComplete_DebianVMWaitsForSSHBeforeFinalizing(t *testing.T) {
+	backend := memory.New()
+	vmSvc := vm.NewService(backend.VMs())
+	osImageSvc := osimage.NewService(backend.OSImages())
+	now := time.Now().UTC()
+	img := osimage.OSImage{
+		Name:      "debian-13-amd64-cloud",
+		OSFamily:  "debian",
+		OSVersion: "13",
+		Arch:      "amd64",
+		Ready:     true,
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	if err := backend.OSImages().Upsert(context.Background(), img); err != nil {
+		t.Fatalf("upsert os image: %v", err)
+	}
+	target := vm.VirtualMachine{
+		Name:          "vm-debian-complete",
+		HypervisorRef: "hv-missing",
+		Resources:     vm.ResourceSpec{CPUCores: 2, MemoryMB: 2048, DiskGB: 20},
+		OSImageRef:    "debian-13-amd64-cloud",
+		Phase:         vm.PhaseProvisioning,
+		Provisioning: vm.ProvisioningStatus{
+			Active:          true,
+			StartedAt:       &now,
+			CompletionToken: "token-vm-debian-finish-01",
+		},
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	if err := backend.VMs().Upsert(context.Background(), target); err != nil {
+		t.Fatalf("upsert vm: %v", err)
+	}
+
+	e := echo.New()
+	req := httptest.NewRequest(http.MethodPost, "/pxe/install-complete?token=token-vm-debian-finish-01&type=curtin", strings.NewReader(`{"ip":"192.168.122.151"}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+
+	h := &Handler{
+		vms:      vmSvc,
+		osimages: osImageSvc,
+		machineSSHProbe: func(_ context.Context, ip string) error {
+			if ip != "192.168.122.151" {
+				t.Fatalf("unexpected SSH probe IP: %s", ip)
+			}
+			return fmt.Errorf("connection refused")
+		},
+	}
+	if err := h.PXEInstallComplete(c); err != nil {
+		t.Fatalf("PXEInstallComplete: %v", err)
+	}
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("expected conflict while SSH is unreachable, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	stored, err := backend.VMs().Get(context.Background(), target.Name)
+	if err != nil {
+		t.Fatalf("get vm: %v", err)
+	}
+	if !stored.Provisioning.Active || stored.Phase != vm.PhaseProvisioning {
+		t.Fatalf("vm must remain provisioning while SSH is unreachable: %#v", stored)
+	}
+
+	req = httptest.NewRequest(http.MethodPost, "/pxe/install-complete?token=token-vm-debian-finish-01&type=curtin", strings.NewReader(`{"ip":"192.168.122.151"}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec = httptest.NewRecorder()
+	c = e.NewContext(req, rec)
+	h.machineSSHProbe = func(_ context.Context, ip string) error {
+		if ip != "192.168.122.151" {
+			t.Fatalf("unexpected SSH probe IP: %s", ip)
+		}
+		return nil
+	}
+	if err := h.PXEInstallComplete(c); err != nil {
+		t.Fatalf("PXEInstallComplete retry: %v", err)
+	}
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected completion after SSH becomes reachable, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	stored, err = backend.VMs().Get(context.Background(), target.Name)
+	if err != nil {
+		t.Fatalf("get vm after retry: %v", err)
+	}
+	if stored.Provisioning.Active || stored.Phase != vm.PhaseRunning {
+		t.Fatalf("vm must finalize after SSH becomes reachable: %#v", stored)
+	}
+}
+
 func TestPXEInstallComplete_ByToken_Machine(t *testing.T) {
 	backend := memory.New()
 	machineSvc := machine.NewService(backend.Machines())
@@ -1058,6 +1149,92 @@ func TestPXEInstallComplete_ByToken_Machine(t *testing.T) {
 	}
 	if retryPayload["status"] != "already-finalized" {
 		t.Fatalf("expected already-finalized retry response, got %v", retryPayload["status"])
+	}
+}
+
+func TestPXEInstallComplete_DebianWaitsForSSHBeforeFinalizing(t *testing.T) {
+	backend := memory.New()
+	machineSvc := machine.NewService(backend.Machines())
+	now := time.Now().UTC()
+	target := machine.Machine{
+		Name:     "bm-debian-complete",
+		Hostname: "bm-debian-complete",
+		MAC:      "52:54:00:66:66:67",
+		Arch:     "amd64",
+		Firmware: machine.FirmwareUEFI,
+		OSPreset: machine.OSPreset{
+			Family: machine.OSTypeDebian,
+		},
+		Phase: machine.PhaseProvisioning,
+		Provision: &machine.ProvisionProgress{
+			Active:          true,
+			StartedAt:       &now,
+			CompletionToken: "token-debian-finish-01",
+		},
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	if err := backend.Machines().Upsert(context.Background(), target); err != nil {
+		t.Fatalf("upsert machine: %v", err)
+	}
+
+	e := echo.New()
+	req := httptest.NewRequest(http.MethodPost, "/pxe/install-complete?token=token-debian-finish-01&type=curtin", strings.NewReader(`{"ip":"192.168.2.151"}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+
+	probeCalls := 0
+	h := &Handler{
+		machines: machineSvc,
+		machineSSHProbe: func(_ context.Context, ip string) error {
+			probeCalls++
+			if ip != "192.168.2.151" {
+				t.Fatalf("unexpected SSH probe IP: %s", ip)
+			}
+			return fmt.Errorf("connection refused")
+		},
+	}
+	if err := h.PXEInstallComplete(c); err != nil {
+		t.Fatalf("PXEInstallComplete: %v", err)
+	}
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("expected conflict while SSH is unreachable, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	if probeCalls != 1 {
+		t.Fatalf("expected one SSH probe, got %d", probeCalls)
+	}
+	stored, err := backend.Machines().Get(context.Background(), target.Name)
+	if err != nil {
+		t.Fatalf("get machine: %v", err)
+	}
+	if stored.Provision == nil || !stored.Provision.Active || stored.Phase != machine.PhaseProvisioning {
+		t.Fatalf("machine must remain provisioning while SSH is unreachable: %#v", stored)
+	}
+
+	req = httptest.NewRequest(http.MethodPost, "/pxe/install-complete?token=token-debian-finish-01&type=curtin", strings.NewReader(`{"ip":"192.168.2.151"}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec = httptest.NewRecorder()
+	c = e.NewContext(req, rec)
+	h.machineSSHProbe = func(_ context.Context, ip string) error {
+		probeCalls++
+		if ip != "192.168.2.151" {
+			t.Fatalf("unexpected SSH probe IP: %s", ip)
+		}
+		return nil
+	}
+	if err := h.PXEInstallComplete(c); err != nil {
+		t.Fatalf("PXEInstallComplete retry: %v", err)
+	}
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected completion after SSH becomes reachable, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	stored, err = backend.Machines().Get(context.Background(), target.Name)
+	if err != nil {
+		t.Fatalf("get machine after retry: %v", err)
+	}
+	if stored.Provision == nil || stored.Provision.Active || stored.Phase != machine.PhaseReady {
+		t.Fatalf("machine must finalize after SSH becomes reachable: %#v", stored)
 	}
 }
 
@@ -2890,6 +3067,9 @@ func TestPXENocloudUserData_DHCPMachineInjectsWakeOnLANNetplan(t *testing.T) {
 	if !strings.Contains(body, "99-gomi-network.yaml") {
 		t.Fatalf("expected netplan write_files entry in user-data, got:\n%s", body)
 	}
+	if !strings.Contains(body, "permissions: \"0600\"") {
+		t.Fatalf("expected restrictive netplan permissions, got:\n%s", body)
+	}
 	if !strings.Contains(body, "macaddress: 84:47:09:1f:1c:d6") {
 		t.Fatalf("expected MAC match in netplan config, got:\n%s", body)
 	}
@@ -2907,8 +3087,89 @@ func TestPXENocloudUserData_DHCPMachineInjectsWakeOnLANNetplan(t *testing.T) {
 	}
 }
 
+func TestPXENocloudUserData_DebianMachineSwitchesToNetworkdWithRollback(t *testing.T) {
+	backend := memory.New()
+	machineSvc := machine.NewService(backend.Machines())
+	now := time.Now().UTC()
+	deadline := now.Add(30 * time.Minute)
+	target := machine.Machine{
+		Name:     "bm-debian-netplan",
+		Hostname: "bm-debian-netplan",
+		MAC:      "84:47:09:1f:1c:d7",
+		Arch:     "amd64",
+		Firmware: machine.FirmwareUEFI,
+		OSPreset: machine.OSPreset{
+			Family:   machine.OSTypeDebian,
+			Version:  "13",
+			ImageRef: "debian-13-amd64-baremetal",
+		},
+		Phase: machine.PhaseProvisioning,
+		Provision: &machine.ProvisionProgress{
+			Active:          true,
+			StartedAt:       &now,
+			DeadlineAt:      &deadline,
+			CompletionToken: "token-debian-netplan",
+		},
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	if err := backend.Machines().Upsert(context.Background(), target); err != nil {
+		t.Fatalf("upsert machine: %v", err)
+	}
+
+	e := echo.New()
+	req := httptest.NewRequest(http.MethodGet, "/pxe/nocloud/8447091f1cd7/user-data", nil)
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+	c.SetParamNames("mac")
+	c.SetParamValues("8447091f1cd7")
+
+	h := &Handler{machines: machineSvc}
+	if err := h.PXENocloudUserData(c); err != nil {
+		t.Fatalf("PXENocloudUserData: %v", err)
+	}
+	body := rec.Body.String()
+	for _, want := range []string{
+		"renderer: networkd",
+		"permissions: \"0600\"",
+		"seq 1 600",
+		"/usr/local/sbin/gomi-apply-netplan-networkd",
+		"/usr/local/sbin/gomi-confirm-netplan-networkd",
+		"netplan generate",
+		"gomi-network-rollback.timer",
+		"OnActiveSec=10min",
+		"/etc/network/interfaces.gomi-netplan-save",
+		"printf '%s\\n' 'ENABLED=1' > /etc/default/netplan",
+		"/etc/default/netplan.gomi-save",
+		"systemctl enable systemd-networkd.service",
+		"systemctl disable --now networking.service",
+		"systemctl mask networking.service",
+		"systemctl is-active --quiet systemd-networkd.service",
+		"networkctl status --no-pager",
+		"curl -fsS --connect-timeout 5 --max-time 15 'http://127.0.0.1:5392/healthz'",
+		"ip addr show",
+		"ip route show",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("expected Debian netplan switch user-data to contain %q, got:\n%s", want, body)
+		}
+	}
+	if strings.Contains(body, "\n- netplan apply\n") {
+		t.Fatalf("Debian netplan switch must use rollback script instead of direct netplan apply, got:\n%s", body)
+	}
+	applyIdx := strings.Index(body, "- /usr/local/sbin/gomi-apply-netplan-networkd")
+	completeIdx := strings.Index(body, "install-complete?token=token-debian-netplan")
+	confirmIdx := strings.LastIndex(body, "- /usr/local/sbin/gomi-confirm-netplan-networkd")
+	if applyIdx == -1 || completeIdx == -1 || confirmIdx == -1 || !(applyIdx < completeIdx && completeIdx < confirmIdx) {
+		t.Fatalf("expected Debian rollback confirmation to run after install callback, got:\n%s", body)
+	}
+}
+
 func TestBuildNetworkConfig_DHCP(t *testing.T) {
 	got := buildNetworkConfig("84:47:09:1f:1c:d6", "", nil)
+	if !strings.Contains(got, "renderer: networkd") {
+		t.Fatalf("expected networkd renderer, got:\n%s", got)
+	}
 	if !strings.Contains(got, "macaddress: 84:47:09:1f:1c:d6") {
 		t.Fatalf("expected mac match, got:\n%s", got)
 	}
