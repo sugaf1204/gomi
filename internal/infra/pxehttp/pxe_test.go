@@ -3119,6 +3119,7 @@ func TestPXENocloudUserData_DebianMachineSwitchesToNetworkdWithRollback(t *testi
 
 	e := echo.New()
 	req := httptest.NewRequest(http.MethodGet, "/pxe/nocloud/8447091f1cd7/user-data", nil)
+	req.Host = ""
 	rec := httptest.NewRecorder()
 	c := e.NewContext(req, rec)
 	c.SetParamNames("mac")
