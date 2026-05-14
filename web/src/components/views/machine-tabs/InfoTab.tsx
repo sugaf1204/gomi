@@ -7,9 +7,9 @@ type Props = {
 
 export function InfoTab({ machine }: Props) {
   const timings = machine.provision?.timings ?? []
-  const visibleTimings = timings.slice(-24).reverse()
+  const visibleTimings = timings.slice(-24)
   const summary = buildTimingSummary(machine, timings)
-  const timeline = buildDeployTimeline(machine, timings)
+  const latestEvent = visibleTimings[visibleTimings.length - 1]
 
   return (
     <div className="pt-[0.65rem] grid gap-[1rem]">
@@ -57,44 +57,6 @@ export function InfoTab({ machine }: Props) {
         </div>
         {visibleTimings.length > 0 ? (
           <div className="grid gap-[0.75rem]">
-            <div className="border border-line bg-panel-2 px-[0.72rem] py-[0.7rem]">
-              <div className="flex items-start justify-between gap-[0.8rem] mb-[0.72rem] max-sm:grid">
-                <div>
-                  <p className="m-0 text-[0.72rem] uppercase text-ink-soft">Current stage</p>
-                  <p className="m-0 mt-[0.16rem] text-[1rem] font-medium">{timeline.currentStage?.label ?? 'Waiting for timing'}</p>
-                </div>
-                <div className="text-right max-sm:text-left">
-                  <p className="m-0 text-[0.72rem] uppercase text-ink-soft">Latest event</p>
-                  <p className="m-0 mt-[0.16rem] text-[0.84rem] leading-[1.35] text-ink-soft break-anywhere">
-                    {timeline.latestEvent ? `${timeline.latestEvent.name} (${formatTimingTime(timeline.latestEvent)})` : '-'}
-                  </p>
-                </div>
-              </div>
-              <ol className="m-0 p-0 list-none grid grid-cols-[repeat(6,minmax(128px,1fr))] gap-0 overflow-x-auto">
-                {timeline.stages.map((stage, index) => (
-                  <li key={stage.id} className="relative min-w-[128px] pr-[0.5rem]">
-                    {index < timeline.stages.length - 1 && (
-                      <span
-                        className={`absolute left-[1.75rem] right-[-0.25rem] top-[0.72rem] h-[2px] ${stage.connectorComplete ? 'bg-brand' : 'bg-line-strong'}`}
-                        aria-hidden="true"
-                      />
-                    )}
-                    <div className="relative z-[1] grid grid-cols-[1.45rem_minmax(0,1fr)] gap-[0.42rem] items-start">
-                      <span className={stageMarkerClass(stage.status)} aria-hidden="true">
-                        {stage.status === 'failed' ? '!' : stage.status === 'done' ? 'OK' : stage.status === 'current' ? '>' : ''}
-                      </span>
-                      <div className="min-w-0">
-                        <p className={stageLabelClass(stage.status)}>{stage.label}</p>
-                        <p className="m-0 mt-[0.1rem] text-[0.72rem] text-ink-soft leading-[1.3] min-h-[1.85rem]">
-                          {stage.event ? stage.event.name : stage.status === 'current' ? 'in progress' : 'not reached'}
-                        </p>
-                        <p className="m-0 mt-[0.2rem] text-[0.78rem] tabular-nums text-ink-soft">{stage.event ? formatDuration(stage.event) : '-'}</p>
-                      </div>
-                    </div>
-                  </li>
-                ))}
-              </ol>
-            </div>
             <div className="grid grid-cols-[repeat(auto-fit,minmax(150px,1fr))] gap-[0.55rem]">
               {summary.map((item) => (
                 <div key={item.label} className="border border-line bg-surface-muted px-[0.65rem] py-[0.55rem]">
@@ -104,32 +66,49 @@ export function InfoTab({ machine }: Props) {
                 </div>
               ))}
             </div>
-            <div className="overflow-auto max-h-[320px] border-0 border-t border-line">
-              <table className="w-full border-collapse text-[0.82rem]">
-                <thead>
-                  <tr className="text-left text-ink-soft">
-                    <th className="font-medium py-[0.42rem] pr-[0.65rem]">Stage</th>
-                    <th className="font-medium py-[0.42rem] pr-[0.65rem]">Source</th>
-                    <th className="font-medium py-[0.42rem] pr-[0.65rem]">Duration</th>
-                    <th className="font-medium py-[0.42rem] pr-[0.65rem]">Result</th>
-                    <th className="font-medium py-[0.42rem]">Time</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {visibleTimings.map((event, index) => (
-                    <tr key={`${event.source ?? 'unknown'}-${event.name}-${event.timestamp ?? event.finishedAt ?? index}`} className="border-0 border-t border-line align-top">
-                      <td className="py-[0.42rem] pr-[0.65rem] min-w-[180px]">
-                        <span className="font-medium">{event.name}</span>
-                        {event.message && <span className="block text-ink-soft text-[0.76rem] leading-[1.35]">{event.message}</span>}
-                      </td>
-                      <td className="py-[0.42rem] pr-[0.65rem]">{event.source || '-'}</td>
-                      <td className="py-[0.42rem] pr-[0.65rem] tabular-nums">{formatDuration(event)}</td>
-                      <td className="py-[0.42rem] pr-[0.65rem]">{event.result || event.eventType || '-'}</td>
-                      <td className="py-[0.42rem] tabular-nums whitespace-nowrap">{formatTimingTime(event)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+            <div className="border border-line bg-panel-2 px-[0.72rem] py-[0.7rem]">
+              <div className="flex items-start justify-between gap-[0.8rem] mb-[0.65rem] max-sm:grid">
+                <div className="min-w-0">
+                  <p className="m-0 text-[0.72rem] uppercase text-ink-soft">Timeline</p>
+                  <p className="m-0 mt-[0.16rem] text-[0.88rem] leading-[1.35] text-ink-soft">
+                    Oldest to newest, showing the latest {visibleTimings.length} deploy events.
+                  </p>
+                </div>
+                <div className="min-w-0 text-right max-sm:text-left">
+                  <p className="m-0 text-[0.72rem] uppercase text-ink-soft">Latest</p>
+                  <p className="m-0 mt-[0.16rem] text-[0.84rem] leading-[1.35] text-ink-soft break-anywhere">
+                    {latestEvent ? `${formatTimingName(latestEvent.name)} (${formatTimingTime(latestEvent)})` : '-'}
+                  </p>
+                </div>
+              </div>
+              <ol className="m-0 grid max-h-[360px] list-none gap-0 overflow-y-auto p-0 pr-[0.15rem]">
+                {visibleTimings.map((event, index) => (
+                  <li
+                    key={`${event.source ?? 'unknown'}-${event.name}-${event.timestamp ?? event.finishedAt ?? index}`}
+                    className="grid grid-cols-[4.25rem_minmax(0,1fr)] gap-[0.55rem] border-0 border-t border-line py-[0.52rem] first:border-t-0 first:pt-0 last:pb-0 max-sm:grid-cols-[3.9rem_minmax(0,1fr)]"
+                  >
+                    <div className="whitespace-nowrap pt-[0.1rem] text-right font-mono text-[0.76rem] tabular-nums text-ink-soft">
+                      {formatTimingOffset(machine, event)}
+                    </div>
+                    <div className="relative min-w-0 pl-[0.7rem]">
+                      <span className={timingMarkerClass(event)} aria-hidden="true" />
+                      {index < visibleTimings.length - 1 && <span className="absolute left-[0.19rem] top-[1rem] bottom-[-0.55rem] w-px bg-line-strong" aria-hidden="true" />}
+                      <div className="min-w-0">
+                        <div className="flex min-w-0 flex-wrap items-baseline gap-x-[0.45rem] gap-y-[0.12rem]">
+                          <p className="m-0 min-w-0 break-anywhere text-[0.86rem] font-medium">{formatTimingName(event.name)}</p>
+                          <span className="text-[0.76rem] text-ink-soft">{event.source || 'unknown'}</span>
+                          <span className={timingResultClass(event)}>{event.result || event.eventType || 'event'}</span>
+                        </div>
+                        {event.message && <p className="m-0 mt-[0.12rem] break-anywhere text-[0.76rem] leading-[1.35] text-ink-soft">{event.message}</p>}
+                        <div className="mt-[0.18rem] flex flex-wrap gap-x-[0.7rem] gap-y-[0.12rem] text-[0.76rem] text-ink-soft">
+                          <span className="tabular-nums">Duration {formatDuration(event)}</span>
+                          <span className="tabular-nums">{formatTimingTime(event)}</span>
+                        </div>
+                      </div>
+                    </div>
+                  </li>
+                ))}
+              </ol>
             </div>
           </div>
         ) : (
@@ -140,93 +119,6 @@ export function InfoTab({ machine }: Props) {
   )
 }
 
-type DeployStageID = 'boot' | 'network' | 'inventory' | 'artifacts' | 'install' | 'finalize'
-type DeployStageStatus = 'pending' | 'current' | 'done' | 'failed'
-
-type DeployStage = {
-  id: DeployStageID
-  label: string
-  match: (event: ProvisionTiming) => boolean
-}
-
-type DeployTimelineStage = DeployStage & {
-  event?: ProvisionTiming
-  status: DeployStageStatus
-  connectorComplete: boolean
-}
-
-const deployStages: DeployStage[] = [
-  {
-    id: 'boot',
-    label: 'Boot',
-    match: (event) => event.source === 'initramfs' || event.name.startsWith('initramfs.'),
-  },
-  {
-    id: 'network',
-    label: 'Network',
-    match: (event) => ['runner.select_interface', 'runner.link_up', 'runner.dhcp'].includes(event.name),
-  },
-  {
-    id: 'inventory',
-    label: 'Inventory',
-    match: (event) => event.name.startsWith('runner.inventory') || event.name.startsWith('server.inventory.'),
-  },
-  {
-    id: 'artifacts',
-    label: 'Artifacts',
-    match: (event) => event.name === 'runner.fetch_curtin_config' || event.name.includes('file_transfer') || event.name.includes('artifact_transfer'),
-  },
-  {
-    id: 'install',
-    label: 'Install',
-    match: (event) => event.name === 'runner.curtin_install' || event.name === 'cmd-install' || event.name.startsWith('cmd-install/'),
-  },
-  {
-    id: 'finalize',
-    label: 'Finalize',
-    match: (event) => ['runner.sync', 'runner.reboot'].includes(event.name),
-  },
-]
-
-function buildDeployTimeline(machine: Machine, timings: ProvisionTiming[]) {
-  const stages: DeployTimelineStage[] = deployStages.map((stage) => ({ ...stage, event: latestMatchingTiming(timings, stage.match), status: 'pending', connectorComplete: false }))
-  const latestEvent = latestTimelineEvent(timings)
-  const failedIndex = stages.findIndex((stage) => stage.event && isFailure(stage.event))
-  const latestIndex = latestEvent ? stages.findIndex((stage) => stage.match(latestEvent)) : -1
-  const completed = isProvisionComplete(machine)
-  const failed = failedIndex >= 0 || isProvisionFailed(machine)
-  let currentIndex = -1
-
-  if (failedIndex >= 0) {
-    currentIndex = failedIndex
-  } else if (failed && latestIndex >= 0) {
-    currentIndex = latestIndex
-  } else if (!completed && latestIndex >= 0) {
-    currentIndex = Math.min(latestIndex + 1, stages.length - 1)
-  } else if (!completed && timings.length === 0 && isProvisionActive(machine)) {
-    currentIndex = 0
-  }
-
-  stages.forEach((stage, index) => {
-    if (failed && index === currentIndex) {
-      stage.status = 'failed'
-    } else if (completed || (currentIndex >= 0 && index < currentIndex) || (currentIndex < 0 && stage.event)) {
-      stage.status = stage.event && isFailure(stage.event) ? 'failed' : 'done'
-    } else if (index === currentIndex) {
-      stage.status = 'current'
-    } else {
-      stage.status = 'pending'
-    }
-    stage.connectorComplete = stage.status === 'done' && stages[index + 1]?.status !== 'pending'
-  })
-
-  return {
-    stages,
-    latestEvent,
-    currentStage: stages.find((stage) => stage.status === 'current' || stage.status === 'failed') ?? [...stages].reverse().find((stage) => stage.status === 'done'),
-  }
-}
-
 function buildTimingSummary(machine: Machine, timings: ProvisionTiming[]) {
   const slowest = [...timings]
     .filter((event) => typeof event.durationMs === 'number' && event.durationMs > 0)
@@ -234,18 +126,15 @@ function buildTimingSummary(machine: Machine, timings: ProvisionTiming[]) {
   const inventoryStore = latestTiming(timings, 'server.inventory.store') ?? latestTiming(timings, 'runner.inventory')
   const imageTransfer = latestTiming(timings, 'server.file_transfer') ?? latestTiming(timings, 'server.artifact_transfer')
   const curtinInstall = latestTiming(timings, 'runner.curtin_install') ?? latestTiming(timings, 'cmd-install')
-  const partitioning = latestTiming(timings, 'cmd-install/stage-partitioning')
-  const extract = latestTiming(timings, 'cmd-install/stage-extract')
-  const attemptDuration = durationBetween(machine.provision?.startedAt, machine.provision?.completedAt ?? machine.provision?.finishedAt)
+  const attemptEnd = machine.provision?.completedAt ?? machine.provision?.finishedAt ?? latestTimingTimestamp(timings)
+  const attemptDuration = durationBetween(machine.provision?.startedAt, attemptEnd)
 
   return [
     { label: 'Attempt', value: attemptDuration ?? '-', detail: machine.provision?.trigger || undefined },
-    { label: 'Inventory Store', value: inventoryStore ? formatDuration(inventoryStore) : '-', detail: inventoryStore?.name },
+    { label: 'Inventory Store', value: inventoryStore ? formatDuration(inventoryStore) : '-', detail: inventoryStore ? formatTimingName(inventoryStore.name) : undefined },
     { label: 'Image Transfer', value: imageTransfer ? formatDuration(imageTransfer) : '-', detail: imageTransfer?.message },
     { label: 'Curtin Install', value: curtinInstall ? formatDuration(curtinInstall) : '-', detail: curtinInstall?.result },
-    { label: 'Partitioning', value: partitioning ? formatDuration(partitioning) : '-', detail: partitioning?.result },
-    { label: 'Extract', value: extract ? formatDuration(extract) : '-', detail: extract?.result },
-    { label: 'Slowest', value: slowest ? formatDuration(slowest) : '-', detail: slowest ? slowest.name : undefined },
+    { label: 'Slowest', value: slowest ? formatDuration(slowest) : '-', detail: slowest ? formatTimingName(slowest.name) : undefined },
   ]
 }
 
@@ -256,35 +145,16 @@ function latestTiming(timings: ProvisionTiming[], name: string) {
   return undefined
 }
 
-function latestMatchingTiming(timings: ProvisionTiming[], match: (event: ProvisionTiming) => boolean) {
+function latestTimingTimestamp(timings: ProvisionTiming[]) {
   for (let index = timings.length - 1; index >= 0; index -= 1) {
-    if (match(timings[index])) return timings[index]
+    const timestamp = timings[index].finishedAt ?? timings[index].timestamp ?? timings[index].startedAt
+    if (timestamp) return timestamp
   }
   return undefined
 }
 
-function latestTimelineEvent(timings: ProvisionTiming[]) {
-  for (let index = timings.length - 1; index >= 0; index -= 1) {
-    const event = timings[index]
-    if (deployStages.some((stage) => stage.match(event))) return event
-  }
-  return timings[timings.length - 1]
-}
-
 function isFailure(event: ProvisionTiming) {
   return event.result?.toLowerCase() === 'failure' || event.result?.toLowerCase() === 'failed' || event.eventType?.toLowerCase() === 'failure'
-}
-
-function isProvisionActive(machine: Machine) {
-  return machine.phase.toLowerCase() === 'provisioning' || Boolean(machine.provision?.startedAt && !machine.provision.completedAt && !machine.provision.finishedAt)
-}
-
-function isProvisionComplete(machine: Machine) {
-  return Boolean(machine.provision?.completedAt || machine.provision?.finishedAt) && !isProvisionFailed(machine)
-}
-
-function isProvisionFailed(machine: Machine) {
-  return machine.phase.toLowerCase() === 'error' || Boolean(machine.lastError)
 }
 
 function durationBetween(start?: string, end?: string) {
@@ -299,9 +169,6 @@ function formatDuration(event: ProvisionTiming) {
   if (typeof event.durationMs === 'number' && Number.isFinite(event.durationMs) && event.durationMs > 0) {
     return formatMillis(event.durationMs)
   }
-  if (typeof event.monotonicSeconds === 'number' && Number.isFinite(event.monotonicSeconds) && event.monotonicSeconds > 0) {
-    return `T+${event.monotonicSeconds.toFixed(2)} s`
-  }
   return '-'
 }
 
@@ -315,23 +182,40 @@ function formatTimingTime(event: ProvisionTiming) {
   return formatDate(event.finishedAt ?? event.timestamp ?? event.startedAt)
 }
 
-function stageMarkerClass(status: DeployStageStatus) {
-  const base = 'inline-grid h-[1.45rem] w-[1.45rem] place-items-center border text-[0.82rem] font-medium leading-none'
-  switch (status) {
-    case 'done':
-      return `${base} border-brand bg-brand text-white`
-    case 'current':
-      return `${base} border-brand bg-panel text-brand`
-    case 'failed':
-      return `${base} border-error bg-error text-white`
-    default:
-      return `${base} border-line-strong bg-panel text-ink-soft`
-  }
+function formatTimingName(name: string) {
+  return name
+    .replace(/^cmd-install\/stage-/, 'cmd-install/')
+    .replace(/^runner\./, 'runner / ')
+    .replace(/^server\./, 'server / ')
+    .replace(/^initramfs\./, 'initramfs / ')
+    .replaceAll('.', ' / ')
+    .replaceAll('_', ' ')
 }
 
-function stageLabelClass(status: DeployStageStatus) {
-  const base = 'm-0 text-[0.84rem] font-medium'
-  if (status === 'current') return `${base} text-brand-strong`
-  if (status === 'failed') return `${base} text-error`
-  return `${base} text-ink`
+function formatTimingOffset(machine: Machine, event: ProvisionTiming) {
+  if (typeof event.monotonicSeconds === 'number' && Number.isFinite(event.monotonicSeconds)) {
+    return `T+${event.monotonicSeconds.toFixed(1)}s`
+  }
+  const eventTime = event.finishedAt ?? event.timestamp ?? event.startedAt
+  const start = machine.provision?.startedAt
+  if (!start || !eventTime) return '--'
+  const startMs = Date.parse(start)
+  const eventMs = Date.parse(eventTime)
+  if (!Number.isFinite(startMs) || !Number.isFinite(eventMs) || eventMs < startMs) return '--'
+  return `T+${formatMillis(eventMs - startMs)}`
+}
+
+function timingMarkerClass(event: ProvisionTiming) {
+  const base = 'absolute left-0 top-[0.42rem] z-[1] h-[0.42rem] w-[0.42rem] border bg-panel'
+  if (isFailure(event)) return `${base} border-error bg-error`
+  if (event.result?.toLowerCase() === 'success') return `${base} border-brand bg-brand`
+  return `${base} border-line-strong`
+}
+
+function timingResultClass(event: ProvisionTiming) {
+  const result = event.result?.toLowerCase()
+  const base = 'text-[0.72rem] font-medium'
+  if (result === 'success') return `${base} text-ok`
+  if (isFailure(event)) return `${base} text-error`
+  return `${base} text-ink-soft`
 }

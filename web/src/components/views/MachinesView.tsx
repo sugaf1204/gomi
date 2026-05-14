@@ -1020,15 +1020,15 @@ export function MachinesView({
 
           {(selectedMachine || multiSelectActive) && (
             <>
-              <section className="bg-transparent border-0 border-t border-line shadow-none pt-[0.85rem] flex justify-between items-start gap-4">
-                <div>
+              <section className="bg-transparent border-0 border-t border-line shadow-none pt-[0.85rem] grid grid-cols-[minmax(0,1fr)_auto] items-start gap-[0.85rem] max-sm:grid-cols-1">
+                <div className="min-w-0">
                   <p className="m-0 font-ui font-medium text-[0.72rem] uppercase tracking-[0.08em] text-ink-soft">Bare Metal Machine</p>
                   {multiSelectActive ? (
-                    <h2 className="mt-[0.22rem] text-[1.8rem]">{selectedMachines.size} selected</h2>
+                    <h2 className="mt-[0.22rem] text-[1.8rem] break-anywhere">{selectedMachines.size} selected</h2>
                   ) : selectedMachine && (
                     <>
-                      <h2 className="mt-[0.22rem] text-[1.8rem]">{selectedMachine.name}</h2>
-                      <p className="m-0 text-ink-soft">{selectedMachine.hostname} - {selectedMachine.arch} - {selectedMachine.firmware.toUpperCase()}</p>
+                      <h2 className="mt-[0.22rem] text-[1.8rem] break-anywhere">{selectedMachine.name}</h2>
+                      <p className="m-0 text-ink-soft break-anywhere">{selectedMachine.hostname} - {selectedMachine.arch} - {selectedMachine.firmware.toUpperCase()}</p>
                       <p className="m-0 mt-[0.15rem] text-[0.84rem] flex items-center gap-[0.4rem]">
                         <span className="text-ink-soft">IP:</span>
                         <span>{selectedMachine.ip || '-'}</span>
@@ -1059,7 +1059,7 @@ export function MachinesView({
                     </>
                   )}
                 </div>
-                <div className="flex flex-col items-end gap-[0.55rem]">
+                <div className="flex min-w-0 flex-col items-end gap-[0.55rem] max-sm:items-start">
                   {!multiSelectActive && selectedMachine && (
                     <span className={phaseClass(selectedMachine.phase)}>{selectedMachine.phase}</span>
                   )}
