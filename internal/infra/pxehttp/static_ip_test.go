@@ -131,6 +131,9 @@ func TestPXENocloudUserData_StaticIPVM_InjectsNetplan(t *testing.T) {
 	if !strings.Contains(body, "99-gomi-network.yaml") {
 		t.Fatalf("expected netplan write_files entry in user-data, got:\n%s", body)
 	}
+	if !strings.Contains(body, "permissions: \"0600\"") {
+		t.Fatalf("expected restrictive netplan permissions, got:\n%s", body)
+	}
 	if !strings.Contains(body, "10.0.0.100/24") {
 		t.Fatalf("expected static IP 10.0.0.100/24 in netplan config, got:\n%s", body)
 	}
