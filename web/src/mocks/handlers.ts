@@ -34,6 +34,20 @@ export const handlers = [
     return HttpResponse.json(machine)
   }),
 
+  http.get(`${API_BASE}/machines/:name/hardware`, ({ params }) => {
+    const machine = machines.find((m) => m.name === params.name)
+    if (!machine) return HttpResponse.json({ error: 'not found' }, { status: 404 })
+    return HttpResponse.json({
+      name: `${machine.name}-inventory`,
+      machineName: machine.name,
+      cpu: { model: machine.arch === 'arm64' ? 'ARM Cortex-A76' : 'Intel Core i7-12700', cores: 12, threads: 20, arch: machine.arch, mhz: '3600' },
+      memory: { totalMB: 65536, slots: 4 },
+      disks: [{ name: 'nvme0n1', sizeMB: 1_000_000, type: 'nvme', model: 'Samsung SSD 980' }],
+      nics: [{ name: 'eno1', mac: machine.mac, speed: '1G', state: 'up' }],
+      bios: { vendor: 'American Megatrends', version: '1.0.0', date: '2025-01-10' }
+    })
+  }),
+
   http.post(`${API_BASE}/machines/:name/actions/redeploy`, ({ params }) => {
     const machine = machines.find((m) => m.name === params.name)
     if (!machine) return HttpResponse.json({ error: 'not found' }, { status: 404 })
@@ -98,6 +112,47 @@ export const handlers = [
 
   http.get(`${API_BASE}/audit-events`, () => {
     return HttpResponse.json({ items: auditEvents })
+  }),
+
+  http.get(`${API_BASE}/ssh-keys`, () => {
+    return HttpResponse.json({ items: [] })
+  }),
+
+  http.get(`${API_BASE}/hypervisors`, () => {
+    return HttpResponse.json({ items: [] })
+  }),
+
+  http.get(`${API_BASE}/virtual-machines`, () => {
+    return HttpResponse.json({ items: [] })
+  }),
+
+  http.get(`${API_BASE}/cloud-init-templates`, () => {
+    return HttpResponse.json({ items: [] })
+  }),
+
+  http.get(`${API_BASE}/os-images`, () => {
+    return HttpResponse.json({ items: [] })
+  }),
+
+  http.get(`${API_BASE}/boot-environments`, () => {
+    return HttpResponse.json({ items: [] })
+  }),
+
+  http.get(`${API_BASE}/dhcp-leases`, () => {
+    return HttpResponse.json({ items: [] })
+  }),
+
+  http.get(`${API_BASE}/system-info`, () => {
+    return HttpResponse.json({
+      hostname: 'gomi-mock',
+      os: 'darwin',
+      arch: 'arm64',
+      goVersion: 'go1.24',
+      cpuCount: 10,
+      goroutines: 42,
+      uptime: 3600,
+      memoryUsedMB: 512
+    })
   }),
 
   http.get(`${API_BASE}/os-catalog`, () => {

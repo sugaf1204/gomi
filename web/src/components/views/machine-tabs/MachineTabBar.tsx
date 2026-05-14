@@ -17,12 +17,12 @@ type Props = {
 
 export function MachineTabBar({ activeTab, onTabChange }: Props) {
   return (
-    <nav className="flex gap-0 border-b border-line overflow-x-auto">
+    <nav aria-label="Machine sections" className="flex flex-wrap gap-x-[0.2rem] gap-y-[0.15rem] border-b border-line">
       {tabs.map(({ key, label }) => (
         <button
           key={key}
           className={clsx(
-            'border-0 border-b-2 bg-transparent shadow-none py-[0.5rem] px-[0.85rem] text-[0.84rem] font-medium hover:transform-none! hover:shadow-none! hover:text-ink transition-colors',
+            'shrink-0 border-0 border-b-2 bg-transparent shadow-none py-[0.5rem] px-[0.78rem] text-[0.84rem] font-medium hover:transform-none! hover:shadow-none! hover:text-ink transition-colors max-sm:px-[0.55rem]',
             activeTab === key
               ? 'border-b-brand text-brand'
               : 'border-b-transparent text-ink-soft hover:border-b-line-strong'
