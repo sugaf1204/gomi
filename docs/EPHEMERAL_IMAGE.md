@@ -10,10 +10,11 @@ curl -H "Authorization: Bearer $GOMI_TOKEN" \
   -X POST http://gomi.example/api/v1/os-catalog/ubuntu-22.04-amd64-baremetal/install
 ```
 
-Installing a catalog entry downloads an OS image artifact into GOMI storage and
-ensures the referenced boot environment exists. Catalog entries live in YAML,
-not Go code. A catalog entry can point at any HTTP(S) `.raw`, `.raw.zst`, or
-`.rootfs.squashfs` URL. Relative artifact URLs are resolved against
+Installing a catalog entry downloads an OS image artifact into GOMI storage and,
+for bare-metal entries, ensures the referenced boot environment exists. Catalog
+entries live in YAML,
+not Go code. A catalog entry can point at any HTTP(S) `.qcow2`, `.raw`,
+`.raw.zst`, or `.rootfs.squashfs` URL. Relative artifact URLs are resolved against
 `GOMI_OS_IMAGE_SOURCE_URL`; absolute URLs are used as-is. Operators can add or
 replace the built-in catalog with `GOMI_OS_CATALOG_FILE`,
 `GOMI_OS_CATALOG_URL`, and `GOMI_OS_CATALOG_REPLACE=true`.
@@ -144,9 +145,9 @@ all-in-one initrd or a direct shell/Go port.
 
 GOMI owns only consumption:
 
-- input: supported OS catalog entry and boot environment name;
+- input: supported OS catalog entry and, for bare-metal entries, boot environment name;
 - OS image source: `GOMI_OS_IMAGE_SOURCE_URL`, an HTTP(S) base containing
-  prebuilt variant-qualified `.rootfs.squashfs`, `.raw.zst`, or `.raw`
+  prebuilt variant-qualified `.rootfs.squashfs`, `.qcow2`, `.raw.zst`, or `.raw`
   artifacts;
 - bootenv source: `GOMI_BOOTENV_SOURCE_URL`, either a local directory or HTTP(S)
   base;

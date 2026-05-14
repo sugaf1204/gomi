@@ -123,14 +123,14 @@ func (s *Server) runCatalogInstall(entry oscatalog.Entry) {
 	if _, err := s.osimages.UpdateStatus(ctx, img.Name, true, localPath, ""); err != nil {
 		return
 	}
-	if s.bootenvs != nil {
+	if s.bootenvs != nil && catalogEntryNeedsBootEnvironment(entry) {
 		_, _ = s.bootenvs.Ensure(ctx, entry.BootEnvironment)
 	}
 }
 
 func validateCatalogArtifact(entry oscatalog.Entry) error {
-	if entry.Format != osimage.FormatRAW && entry.Format != osimage.FormatSquashFS {
-		return fmt.Errorf("unsupported catalog image format: %s; only raw and squashfs prebuilt artifacts are supported", entry.Format)
+	if entry.Format != osimage.FormatQCOW2 && entry.Format != osimage.FormatRAW && entry.Format != osimage.FormatSquashFS {
+		return fmt.Errorf("unsupported catalog image format: %s; only qcow2, raw, and squashfs prebuilt artifacts are supported", entry.Format)
 	}
 	sourceFormat := entry.SourceFormat
 	if sourceFormat == "" {
@@ -144,6 +144,13 @@ func validateCatalogArtifact(entry oscatalog.Entry) error {
 	}
 	compression := strings.TrimSpace(entry.SourceCompression)
 	switch entry.Format {
+	case osimage.FormatQCOW2:
+		if entry.Variant != osimage.VariantCloud {
+			return fmt.Errorf("qcow2 catalog image format is only supported for cloud variants")
+		}
+		if compression != "" {
+			return fmt.Errorf("unsupported qcow2 catalog source compression: %s", compression)
+		}
 	case osimage.FormatRAW:
 		if compression != "" && compression != "zstd" {
 			return fmt.Errorf("unsupported catalog image source compression: %s", compression)
@@ -158,6 +165,8 @@ func validateCatalogArtifact(entry oscatalog.Entry) error {
 
 func (s *Server) downloadCatalogArtifact(ctx context.Context, entry oscatalog.Entry, img osimage.OSImage) (string, string, error) {
 	switch entry.Format {
+	case osimage.FormatQCOW2:
+		return s.downloadCatalogFileArtifact(ctx, entry, img, ".qcow2")
 	case osimage.FormatRAW:
 		return s.downloadCatalogRawArtifact(ctx, entry, img)
 	case osimage.FormatSquashFS:
@@ -165,6 +174,57 @@ func (s *Server) downloadCatalogArtifact(ctx context.Context, entry oscatalog.En
 	default:
 		return "", "", fmt.Errorf("unsupported catalog image format: %s", entry.Format)
 	}
+}
+
+func (s *Server) downloadCatalogFileArtifact(ctx context.Context, entry oscatalog.Entry, img osimage.OSImage, ext string) (string, string, error) {
+	rawURL := strings.TrimSpace(entry.URL)
+	parsed, err := url.Parse(rawURL)
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		return "", "", fmt.Errorf("invalid catalog image URL")
+	}
+	if parsed.Scheme != "http" && parsed.Scheme != "https" {
+		return "", "", fmt.Errorf("unsupported catalog image URL scheme: %s", parsed.Scheme)
+	}
+
+	storageDir := s.imageStorageDir
+	if storageDir == "" {
+		storageDir = "data/images"
+	}
+	if err := os.MkdirAll(storageDir, 0o755); err != nil {
+		return "", "", fmt.Errorf("create image storage directory: %w", err)
+	}
+	localPath := filepath.Join(storageDir, img.Name+ext)
+
+	req, err := gohttp.NewRequestWithContext(ctx, gohttp.MethodGet, rawURL, nil)
+	if err != nil {
+		return "", "", err
+	}
+	resp, err := catalogHTTPClient.Do(req)
+	if err != nil {
+		return "", "", fmt.Errorf("download image: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != gohttp.StatusOK {
+		io.Copy(io.Discard, resp.Body)
+		return "", "", fmt.Errorf("download image: status %d", resp.StatusCode)
+	}
+
+	tmpPath := localPath + ".download"
+	defer os.Remove(tmpPath)
+	if err := writeImageFileWithChecksum(tmpPath, resp.Body, img.Checksum); err != nil {
+		return "", "", err
+	}
+	localChecksum, err := fileSHA256(tmpPath)
+	if err != nil {
+		return "", "", err
+	}
+	if err := os.Rename(tmpPath, localPath); err != nil {
+		return "", "", fmt.Errorf("publish image file: %w", err)
+	}
+	if err := s.publishOSImageFile(localPath); err != nil {
+		return "", "", err
+	}
+	return localPath, localChecksum, nil
 }
 
 func (s *Server) downloadCatalogRawArtifact(ctx context.Context, entry oscatalog.Entry, img osimage.OSImage) (string, string, error) {
@@ -290,6 +350,7 @@ func (s *Server) downloadCatalogSquashFSArtifact(ctx context.Context, entry osca
 
 func (s *Server) osCatalogStatus(ctx context.Context, entry oscatalog.Entry) osCatalogEntryResponse {
 	resp := osCatalogEntryResponse{Entry: entry}
+	needsBootenv := catalogEntryNeedsBootEnvironment(entry)
 	if s.bootenvs != nil {
 		resp.BootEnvironment = s.bootenvs.Status(entry.BootEnvironment)
 	}
@@ -298,11 +359,15 @@ func (s *Server) osCatalogStatus(ctx context.Context, entry oscatalog.Entry) osC
 		resp.OSImageReady = img.Ready
 		resp.OSImageError = img.Error
 	}
-	resp.Installed = resp.OSImageReady && resp.OSImageError == "" && resp.BootEnvironment.Phase == bootenv.PhaseReady
+	resp.Installed = resp.OSImageReady && resp.OSImageError == "" && (!needsBootenv || resp.BootEnvironment.Phase == bootenv.PhaseReady)
 	s.catalogMu.Lock()
 	_, resp.Installing = s.catalogInstalls[entry.Name]
 	s.catalogMu.Unlock()
 	return resp
+}
+
+func catalogEntryNeedsBootEnvironment(entry oscatalog.Entry) bool {
+	return entry.Format == osimage.FormatSquashFS || entry.Variant == osimage.VariantBareMetal
 }
 
 func (s *Server) ListBootEnvironments(c echo.Context) error {
