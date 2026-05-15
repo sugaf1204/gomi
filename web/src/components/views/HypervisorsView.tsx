@@ -5,6 +5,7 @@ import { formatDate, phaseClass } from '../../lib/formatters'
 import { usePersistentStringState } from '../../hooks/usePersistentStringState'
 import { notifyError } from '../../lib/toast'
 import type { Hypervisor } from '../../types'
+import { ModalOverlay } from '../ui/ModalOverlay'
 
 type HypervisorPrimaryAction = 'delete'
 
@@ -183,12 +184,7 @@ export function HypervisorsView({ hypervisors, onRefresh }: HypervisorsViewProps
   return (
     <>
       {regTokenOpen && regToken && (
-        <div
-          className="fixed inset-0 bg-[rgba(30,28,24,0.38)] grid place-items-center z-20 p-4"
-          role="dialog"
-          aria-modal="true"
-          onClick={(e) => { if (e.target === e.currentTarget) { setRegTokenOpen(false) } }}
-        >
+        <ModalOverlay onBackdropClick={() => { setRegTokenOpen(false) }}>
           <div className="w-[min(560px,100%)] bg-white border border-line-strong shadow-[0_20px_45px_rgba(52,43,34,0.2)] p-[1.1rem] grid gap-[0.65rem]">
             <div className="flex justify-between items-center">
               <h3 className="text-[1.2rem]">Add Hypervisor</h3>
@@ -216,20 +212,15 @@ export function HypervisorsView({ hypervisors, onRefresh }: HypervisorsViewProps
               <button onClick={() => setRegTokenOpen(false)}>Close</button>
             </div>
           </div>
-        </div>
+        </ModalOverlay>
       )}
 
       {batchDeleteConfirm.open && (
-        <div
-          className="fixed inset-0 bg-[rgba(30,28,24,0.38)] grid place-items-center z-20 p-4"
-          role="dialog"
-          aria-modal="true"
-          onClick={(e) => {
-            if (e.target === e.currentTarget && !batchDeleteConfirm.running) {
-              setBatchDeleteConfirm(initialBatchDeleteConfirm)
-            }
-          }}
-        >
+        <ModalOverlay onBackdropClick={() => {
+          if (!batchDeleteConfirm.running) {
+            setBatchDeleteConfirm(initialBatchDeleteConfirm)
+          }
+        }}>
           <div className="w-[min(520px,100%)] bg-white border border-line-strong shadow-[0_20px_45px_rgba(52,43,34,0.2)] p-[1.1rem] grid gap-[0.65rem]">
             <h3 className="text-[1.2rem] text-[#9b2d2d]">Confirm Delete</h3>
             <p className="m-0 text-ink-soft text-[0.84rem]">Target hypervisors ({batchDeleteConfirm.targets.length}):</p>
@@ -252,7 +243,7 @@ export function HypervisorsView({ hypervisors, onRefresh }: HypervisorsViewProps
               </button>
             </div>
           </div>
-        </div>
+        </ModalOverlay>
       )}
 
       <section className="min-h-0 grid grid-cols-1 md:grid-cols-[310px_minmax(0,1fr)] gap-[0.9rem]">
