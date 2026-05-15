@@ -6,6 +6,7 @@ import { usePersistentStringState } from '../../hooks/usePersistentStringState'
 import { VMConsolePanel } from './VMConsolePanel'
 import type { CloudInitTemplate, Hypervisor, OSImage, SSHKey, Subnet, VirtualMachine } from '../../types'
 import { SSHAccessFieldset } from './SSHAccessFieldset'
+import { ModalOverlay } from '../ui/ModalOverlay'
 
 type CloudInitInputMode = 'none' | 'existing' | 'create'
 
@@ -868,12 +869,7 @@ export function VirtualMachinesView({
   return (
     <>
       {formOpen && (
-        <div
-          className="fixed inset-0 bg-[rgba(30,28,24,0.38)] grid place-items-center z-20 p-4"
-          role="dialog"
-          aria-modal="true"
-          onClick={(e) => { if (e.target === e.currentTarget && !creating) { setFormOpen(false) } }}
-        >
+        <ModalOverlay onBackdropClick={() => { if (!creating) { setFormOpen(false) } }}>
           <div className="w-[min(760px,100%)] bg-white border border-line-strong shadow-[0_20px_45px_rgba(52,43,34,0.2)] p-[1.1rem] grid gap-[0.65rem] max-h-[90vh] overflow-auto">
             <div className="flex justify-between items-center">
               <h3 className="text-[1.2rem]">Create Virtual Machine</h3>
@@ -920,16 +916,11 @@ export function VirtualMachinesView({
               </div>
             </form>
           </div>
-        </div>
+        </ModalOverlay>
       )}
 
       {reinstallOpen && selectedVM && (
-        <div
-          className="fixed inset-0 bg-[rgba(30,28,24,0.38)] grid place-items-center z-20 p-4"
-          role="dialog"
-          aria-modal="true"
-          onClick={(e) => { if (e.target === e.currentTarget && !reinstalling) { setReinstallOpen(false) } }}
-        >
+        <ModalOverlay onBackdropClick={() => { if (!reinstalling) { setReinstallOpen(false) } }}>
           <div className="w-[min(760px,100%)] bg-white border border-line-strong shadow-[0_20px_45px_rgba(52,43,34,0.2)] p-[1.1rem] grid gap-[0.65rem] max-h-[90vh] overflow-auto">
             <div className="flex justify-between items-center">
               <h3 className="text-[1.2rem]">Redeploy VM: {selectedVM.name}</h3>
@@ -961,20 +952,15 @@ export function VirtualMachinesView({
               </div>
             </div>
           </div>
-        </div>
+        </ModalOverlay>
       )}
 
       {deleteConfirm.open && (
-        <div
-          className="fixed inset-0 bg-[rgba(30,28,24,0.38)] grid place-items-center z-20 p-4"
-          role="dialog"
-          aria-modal="true"
-          onClick={(e) => {
-            if (e.target === e.currentTarget && !deleteConfirm.running) {
-              setDeleteConfirm(initialDeleteConfirm)
-            }
-          }}
-        >
+        <ModalOverlay onBackdropClick={() => {
+          if (!deleteConfirm.running) {
+            setDeleteConfirm(initialDeleteConfirm)
+          }
+        }}>
           <div className="w-[min(520px,100%)] bg-white border border-line-strong shadow-[0_20px_45px_rgba(52,43,34,0.2)] p-[1.1rem] grid gap-[0.65rem]">
             <div className="flex justify-between items-center">
               <h3 className="text-[1.2rem] text-[#9b2d2d]">Delete Virtual Machine{deleteConfirm.targets.length > 1 ? 's' : ''}</h3>
@@ -1005,20 +991,15 @@ export function VirtualMachinesView({
               </button>
             </div>
           </div>
-        </div>
+        </ModalOverlay>
       )}
 
       {bulkRedeployConfirm.open && (
-        <div
-          className="fixed inset-0 bg-[rgba(30,28,24,0.38)] grid place-items-center z-20 p-4"
-          role="dialog"
-          aria-modal="true"
-          onClick={(e) => {
-            if (e.target === e.currentTarget && !bulkRedeployConfirm.running) {
-              setBulkRedeployConfirm(initialBulkRedeployConfirm)
-            }
-          }}
-        >
+        <ModalOverlay onBackdropClick={() => {
+          if (!bulkRedeployConfirm.running) {
+            setBulkRedeployConfirm(initialBulkRedeployConfirm)
+          }
+        }}>
           <div className="w-[min(520px,100%)] bg-white border border-line-strong shadow-[0_20px_45px_rgba(52,43,34,0.2)] p-[1.1rem] grid gap-[0.65rem]">
             <h3 className="text-[1.2rem]">Confirm Bulk Redeploy</h3>
             <p className="m-0 text-ink-soft text-[0.84rem]">
@@ -1043,20 +1024,15 @@ export function VirtualMachinesView({
               </button>
             </div>
           </div>
-        </div>
+        </ModalOverlay>
       )}
 
       {powerConfirm.open && (
-        <div
-          className="fixed inset-0 bg-[rgba(30,28,24,0.38)] grid place-items-center z-20 p-4"
-          role="dialog"
-          aria-modal="true"
-          onClick={(e) => {
-            if (e.target === e.currentTarget && !powerConfirm.running) {
-              setPowerConfirm(initialPowerConfirm)
-            }
-          }}
-        >
+        <ModalOverlay onBackdropClick={() => {
+          if (!powerConfirm.running) {
+            setPowerConfirm(initialPowerConfirm)
+          }
+        }}>
           <div className="w-[min(520px,100%)] bg-white border border-line-strong shadow-[0_20px_45px_rgba(52,43,34,0.2)] p-[1.1rem] grid gap-[0.65rem]">
             <h3 className="text-[1.2rem]">{powerConfirm.action === 'power-on' ? 'Confirm Power On' : 'Confirm Power Off'}</h3>
             <p className="m-0 text-ink-soft text-[0.84rem]">
@@ -1086,7 +1062,7 @@ export function VirtualMachinesView({
               </button>
             </div>
           </div>
-        </div>
+        </ModalOverlay>
       )}
 
       {migrateConfirm.open && (() => {
@@ -1094,16 +1070,11 @@ export function VirtualMachinesView({
         const currentHV = migrateVM?.hypervisorName || migrateVM?.hypervisorRef || ''
         const otherHVs = hypervisors.filter((hv) => hv.name !== currentHV)
         return (
-          <div
-            className="fixed inset-0 bg-[rgba(30,28,24,0.38)] grid place-items-center z-20 p-4"
-            role="dialog"
-            aria-modal="true"
-            onClick={(e) => {
-              if (e.target === e.currentTarget && !migrateConfirm.running) {
-                setMigrateConfirm(initialMigrateConfirm)
-              }
-            }}
-          >
+          <ModalOverlay onBackdropClick={() => {
+            if (!migrateConfirm.running) {
+              setMigrateConfirm(initialMigrateConfirm)
+            }
+          }}>
             <div className="w-[min(520px,100%)] bg-white border border-line-strong shadow-[0_20px_45px_rgba(52,43,34,0.2)] p-[1.1rem] grid gap-[0.65rem]">
               <div className="flex justify-between items-center">
                 <h3 className="text-[1.2rem]">Migrate VM: {migrateConfirm.vmName}</h3>
@@ -1148,7 +1119,7 @@ export function VirtualMachinesView({
                 </button>
               </div>
             </div>
-          </div>
+          </ModalOverlay>
         )
       })()}
 

@@ -3,6 +3,7 @@ import { api } from '../../api'
 import { formatDate } from '../../lib/formatters'
 import { notifyError } from '../../lib/toast'
 import type { SSHKey } from '../../types'
+import { ModalOverlay } from '../ui/ModalOverlay'
 
 export type UsersViewProps = {
   sshKeys: SSHKey[]
@@ -139,12 +140,7 @@ export function UsersView({ sshKeys, onRefresh }: UsersViewProps) {
         </div>
       )}
       {deleteConfirm.open && (
-        <div
-          className="fixed inset-0 bg-[rgba(30,28,24,0.38)] grid place-items-center z-20 p-4"
-          role="dialog"
-          aria-modal="true"
-          onClick={(e) => { if (e.target === e.currentTarget) setDeleteConfirm({ open: false, name: '' }) }}
-        >
+        <ModalOverlay onBackdropClick={() => setDeleteConfirm({ open: false, name: '' })}>
           <div className="w-[min(400px,100%)] bg-white border border-line-strong shadow-[0_20px_45px_rgba(52,43,34,0.2)] p-[0.95rem] grid gap-[0.6rem]">
             <h3 className="text-[1.2rem] text-[#9b2d2d]">Delete SSH Key</h3>
             <p className="m-0 text-ink-soft text-[0.84rem]">Are you sure you want to delete this SSH key?</p>
@@ -161,7 +157,7 @@ export function UsersView({ sshKeys, onRefresh }: UsersViewProps) {
               </button>
             </div>
           </div>
-        </div>
+        </ModalOverlay>
       )}
     </section>
   )
