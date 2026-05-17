@@ -700,7 +700,6 @@ func (h *Handler) buildCurtinInstallConfig(ctx context.Context, c echo.Context, 
 
 	imageURL := ""
 	imageFormat := string(img.Format)
-	imageCompression := ""
 	if !img.Ready {
 		return "", fmt.Errorf("os image %q is not ready", img.Name)
 	}
@@ -712,7 +711,6 @@ func (h *Handler) buildCurtinInstallConfig(ctx context.Context, c echo.Context, 
 		if img.Manifest.Root.Format != "" {
 			imageFormat = string(img.Manifest.Root.Format)
 		}
-		imageCompression = strings.ToLower(strings.TrimSpace(img.Manifest.Root.Compression))
 	} else {
 		imageURL, err = imageFileURL(base, img)
 		if err != nil {
@@ -720,30 +718,20 @@ func (h *Handler) buildCurtinInstallConfig(ctx context.Context, c echo.Context, 
 		}
 	}
 
-	sourceURI := imageURL
-	sourceType := "dd-raw"
 	var storageConfig *curtinStorage
 	stages := []string{"early", "partitioning", "network", "extract", "late"}
 	capability := installCapabilityForOSFamily(img.OSFamily)
 	switch strings.ToLower(strings.TrimSpace(imageFormat)) {
-	case "", string(osimage.FormatRAW):
-		switch imageCompression {
-		case "", "none":
-			sourceURI = appendProvisionQuery(imageURL, token, attemptID)
-		default:
-			return "", fmt.Errorf("curtin deploy requires uncompressed raw image, got compression %q", imageCompression)
-		}
 	case string(osimage.FormatSquashFS):
-		sourceType = "fsimage"
-		sourceURI = appendProvisionQuery(imageURL, token, attemptID)
 		rootSizeMB, err := rootFSRootPartitionSizeMB(selectedDisk.Info)
 		if err != nil {
 			return "", err
 		}
 		storageConfig = buildRootFSStorageConfig(targetDisk, rootSizeMB)
 	default:
-		return "", fmt.Errorf("curtin deploy requires raw or squashfs image, got format %q", imageFormat)
+		return "", fmt.Errorf("curtin deploy requires squashfs image, got format %q", imageFormat)
 	}
+	sourceURI := appendProvisionQuery(imageURL, token, attemptID)
 
 	seedURL := fmt.Sprintf("%s/nocloud/%s/", strings.TrimRight(base, "/"), macToken(m.MAC))
 	lateCommands := []string{
@@ -776,7 +764,7 @@ func (h *Handler) buildCurtinInstallConfig(ctx context.Context, c echo.Context, 
 		},
 		Sources: map[string]curtinSource{
 			"00-root": {
-				Type: sourceType,
+				Type: "fsimage",
 				URI:  sourceURI,
 			},
 		},

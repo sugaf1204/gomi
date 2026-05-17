@@ -1489,7 +1489,7 @@ func TestPXEBootScript_DesktopMachineStillUsesArtifactCurtinPath(t *testing.T) {
 	}
 }
 
-func TestPXECurtinConfig_UsesInventoryAndRawArtifact(t *testing.T) {
+func TestPXECurtinConfig_RejectsRawArtifact(t *testing.T) {
 	backend := memory.New()
 	machineSvc := machine.NewService(backend.Machines())
 	hwInfoSvc := hwinfo.NewService(backend.HWInfo())
@@ -1601,38 +1601,12 @@ func TestPXECurtinConfig_UsesInventoryAndRawArtifact(t *testing.T) {
 	if err := h.PXECurtinConfig(c); err != nil {
 		t.Fatalf("PXECurtinConfig: %v", err)
 	}
-	if rec.Code != http.StatusOK {
+	if rec.Code != http.StatusConflict {
 		t.Fatalf("unexpected status: %d body=%s", rec.Code, rec.Body.String())
 	}
 	body := rec.Body.String()
-	for _, want := range []string{
-		"install:",
-		"block-meta:",
-		"- /dev/nvme0n1",
-		"sources:",
-		"00-root:",
-		"type: dd-raw",
-		"uri: http://192.168.2.254:8080/pxe/artifacts/os-images/debian-13-amd64/root.raw?attempt_id=attempt-plan&token=token-plan",
-		"reporting:",
-		"/pxe/deploy-events?",
-		"attempt_id=attempt-plan",
-		"token=token-plan",
-		"source=curtin",
-		"late_commands:",
-		"var/lib/cloud/seed/nocloud",
-		"ssh_deletekeys: false",
-		"dev/null",
-		"mknod -m 666",
-		"ssh-keygen -A",
-	} {
-		if !strings.Contains(body, want) {
-			t.Fatalf("expected curtin config to contain %q, got:\n%s", want, body)
-		}
-	}
-	for _, forbidden := range []string{"kernel-modules", "firmware/linux-firmware"} {
-		if strings.Contains(body, forbidden) {
-			t.Fatalf("curtin config should not manage old runner bundles %q, got:\n%s", forbidden, body)
-		}
+	if !strings.Contains(body, "curtin deploy requires squashfs image") {
+		t.Fatalf("expected raw image to be rejected, got:\n%s", body)
 	}
 }
 
@@ -1707,25 +1681,12 @@ func TestPXECurtinConfig_DirectCloudImage(t *testing.T) {
 	if err := h.PXECurtinConfig(c); err != nil {
 		t.Fatalf("PXECurtinConfig: %v", err)
 	}
-	if rec.Code != http.StatusOK {
+	if rec.Code != http.StatusConflict {
 		t.Fatalf("unexpected status: %d body=%s", rec.Code, rec.Body.String())
 	}
 	body := rec.Body.String()
-	for _, want := range []string{
-		"- /dev/vda",
-		"00-root:",
-		"type: dd-raw",
-		"uri: http://192.168.2.254:8080/pxe/files/images/ubuntu-24.04-amd64.raw?attempt_id=attempt-direct-plan&token=token-direct-plan",
-		"late_commands:",
-		"var/lib/cloud/seed/nocloud",
-		"ssh_deletekeys: false",
-		"dev/null",
-		"mknod -m 666",
-		"ssh-keygen -A",
-	} {
-		if !strings.Contains(body, want) {
-			t.Fatalf("expected curtin config to contain %q, got:\n%s", want, body)
-		}
+	if !strings.Contains(body, "curtin deploy requires squashfs image") {
+		t.Fatalf("expected raw image to be rejected, got:\n%s", body)
 	}
 }
 
