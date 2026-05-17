@@ -3240,7 +3240,7 @@ func TestPXENocloudNetworkConfig_DHCP(t *testing.T) {
 	}
 }
 
-func TestPXENocloudNetworkConfig_FedoraMachineStaticUsesNetworkManagerRenderer(t *testing.T) {
+func TestPXENocloudNetworkConfig_FedoraMachineStaticOmitsRenderer(t *testing.T) {
 	backend := memory.New()
 	machineSvc := machine.NewService(backend.Machines())
 	now := time.Now().UTC()
@@ -3277,7 +3277,6 @@ func TestPXENocloudNetworkConfig_FedoraMachineStaticUsesNetworkManagerRenderer(t
 	}
 	body := rec.Body.String()
 	for _, want := range []string{
-		"renderer: NetworkManager",
 		`macaddress: "52:54:00:44:00:44"`,
 		"192.168.2.224/24",
 		"dhcp4: false",
@@ -3286,12 +3285,12 @@ func TestPXENocloudNetworkConfig_FedoraMachineStaticUsesNetworkManagerRenderer(t
 			t.Fatalf("expected fedora network-config to contain %q, got:\n%s", want, body)
 		}
 	}
-	if strings.Contains(body, "renderer: networkd") {
-		t.Fatalf("fedora network-config must not force networkd, got:\n%s", body)
+	if strings.Contains(body, "renderer:") {
+		t.Fatalf("fedora network-config must let cloud-init select the renderer, got:\n%s", body)
 	}
 }
 
-func TestPXENocloudNetworkConfig_FedoraVMStaticUsesOSImageFamilyRenderer(t *testing.T) {
+func TestPXENocloudNetworkConfig_FedoraVMStaticOmitsRenderer(t *testing.T) {
 	backend := memory.New()
 	vmSvc := vm.NewService(backend.VMs())
 	osImageSvc := osimage.NewService(backend.OSImages())
@@ -3334,7 +3333,6 @@ func TestPXENocloudNetworkConfig_FedoraVMStaticUsesOSImageFamilyRenderer(t *test
 	}
 	body := rec.Body.String()
 	for _, want := range []string{
-		"renderer: NetworkManager",
 		`macaddress: "52:54:00:44:00:45"`,
 		"192.168.2.225/24",
 		"dhcp4: false",
@@ -3343,8 +3341,8 @@ func TestPXENocloudNetworkConfig_FedoraVMStaticUsesOSImageFamilyRenderer(t *test
 			t.Fatalf("expected fedora VM network-config to contain %q, got:\n%s", want, body)
 		}
 	}
-	if strings.Contains(body, "renderer: networkd") {
-		t.Fatalf("fedora VM network-config must not force networkd, got:\n%s", body)
+	if strings.Contains(body, "renderer:") {
+		t.Fatalf("fedora VM network-config must let cloud-init select the renderer, got:\n%s", body)
 	}
 }
 

@@ -344,8 +344,8 @@ func (h *Handler) PXENocloudVendorData(c echo.Context) error {
 	return c.Blob(gohttp.StatusOK, "text/plain; charset=utf-8", []byte(defaultNoCloudVendorData))
 }
 
-// PXENocloudNetworkConfig serves netplan v2 network-config for the NoCloud datasource.
-// cloud-init prioritizes this over any /etc/netplan/*.yaml that ships in the cloud image.
+// PXENocloudNetworkConfig serves v2 network-config for the NoCloud datasource.
+// cloud-init prioritizes this over any baked network config that ships in the image.
 // Always matches by MAC address so the config is NIC-name-agnostic.
 func (h *Handler) PXENocloudNetworkConfig(c echo.Context) error {
 	rawMAC := c.Param("mac")
@@ -562,8 +562,7 @@ type netplanNameServers struct {
 }
 
 const (
-	networkConfigRendererNetworkd       = "networkd"
-	networkConfigRendererNetworkManager = "NetworkManager"
+	networkConfigRendererNetworkd = "networkd"
 )
 
 func marshalYAMLString(value any) string {
@@ -630,9 +629,6 @@ func defaultRoute(gateway string) []netplanRoute {
 }
 
 func buildDirectNetplanConfig(mac, ip string, prefixLen int, gateway string, nameservers []string, dhcp bool, renderer string) netplanConfig {
-	if strings.TrimSpace(renderer) == "" {
-		renderer = networkConfigRendererNetworkd
-	}
 	nic := netplanNIC{
 		Match:     macMatch(mac),
 		WakeOnLAN: strings.TrimSpace(mac) != "",
@@ -652,9 +648,6 @@ func buildDirectNetplanConfig(mac, ip string, prefixLen int, gateway string, nam
 }
 
 func buildBridgedNetplanConfig(mac, bridgeName, ip string, prefixLen int, gateway string, nameservers []string, dhcp bool, renderer string) netplanConfig {
-	if strings.TrimSpace(renderer) == "" {
-		renderer = networkConfigRendererNetworkd
-	}
 	bridgeName = strings.TrimSpace(bridgeName)
 	if bridgeName == "" {
 		bridgeName = "br0"
@@ -694,9 +687,6 @@ func buildBridgedNetworkConfig(mac, bridgeName, ip string, spec *subnet.SubnetSp
 }
 
 func buildBridgedNetworkConfigWithRenderer(mac, bridgeName, ip string, spec *subnet.SubnetSpec, renderer string) string {
-	if strings.TrimSpace(renderer) == "" {
-		renderer = networkConfigRendererNetworkd
-	}
 	return marshalYAMLString(buildBridgedNetplanConfig(
 		mac,
 		bridgeName,
@@ -1146,7 +1136,7 @@ func (h *Handler) resolveNodeOSFamily(ctx context.Context, n node.Node) string {
 
 func networkConfigRendererForOSFamily(osFamily string) string {
 	if isNetworkManagerOSFamily(osFamily) {
-		return networkConfigRendererNetworkManager
+		return ""
 	}
 	return networkConfigRendererNetworkd
 }
