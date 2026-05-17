@@ -209,7 +209,6 @@ The Debian package version is read from `packages/debian/changelog`.
 cmd/
   gomi/                 main server entrypoint
   gomi-hypervisor/      hypervisor agent
-  gomi-osimage/         OS image tooling
   wol-daemon/           Wake-on-LAN daemon
 internal/               application logic
 web/                    React + Vite frontend

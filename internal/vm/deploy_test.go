@@ -2,12 +2,47 @@ package vm
 
 import (
 	"context"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/sugaf1204/gomi/internal/hypervisor"
 	"github.com/sugaf1204/gomi/internal/osimage"
 	"github.com/sugaf1204/gomi/internal/resource"
 )
+
+type fakeCloudImageStorage struct {
+	exists      bool
+	createdName string
+	format      string
+	sizeBytes   int64
+	data        []byte
+	deletedName string
+}
+
+func (s *fakeCloudImageStorage) VolumeExists(_ context.Context, name string, format string) (bool, error) {
+	s.createdName = name
+	s.format = format
+	return s.exists, nil
+}
+
+func (s *fakeCloudImageStorage) CreateVolumeFromReader(_ context.Context, name string, sizeBytes int64, format string, r io.Reader) error {
+	s.createdName = name
+	s.format = format
+	s.sizeBytes = sizeBytes
+	data, err := io.ReadAll(r)
+	if err != nil {
+		return err
+	}
+	s.data = data
+	return nil
+}
+
+func (s *fakeCloudImageStorage) DeleteVolume(_ context.Context, name string) error {
+	s.deletedName = name
+	return nil
+}
 
 type testOSImageStore struct {
 	items map[string]osimage.OSImage
@@ -53,14 +88,13 @@ func TestResolveCloudImageBacking_UsesHypervisorSyncedArtifactPath(t *testing.T)
 		OSFamily:  "ubuntu",
 		OSVersion: "24.04",
 		Arch:      "amd64",
-		Format:    osimage.FormatRAW,
+		Format:    osimage.FormatQCOW2,
 		Source:    osimage.SourceUpload,
 		Manifest: &osimage.Manifest{
 			Root: osimage.RootArtifact{
-				Format:      osimage.FormatRAW,
-				Compression: "zst",
-				Path:        "root.raw.zst",
-				SHA256:      "root-sha",
+				Format: osimage.FormatQCOW2,
+				Path:   "root.qcow2",
+				SHA256: "root-sha",
 			},
 		},
 	})
@@ -76,11 +110,11 @@ func TestResolveCloudImageBacking_UsesHypervisorSyncedArtifactPath(t *testing.T)
 	if err != nil {
 		t.Fatalf("resolveCloudImageBacking: %v", err)
 	}
-	if path != "/var/lib/libvirt/images/ubuntu-24.04-amd64.raw" {
+	if path != "/var/lib/libvirt/images/ubuntu-24.04-amd64.qcow2" {
 		t.Fatalf("expected hypervisor backing path, got %q", path)
 	}
-	if format != "raw" {
-		t.Fatalf("expected raw backing format, got %q", format)
+	if format != "qcow2" {
+		t.Fatalf("expected qcow2 backing format, got %q", format)
 	}
 }
 
@@ -115,6 +149,92 @@ func TestResolveCloudImageBacking_LegacyImageUsesHypervisorSyncedPath(t *testing
 	}
 }
 
+func TestPrepareCloudImageBacking_DownloadsURLImageToHypervisor(t *testing.T) {
+	payload := []byte("qcow2-data")
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Length", "10")
+		if _, err := w.Write(payload); err != nil {
+			t.Fatalf("write response: %v", err)
+		}
+	}))
+	defer srv.Close()
+
+	store := &testOSImageStore{}
+	svc := osimage.NewService(store)
+	_, err := svc.Create(context.Background(), osimage.OSImage{
+		Name:      "debian-13-amd64-cloud",
+		OSFamily:  "debian",
+		OSVersion: "13",
+		Arch:      "amd64",
+		Format:    osimage.FormatQCOW2,
+		Source:    osimage.SourceURL,
+		URL:       srv.URL + "/debian-13.qcow2",
+		SizeBytes: int64(len(payload)),
+	})
+	if err != nil {
+		t.Fatalf("Create image: %v", err)
+	}
+	if _, err := svc.UpdateStatus(context.Background(), "debian-13-amd64-cloud", true, "", ""); err != nil {
+		t.Fatalf("UpdateStatus: %v", err)
+	}
+
+	storage := &fakeCloudImageStorage{}
+	d := &Deployer{OSImages: svc}
+	path, format, err := d.prepareCloudImageBacking(context.Background(), storage, "debian-13-amd64-cloud")
+	if err != nil {
+		t.Fatalf("prepareCloudImageBacking: %v", err)
+	}
+	if path != "/var/lib/libvirt/images/debian-13-amd64-cloud.qcow2" {
+		t.Fatalf("unexpected backing path: %q", path)
+	}
+	if format != "qcow2" {
+		t.Fatalf("unexpected backing format: %q", format)
+	}
+	if storage.createdName != "debian-13-amd64-cloud" {
+		t.Fatalf("expected uploaded image name, got %q", storage.createdName)
+	}
+	if storage.sizeBytes != int64(len(payload)) {
+		t.Fatalf("expected upload size %d, got %d", len(payload), storage.sizeBytes)
+	}
+	if string(storage.data) != string(payload) {
+		t.Fatalf("unexpected uploaded payload %q", string(storage.data))
+	}
+}
+
+func TestPrepareCloudImageBacking_SkipsDownloadWhenHypervisorVolumeExists(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatal("server should not be called when backing volume exists")
+	}))
+	defer srv.Close()
+
+	store := &testOSImageStore{}
+	svc := osimage.NewService(store)
+	_, err := svc.Create(context.Background(), osimage.OSImage{
+		Name:      "ubuntu-24.04-amd64-cloud",
+		OSFamily:  "ubuntu",
+		OSVersion: "24.04",
+		Arch:      "amd64",
+		Format:    osimage.FormatQCOW2,
+		Source:    osimage.SourceURL,
+		URL:       srv.URL + "/ubuntu-24.04.img",
+	})
+	if err != nil {
+		t.Fatalf("Create image: %v", err)
+	}
+	if _, err := svc.UpdateStatus(context.Background(), "ubuntu-24.04-amd64-cloud", true, "", ""); err != nil {
+		t.Fatalf("UpdateStatus: %v", err)
+	}
+
+	storage := &fakeCloudImageStorage{exists: true}
+	d := &Deployer{OSImages: svc}
+	if _, _, err := d.prepareCloudImageBacking(context.Background(), storage, "ubuntu-24.04-amd64-cloud"); err != nil {
+		t.Fatalf("prepareCloudImageBacking: %v", err)
+	}
+	if storage.data != nil {
+		t.Fatalf("expected no upload when volume exists")
+	}
+}
+
 func TestResolveCloudImageBacking_MissingImage(t *testing.T) {
 	d := &Deployer{OSImages: osimage.NewService(&testOSImageStore{})}
 	_, _, err := d.resolveCloudImageBacking(context.Background(), "missing")
@@ -123,7 +243,7 @@ func TestResolveCloudImageBacking_MissingImage(t *testing.T) {
 	}
 }
 
-func TestBuildDomainConfig_IgnoresUnsupportedLegacyRawDiskFormat(t *testing.T) {
+func TestBuildDomainConfig_IgnoresUnsupportedLegacyDiskFormat(t *testing.T) {
 	v := VirtualMachine{
 		Name: "vm-ubuntu",
 		Resources: ResourceSpec{
@@ -134,7 +254,7 @@ func TestBuildDomainConfig_IgnoresUnsupportedLegacyRawDiskFormat(t *testing.T) {
 		OSImageRef: "ubuntu-24.04-amd64",
 		InstallCfg: &InstallConfig{Type: InstallConfigCurtin},
 		AdvancedOptions: &AdvancedOptions{
-			DiskFormat: "raw",
+			DiskFormat: "vmdk",
 		},
 	}
 

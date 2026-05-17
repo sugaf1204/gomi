@@ -556,10 +556,9 @@ func TestOSImageStore(t *testing.T) {
 			SchemaVersion: "gomi.osimage.v1",
 			BootModes:     []string{"bios", "uefi"},
 			Root: osimage.RootArtifact{
-				Format:      osimage.FormatRAW,
-				Compression: "zst",
-				Path:        "root.raw.zst",
-				SHA256:      "root-sha",
+				Format: osimage.FormatQCOW2,
+				Path:   "root.qcow2",
+				SHA256: "root-sha",
 			},
 			TargetKernel: osimage.TargetKernel{Version: "5.15.0-176-generic"},
 			Bundles: []osimage.Bundle{

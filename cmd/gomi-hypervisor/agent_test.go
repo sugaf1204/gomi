@@ -61,7 +61,7 @@ func TestSyncOnce_DownloadsReadyImages(t *testing.T) {
 }
 
 func TestSyncOnce_DownloadsArtifactRoot(t *testing.T) {
-	imageContent := []byte("raw-root-image")
+	imageContent := []byte("qcow2-root-image")
 	sum := sha256.Sum256(imageContent)
 	checksum := hex.EncodeToString(sum[:])
 	legacyDownloadCalled := false
@@ -73,18 +73,18 @@ func TestSyncOnce_DownloadsArtifactRoot(t *testing.T) {
 				"items": []OSImage{
 					{
 						Name:   "ubuntu-artifact",
-						Format: "raw",
+						Format: "qcow2",
 						Ready:  true,
 						Manifest: &OSImageManifest{Root: OSImageRootArtifact{
-							Format: "raw",
-							Path:   "root.raw",
+							Format: "qcow2",
+							Path:   "root.qcow2",
 							SHA256: checksum,
 						}},
 					},
 				},
 			}
 			json.NewEncoder(w).Encode(resp)
-		case "/pxe/artifacts/os-images/ubuntu-artifact/root.raw":
+		case "/pxe/artifacts/os-images/ubuntu-artifact/root.qcow2":
 			w.Write(imageContent)
 		case "/api/v1/os-images/ubuntu-artifact/download":
 			legacyDownloadCalled = true
@@ -105,82 +105,12 @@ func TestSyncOnce_DownloadsArtifactRoot(t *testing.T) {
 	if legacyDownloadCalled {
 		t.Fatal("artifact image should be downloaded from the PXE artifact route")
 	}
-	data, err := os.ReadFile(filepath.Join(dir, "ubuntu-artifact.raw"))
+	data, err := os.ReadFile(filepath.Join(dir, "ubuntu-artifact.qcow2"))
 	if err != nil {
 		t.Fatalf("read artifact root: %v", err)
 	}
 	if string(data) != string(imageContent) {
 		t.Fatalf("unexpected artifact content: %q", data)
-	}
-}
-
-func TestSyncOnce_DownloadsCompressedArtifactRoot(t *testing.T) {
-	fakeBin := t.TempDir()
-	zstdPath := filepath.Join(fakeBin, "zstd")
-	if err := os.WriteFile(zstdPath, []byte("#!/bin/sh\nif [ \"$1\" = \"-dc\" ]; then cat \"$2\"; else exit 2; fi\n"), 0o755); err != nil {
-		t.Fatalf("write fake zstd: %v", err)
-	}
-	t.Setenv("PATH", fakeBin+string(os.PathListSeparator)+os.Getenv("PATH"))
-
-	compressedContent := []byte("pretend-zstd-root")
-	sum := sha256.Sum256(compressedContent)
-	checksum := hex.EncodeToString(sum[:])
-	downloadCount := 0
-
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/api/v1/os-images":
-			resp := map[string]any{
-				"items": []OSImage{
-					{
-						Name:   "ubuntu-zst",
-						Format: "raw",
-						Ready:  true,
-						Manifest: &OSImageManifest{Root: OSImageRootArtifact{
-							Format:      "raw",
-							Compression: "zst",
-							Path:        "root.raw.zst",
-							SHA256:      checksum,
-						}},
-					},
-				},
-			}
-			json.NewEncoder(w).Encode(resp)
-		case "/pxe/artifacts/os-images/ubuntu-zst/root.raw.zst":
-			downloadCount++
-			w.Write(compressedContent)
-		default:
-			http.NotFound(w, r)
-		}
-	}))
-	defer srv.Close()
-
-	dir := t.TempDir()
-	cfg := Config{ServerURL: srv.URL, Interval: time.Minute, ImageDir: dir}
-	client := newAPIClient(srv.URL, "")
-
-	if err := syncOnce(context.Background(), cfg, client); err != nil {
-		t.Fatalf("first syncOnce: %v", err)
-	}
-	if err := syncOnce(context.Background(), cfg, client); err != nil {
-		t.Fatalf("second syncOnce: %v", err)
-	}
-	if downloadCount != 1 {
-		t.Fatalf("expected artifact to be downloaded once, got %d", downloadCount)
-	}
-	data, err := os.ReadFile(filepath.Join(dir, "ubuntu-zst.raw"))
-	if err != nil {
-		t.Fatalf("read decompressed artifact root: %v", err)
-	}
-	if string(data) != string(compressedContent) {
-		t.Fatalf("unexpected decompressed artifact content: %q", data)
-	}
-	sidecar, err := os.ReadFile(filepath.Join(dir, "ubuntu-zst.raw"+sourceChecksumSuffix))
-	if err != nil {
-		t.Fatalf("read source checksum sidecar: %v", err)
-	}
-	if strings.TrimSpace(string(sidecar)) != checksum {
-		t.Fatalf("unexpected source checksum sidecar: %q", sidecar)
 	}
 }
 
@@ -374,7 +304,7 @@ func TestIsManagedFile(t *testing.T) {
 		want     bool
 	}{
 		{"ubuntu.qcow2", true},
-		{"debian.raw", true},
+		{"debian.vmdk", false},
 		{"server.iso", true},
 		{"disk.img", true},
 		{"UPPER.QCOW2", true},
@@ -398,14 +328,14 @@ func TestCleanupStaleFiles(t *testing.T) {
 		"stale.qcow2":   "remove",
 		"old.iso":       "remove",
 		"manual.txt":    "keep (not managed)",
-		"another.raw":   "remove",
+		"another.vmdk":  "keep (not managed)",
 		"keep-too.img":  "keep",
 		"vm-disk.qcow2": "keep (unmarked VM disk)",
 	}
 	for name, content := range files {
 		os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644)
 	}
-	for _, name := range []string{"stale.qcow2", "old.iso", "another.raw"} {
+	for _, name := range []string{"stale.qcow2", "old.iso"} {
 		os.WriteFile(filepath.Join(dir, name+managedMarkerSuffix), []byte("gomi-hypervisor\n"), 0o644)
 	}
 
@@ -420,7 +350,7 @@ func TestCleanupStaleFiles(t *testing.T) {
 	}
 
 	sort.Strings(removed)
-	wantRemoved := []string{"another.raw", "old.iso", "stale.qcow2"}
+	wantRemoved := []string{"old.iso", "stale.qcow2"}
 	if len(removed) != len(wantRemoved) {
 		t.Fatalf("removed = %v, want %v", removed, wantRemoved)
 	}
@@ -430,7 +360,7 @@ func TestCleanupStaleFiles(t *testing.T) {
 		}
 	}
 
-	for _, name := range []string{"keep.qcow2", "manual.txt", "keep-too.img", "vm-disk.qcow2"} {
+	for _, name := range []string{"keep.qcow2", "manual.txt", "another.vmdk", "keep-too.img", "vm-disk.qcow2"} {
 		if _, err := os.Stat(filepath.Join(dir, name)); err != nil {
 			t.Errorf("expected %q to still exist", name)
 		}
@@ -445,7 +375,7 @@ func TestCleanupStaleFiles(t *testing.T) {
 
 func TestCleanupStaleFiles_DoesNotRemoveUnmarkedManagedExtensions(t *testing.T) {
 	dir := t.TempDir()
-	for _, name := range []string{"kube-1.qcow2", "manual.raw", "scratch.img"} {
+	for _, name := range []string{"kube-1.qcow2", "manual.vmdk", "scratch.img"} {
 		os.WriteFile(filepath.Join(dir, name), []byte("vm data"), 0o644)
 	}
 
@@ -457,7 +387,7 @@ func TestCleanupStaleFiles_DoesNotRemoveUnmarkedManagedExtensions(t *testing.T) 
 		t.Fatalf("removed = %v, want none", removed)
 	}
 
-	for _, name := range []string{"kube-1.qcow2", "manual.raw", "scratch.img"} {
+	for _, name := range []string{"kube-1.qcow2", "manual.vmdk", "scratch.img"} {
 		if _, err := os.Stat(filepath.Join(dir, name)); err != nil {
 			t.Errorf("expected %q to still exist", name)
 		}

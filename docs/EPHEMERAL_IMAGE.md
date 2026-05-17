@@ -3,58 +3,19 @@
 ## Usage
 
 GOMI consumes deployment-time boot environments as prebuilt release-style
-artifacts. The public flow is catalog driven:
+artifacts. OS images are registered separately as prebuilt artifacts:
 
 ```sh
 curl -H "Authorization: Bearer $GOMI_TOKEN" \
-  -X POST http://gomi.example/api/v1/os-catalog/ubuntu-22.04-amd64-baremetal/install
+  -H "Content-Type: application/json" \
+  -d '{"name":"debian-13","osFamily":"debian","osVersion":"13","arch":"amd64","format":"squashfs","source":"url","url":"https://images.example/rootfs.squashfs"}' \
+  http://gomi.example/api/v1/os-images
 ```
 
-Installing a catalog entry downloads an OS image artifact into GOMI storage and,
-for bare-metal entries, ensures the referenced boot environment exists. Catalog
-entries live in YAML,
-not Go code. A catalog entry can point at any HTTP(S) `.qcow2`, `.raw`,
-`.raw.zst`, or `.rootfs.squashfs` URL. Relative artifact URLs are resolved against
-`GOMI_OS_IMAGE_SOURCE_URL`; absolute URLs are used as-is. Operators can add or
-replace the built-in catalog with `GOMI_OS_CATALOG_FILE`,
-`GOMI_OS_CATALOG_URL`, and `GOMI_OS_CATALOG_REPLACE=true`.
-
-Image build inputs are separate from the runtime OS catalog. The runtime
-catalog intentionally has no build recipe fields; it only describes deployable
-artifacts. `gomi-osimage` reads `/usr/share/gomi/osimage/builds.yaml` when
-installed from the Debian package, or the repo default build config during
-development, then joins build entries to the runtime catalog by entry name.
-Each build entry points at a `distrobuilder` definition file under
-`/usr/share/gomi/osimage/definitions/` in packaged installs or
-`internal/osimagebuild/definitions/` in the repo.
-
-The default build backend is `distrobuilder build-dir`. `gomi-osimage` creates
-a work directory, asks `distrobuilder` to populate the rootfs from the selected
-definition, then publishes a `rootfs.squashfs` artifact plus metadata and
-checksums. GOMI does not run image customization from the API process.
-OS-specific package sets, cleanup rules, generated files, and custom actions
-belong in the distrobuilder definition, not in server catalog YAML or Go
-switch statements. The build command expects root privileges plus
-`distrobuilder` and `mksquashfs` on the build host.
-
-On a GOMI server installed from the Debian package:
-
-```sh
-sudo gomi-osimage build --name ubuntu-22.04-amd64-baremetal --out-dir /var/lib/gomi/os-images
-```
-
-For OS image catalog artifacts, override the release asset base URL with:
-
-```sh
-GOMI_OS_IMAGE_SOURCE_URL=https://example.invalid/gomi-os-images
-```
-
-To replace the catalog entirely:
-
-```sh
-GOMI_OS_CATALOG_FILE=/etc/gomi/os-catalog.yaml
-GOMI_OS_CATALOG_REPLACE=true
-```
+GOMI does not build target OS images. Target rootfs images are produced outside
+this repository, for example by the mkosi-based `os-image` pipeline, then
+registered with the OS image API as `squashfs` for bare-metal deployment or
+`qcow2` for cloud-image VM deployment.
 
 For boot environments, GOMI fetches `manifest.json`, verifies the declared
 SHA256/size for each artifact, and publishes:
@@ -145,10 +106,7 @@ all-in-one initrd or a direct shell/Go port.
 
 GOMI owns only consumption:
 
-- input: supported OS catalog entry and, for bare-metal entries, boot environment name;
-- OS image source: `GOMI_OS_IMAGE_SOURCE_URL`, an HTTP(S) base containing
-  prebuilt variant-qualified `.rootfs.squashfs`, `.qcow2`, `.raw.zst`, or `.raw`
-  artifacts;
+- input: registered prebuilt `squashfs` or `qcow2` OS images;
 - bootenv source: `GOMI_BOOTENV_SOURCE_URL`, either a local directory or HTTP(S)
   base;
 - verification: manifest schema/name plus SHA256/size for kernel/initrd/rootfs;

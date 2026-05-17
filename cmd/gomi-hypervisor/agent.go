@@ -416,7 +416,6 @@ func writeManagedMarker(path string) error {
 
 var managedExtensions = map[string]bool{
 	".qcow2": true,
-	".raw":   true,
 	".iso":   true,
 	".img":   true,
 }

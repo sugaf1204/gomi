@@ -82,8 +82,6 @@ func (s *Server) UploadOSImage(c echo.Context) error {
 		switch img.Format {
 		case osimage.FormatISO:
 			ext = ".iso"
-		case osimage.FormatRAW:
-			ext = ".img"
 		case osimage.FormatSquashFS:
 			ext = ".squashfs"
 		default:
@@ -266,14 +264,12 @@ func (s *Server) publishOSImageFile(localPath string) error {
 func imageExtension(img osimage.OSImage, rawPath string) string {
 	ext := strings.ToLower(filepath.Ext(rawPath))
 	switch ext {
-	case ".qcow2", ".raw", ".img", ".iso", ".squashfs":
+	case ".qcow2", ".img", ".iso", ".squashfs":
 		return ext
 	}
 	switch img.Format {
 	case osimage.FormatISO:
 		return ".iso"
-	case osimage.FormatRAW:
-		return ".raw"
 	case osimage.FormatSquashFS:
 		return ".squashfs"
 	default:

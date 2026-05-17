@@ -703,7 +703,7 @@ class LabRunner:
             capture=False,
         )
         self.vm_ssh("sudo apt-get update -y", capture=False)
-        self.vm_ssh("sudo DEBIAN_FRONTEND=noninteractive apt-get install -y /tmp/gomi.deb", capture=False)
+        self.vm_ssh("sudo DEBIAN_FRONTEND=noninteractive apt-get install -y curl /tmp/gomi.deb", capture=False)
         self.vm_ssh("sudo systemctl disable --now gomi.service || true", capture=False)
 
         subnet_yaml = (
@@ -775,8 +775,6 @@ class LabRunner:
                 "Environment=GOMI_PXE_HTTP_BASE_URL=http://10.77.0.1:8080/pxe",
                 "Environment=GOMI_BOOT_HTTP_BASE_URL=http://10.77.0.1:8080",
                 f"Environment=GOMI_BOOTENV_SOURCE_URL={self.config['bootenv_source_url']}",
-                f"Environment=GOMI_OS_IMAGE_SOURCE_URL={self.config['os_image_source_url']}",
-                "Environment=GOMI_CURTIN_UBUNTU_MIRROR=http://ftp.riken.jp/Linux/ubuntu",
                 "Environment=GOMI_PXE_SERIAL_CONSOLE=1",
                 "ExecStart=/usr/bin/gomi --listen=:8080 --background-sync-enabled=true",
                 "Restart=always",
@@ -850,32 +848,40 @@ class LabRunner:
         self,
         image: dict[str, Any],
         local_path: str,
-        size_bytes: int,
         image_format: str,
         manifest: dict[str, Any] | None = None,
     ) -> None:
+        image_ref = image["image_ref"]
         payload = {
-            "name": image["image_ref"],
-            "osFamily": "ubuntu",
+            "name": image_ref,
+            "osFamily": image.get("os_family", "ubuntu"),
             "osVersion": image["os_version"],
             "arch": "amd64",
             "format": image_format,
-            "source": "url",
-            "url": image["cloud_image_url"],
-            "sizeBytes": size_bytes,
-            "description": f"Ubuntu {image['os_version']} cloud image for the GOMI KVM lab",
+            "source": "upload",
+            "variant": image.get("variant", "baremetal"),
+            "description": image.get("description", f"{image_ref} image for the GOMI KVM lab"),
         }
         if manifest is not None:
             payload["manifest"] = manifest
-        http_json(
-            "POST",
-            f"http://127.0.0.1:{self.gomi_vm['api_port']}/api/v1/os-images",
-            token=self.api_token,
-            payload=payload,
-        )
+        try:
+            http_json(
+                "GET",
+                f"http://127.0.0.1:{self.gomi_vm['api_port']}/api/v1/os-images/{urlparse.quote(image_ref)}",
+                token=self.api_token,
+            )
+        except LabError as exc:
+            if "404" not in str(exc):
+                raise
+            http_json(
+                "POST",
+                f"http://127.0.0.1:{self.gomi_vm['api_port']}/api/v1/os-images",
+                token=self.api_token,
+                payload=payload,
+            )
         http_json(
             "PATCH",
-            f"http://127.0.0.1:{self.gomi_vm['api_port']}/api/v1/os-images/{image['image_ref']}/status",
+            f"http://127.0.0.1:{self.gomi_vm['api_port']}/api/v1/os-images/{urlparse.quote(image_ref)}/status",
             token=self.api_token,
             payload={"ready": True, "localPath": local_path, "error": ""},
         )
@@ -930,37 +936,80 @@ class LabRunner:
         self.vm_ssh(f"sudo APT_CONFIG=/tmp/gomi-{suite}.conf apt-get update -y", capture=False)
 
     def prepare_os_assets(self) -> None:
+        self.ensure_boot_environment()
         for image in self.config.get("os_images", self.config.get("ubuntu_images", [])):
-            image_ref = image.get("catalog_ref", image["image_ref"])
-            log(f"installing OS catalog entry {image_ref}")
-            http_json(
-                "POST",
-                f"http://127.0.0.1:{self.gomi_vm['api_port']}/api/v1/os-catalog/{urlparse.quote(image_ref)}/install",
-                token=self.api_token,
-                payload={},
+            image_ref = image["image_ref"]
+            log(f"preparing OS image {image_ref}")
+            local_path = self.download_rootfs_image(image)
+            self.ensure_os_image_registered(
+                image,
+                local_path,
+                "squashfs",
+                manifest={
+                    "root": {
+                        "format": "squashfs",
+                        "path": "rootfs.squashfs",
+                    },
+                },
             )
 
-            def catalog_ready() -> dict[str, Any] | None:
-                response = http_json(
-                    "GET",
-                    f"http://127.0.0.1:{self.gomi_vm['api_port']}/api/v1/os-catalog",
-                    token=self.api_token,
-                )
-                for item in response.get("items", []):
-                    entry = item.get("entry", {})
-                    if entry.get("name") != image_ref:
-                        continue
-                    bootenv = item.get("bootEnvironment", {})
-                    if item.get("osImageError"):
-                        raise LabError(f"OS image install failed for {image_ref}: {item['osImageError']}")
-                    if bootenv.get("phase") == "error":
-                        raise LabError(f"boot environment build failed for {image_ref}: {bootenv.get('message', '')}")
-                    if item.get("osImageReady") and bootenv.get("phase") == "ready":
-                        return item
-                    return None
-                raise LabError(f"OS catalog entry not found: {image_ref}")
+    def ensure_boot_environment(self) -> None:
+        name = self.config.get("bootenv_name", "ubuntu-minimal-cloud-amd64")
 
-            wait_for(f"os catalog install {image_ref}", timeout=3600, interval=10, fn=catalog_ready)
+        def bootenv_ready() -> dict[str, Any] | None:
+            response = http_json(
+                "GET",
+                f"http://127.0.0.1:{self.gomi_vm['api_port']}/api/v1/boot-environments",
+                token=self.api_token,
+            )
+            for item in response.get("items", []):
+                if item.get("name") != name:
+                    continue
+                if item.get("phase") == "error":
+                    raise LabError(f"boot environment build failed for {name}: {item.get('message', '')}")
+                if item.get("phase") == "ready":
+                    return item
+                return None
+            return None
+
+        if bootenv_ready():
+            return
+        http_json(
+            "POST",
+            f"http://127.0.0.1:{self.gomi_vm['api_port']}/api/v1/boot-environments/{urlparse.quote(name)}/rebuild",
+            token=self.api_token,
+            payload={},
+        )
+        wait_for(f"boot environment {name}", timeout=3600, interval=10, fn=bootenv_ready)
+
+    def rootfs_source_url(self, image: dict[str, Any]) -> str:
+        explicit = str(image.get("rootfs_url") or image.get("url") or "").strip()
+        if explicit:
+            return explicit
+        base = str(self.config.get("os_image_source_url") or "").strip().rstrip("/")
+        if not base:
+            raise LabError(f"os_image_source_url is required for {image['image_ref']}")
+        filename = str(image.get("rootfs_path") or f"{image['image_ref']}.rootfs.squashfs").lstrip("/")
+        return f"{base}/{filename}"
+
+    def download_rootfs_image(self, image: dict[str, Any]) -> str:
+        image_ref = image["image_ref"]
+        src = self.rootfs_source_url(image)
+        artifact_dir = f"/var/lib/gomi/data/images/{image_ref}"
+        local_path = f"{artifact_dir}/rootfs.squashfs"
+        self.vm_ssh(
+            "bash -lc "
+            + shlex.quote(
+                "set -euo pipefail; "
+                f"sudo mkdir -p {shlex.quote(artifact_dir)}; "
+                f"tmp={shlex.quote(local_path + '.download')}; "
+                f"sudo curl -fL --retry 5 -o \"$tmp\" {shlex.quote(src)}; "
+                f"sudo mv \"$tmp\" {shlex.quote(local_path)}; "
+                f"sudo chown -R gomi:gomi {shlex.quote(artifact_dir)} || true"
+            ),
+            capture=False,
+        )
+        return artifact_dir
 
     def activate_os_assets(self, image_ref: str) -> None:
         self.vm_ssh("sudo test -s /var/lib/gomi/data/files/linux/boot-kernel", capture=False)
@@ -1066,12 +1115,26 @@ class LabRunner:
         return wait_for(f"machine ready {name}", timeout=1800, interval=5, fn=probe)
 
     def verify_target(self, ip_addr: str, login_user: str) -> dict[str, str]:
+        module_checks = ""
+        for module in self.config.get("required_kernel_modules", []):
+            module_name = str(module).strip()
+            if not module_name:
+                continue
+            key = "MODULE_" + "".join(ch if ch.isalnum() else "_" for ch in module_name).upper()
+            quoted_module = shlex.quote(module_name)
+            module_checks += (
+                f"if (command -v modinfo >/dev/null 2>&1 && modinfo {quoted_module} >/dev/null 2>&1) || "
+                f"[ -d /sys/module/{quoted_module} ] || "
+                f"find /lib/modules/$(uname -r) -name '{module_name}.ko*' -print -quit 2>/dev/null | grep -q .; then "
+                f"printf '{key}=present\\n'; else printf '{key}=missing\\n'; fi; "
+            )
         guest_cmd = (
             "set -euo pipefail; "
             "iface=$(ls /sys/class/net | grep -v '^lo$' | head -n1); "
             "driver=$(basename \"$(readlink -f /sys/class/net/${iface}/device/driver)\"); "
             ". /etc/os-release; "
             "printf 'VERSION_ID=%s\\nDRIVER=%s\\nIFACE=%s\\n' \"$VERSION_ID\" \"$driver\" \"$iface\""
+            + ("; " + module_checks if module_checks else "")
         )
         ssh_cmd = (
             "ssh -i /opt/gomi-lab/target_key -o BatchMode=yes "
@@ -1144,6 +1207,17 @@ class LabRunner:
                     "driver is recorded for inspection; exact driver match is not enforced for this case",
                 )
             )
+        kernel_modules: dict[str, str] = {}
+        for module in self.config.get("required_kernel_modules", []):
+            module_name = str(module).strip()
+            if not module_name:
+                continue
+            key = "MODULE_" + "".join(ch if ch.isalnum() else "_" for ch in module_name).upper()
+            state = verification.get(key, "missing")
+            kernel_modules[module_name] = state
+            if state != "present":
+                status = "failed"
+                notes.append(f"kernel module {module_name} is {state}")
 
         result = {
             "name": name,
@@ -1157,6 +1231,7 @@ class LabRunner:
             "qemu_model": nic["qemu_model"],
             "actual_driver": verification.get("DRIVER", ""),
             "iface": verification.get("IFACE", ""),
+            "kernel_modules": kernel_modules,
             "notes": notes,
         }
         try:

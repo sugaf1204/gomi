@@ -53,17 +53,6 @@ func TestDomainConfigValidate(t *testing.T) {
 			},
 			wantErr: "",
 		},
-		{
-			name: "valid config with raw format",
-			cfg: DomainConfig{
-				Name:       "test-vm",
-				VCPU:       4,
-				MemoryMB:   4096,
-				DiskPath:   "/var/lib/libvirt/images/test.raw",
-				DiskFormat: "raw",
-			},
-			wantErr: "",
-		},
 	}
 
 	for _, tt := range tests {
@@ -290,8 +279,8 @@ func TestGenerateDomainXML_MultipleNetworks(t *testing.T) {
 		Name:       "multi-net-vm",
 		VCPU:       4,
 		MemoryMB:   8192,
-		DiskPath:   "/var/lib/libvirt/images/multi.raw",
-		DiskFormat: "raw",
+		DiskPath:   "/var/lib/libvirt/images/multi.qcow2",
+		DiskFormat: "qcow2",
 		Networks: []NetworkConfig{
 			{Bridge: "br0", MAC: "52:54:00:11:22:33"},
 			{Bridge: "br1"},
@@ -360,39 +349,6 @@ func TestRewriteDomainBootDeviceXML(t *testing.T) {
 
 	if _, err := rewriteDomainBootDeviceXML(raw, "invalid-bootdev"); err == nil {
 		t.Fatal("expected unsupported boot device error")
-	}
-}
-
-func TestGenerateDomainXML_RawDiskFormat(t *testing.T) {
-	cfg := DomainConfig{
-		Name:       "raw-disk-vm",
-		VCPU:       2,
-		MemoryMB:   2048,
-		DiskPath:   "/var/lib/libvirt/images/test.raw",
-		DiskFormat: "raw",
-		Networks: []NetworkConfig{
-			{Bridge: "br0", MAC: "52:54:00:aa:bb:dd"},
-		},
-	}
-
-	xmlStr, err := GenerateDomainXML(cfg)
-	if err != nil {
-		t.Fatalf("GenerateDomainXML failed: %v", err)
-	}
-
-	var domain xmlDomain
-	if err := xml.Unmarshal([]byte(xmlStr), &domain); err != nil {
-		t.Fatalf("generated XML is not valid: %v\nXML:\n%s", err, xmlStr)
-	}
-
-	if len(domain.Devices.Disks) != 1 {
-		t.Fatalf("expected 1 disk, got %d", len(domain.Devices.Disks))
-	}
-	if domain.Devices.Disks[0].Driver.Type != "raw" {
-		t.Errorf("disk driver type = %q, want %q", domain.Devices.Disks[0].Driver.Type, "raw")
-	}
-	if domain.Devices.Disks[0].Source.File != "/var/lib/libvirt/images/test.raw" {
-		t.Errorf("disk source = %q, want raw disk path", domain.Devices.Disks[0].Source.File)
 	}
 }
 

@@ -4,8 +4,8 @@ import { api } from '../../api'
 import { formatDate, phaseClass } from '../../lib/formatters'
 import { usePersistentStringState } from '../../hooks/usePersistentStringState'
 import { notifyError } from '../../lib/toast'
-import type { OSCatalogItem, OSImage } from '../../types'
 import { ModalOverlay } from '../ui/ModalOverlay'
+import type { OSImage } from '../../types'
 
 export type OSImagesViewProps = {
   osImages: OSImage[]
@@ -17,7 +17,7 @@ type OSImageForm = {
   osFamily: string
   osVersion: string
   arch: string
-  format: 'qcow2' | 'raw' | 'iso' | 'squashfs'
+  format: 'qcow2' | 'iso' | 'squashfs'
   source: 'upload' | 'url'
   url: string
   checksum: string
@@ -29,7 +29,7 @@ const initialImageForm: OSImageForm = {
   osFamily: 'debian',
   osVersion: '13',
   arch: 'amd64',
-  format: 'raw',
+  format: 'qcow2',
   source: 'url',
   url: '',
   checksum: '',
@@ -44,8 +44,6 @@ export function OSImagesView({ osImages, onRefresh }: OSImagesViewProps) {
   const [imageForm, setImageForm] = useState(initialImageForm)
   const [creatingImage, setCreatingImage] = useState(false)
   const [uploadingImage, setUploadingImage] = useState(false)
-  const [catalogItems, setCatalogItems] = useState<OSCatalogItem[]>([])
-  const [installingCatalog, setInstallingCatalog] = useState<string | null>(null)
   const [deleteConfirm, setDeleteConfirm] = useState<{ open: boolean; name: string }>({ open: false, name: '' })
 
   const selectedImageData = osImages.find((img) => img.name === selectedImage) ?? null
@@ -55,10 +53,6 @@ export function OSImagesView({ osImages, onRefresh }: OSImagesViewProps) {
       setSelectedImage('')
     }
   }, [selectedImage, osImages, setSelectedImage])
-
-  useEffect(() => {
-    void refreshCatalog()
-  }, [])
 
   useEffect(() => {
     if (!imageFormOpen) return
@@ -117,51 +111,8 @@ export function OSImagesView({ osImages, onRefresh }: OSImagesViewProps) {
     }
   }
 
-  async function refreshCatalog() {
-    try {
-      const response = await api.listOSCatalog()
-      setCatalogItems(response.items ?? [])
-    } catch (err) {
-      notifyError(err instanceof Error ? err.message : 'Failed to load OS catalog')
-    }
-  }
-
-  async function handleInstallCatalog(name: string) {
-    setInstallingCatalog(name)
-    try {
-      await api.installOSCatalogEntry(name)
-      await Promise.all([onRefresh(), refreshCatalog()])
-    } catch (err) {
-      notifyError(err instanceof Error ? err.message : 'Failed to install OS image')
-    } finally {
-      setInstallingCatalog(null)
-    }
-  }
-
   function readyBadge(ready: boolean) {
     return ready ? phaseClass('ready') : phaseClass('error')
-  }
-
-  function bootEnvBadge(item: OSCatalogItem) {
-    if (!catalogNeedsBootEnvironment(item)) return phaseClass('ready')
-    if (item.bootEnvironment.phase === 'ready') return phaseClass('ready')
-    if (item.bootEnvironment.phase === 'building' || item.bootEnvironment.phase === 'missing') return phaseClass('pending')
-    return phaseClass('error')
-  }
-
-  function catalogNeedsBootEnvironment(item: OSCatalogItem) {
-    return item.entry.format === 'squashfs' || item.entry.variant === 'baremetal'
-  }
-
-  function catalogActionLabel(item: OSCatalogItem) {
-    if (installingCatalog === item.entry.name || item.installing) return 'Installing'
-    if (item.installed) return 'Installed'
-    if (item.osImageReady && catalogNeedsBootEnvironment(item) && item.bootEnvironment.phase === 'building') return 'Building'
-    return 'Install'
-  }
-
-  function catalogActionDisabled(item: OSCatalogItem) {
-    return item.installed || item.installing || (catalogNeedsBootEnvironment(item) && item.bootEnvironment.phase === 'building') || installingCatalog !== null
   }
 
   return (
@@ -202,9 +153,8 @@ export function OSImagesView({ osImages, onRefresh }: OSImagesViewProps) {
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-[0.45rem]">
                 <label className="text-[0.84rem]">
                   Format
-                  <select value={imageForm.format} onChange={(e) => setImageForm((f) => ({ ...f, format: e.target.value as 'qcow2' | 'raw' | 'iso' | 'squashfs' }))}>
+                  <select value={imageForm.format} onChange={(e) => setImageForm((f) => ({ ...f, format: e.target.value as 'qcow2' | 'iso' | 'squashfs' }))}>
                     <option value="qcow2">qcow2</option>
-                    <option value="raw">raw</option>
                     <option value="iso">iso</option>
                     <option value="squashfs">squashfs</option>
                   </select>
@@ -221,7 +171,7 @@ export function OSImagesView({ osImages, onRefresh }: OSImagesViewProps) {
               {imageForm.source === 'url' && (
                 <label className="text-[0.84rem]">
                   URL
-                  <input required value={imageForm.url} onChange={(e) => setImageForm((f) => ({ ...f, url: e.target.value }))} placeholder="https://example.com/os-image.raw" />
+                  <input required value={imageForm.url} onChange={(e) => setImageForm((f) => ({ ...f, url: e.target.value }))} placeholder="https://example.com/os-image.qcow2" />
                 </label>
               )}
 
@@ -231,7 +181,7 @@ export function OSImagesView({ osImages, onRefresh }: OSImagesViewProps) {
                   <input
                     type="file"
                     required
-                    accept=".qcow2,.img,.iso,.raw,.squashfs"
+                    accept=".qcow2,.img,.iso,.squashfs"
                     onChange={(e) => setImageForm((f) => ({ ...f, file: e.target.files?.[0] ?? null }))}
                     className="block mt-[0.3rem] text-[0.84rem]"
                   />
@@ -255,60 +205,6 @@ export function OSImagesView({ osImages, onRefresh }: OSImagesViewProps) {
           </div>
         </ModalOverlay>
       )}
-
-      <section className="mb-[0.9rem] border-t border-line pt-[0.85rem] grid gap-[0.65rem]">
-        <div className="flex items-center justify-between gap-[0.75rem]">
-          <h2 className="text-[1.15rem]">Supported Images</h2>
-          <button className="py-[0.34rem] px-[0.55rem] text-[0.8rem]" onClick={() => void refreshCatalog()}>
-            Refresh
-          </button>
-        </div>
-        <div className="overflow-auto">
-          <table className="w-full border-collapse text-[0.86rem]">
-            <thead>
-              <tr className="text-left text-ink-soft border-b border-line">
-                <th className="py-[0.42rem] pr-[0.75rem] font-ui font-medium">Name</th>
-                <th className="py-[0.42rem] pr-[0.75rem] font-ui font-medium">OS</th>
-                <th className="py-[0.42rem] pr-[0.75rem] font-ui font-medium">Boot Env</th>
-                <th className="py-[0.42rem] pr-[0.75rem] font-ui font-medium">Status</th>
-                <th className="py-[0.42rem] text-right font-ui font-medium">Action</th>
-              </tr>
-            </thead>
-            <tbody>
-              {catalogItems.map((item) => (
-                <tr key={item.entry.name} className="border-b border-line">
-                  <td className="py-[0.52rem] pr-[0.75rem] whitespace-nowrap font-ui font-medium">{item.entry.name}</td>
-                  <td className="py-[0.52rem] pr-[0.75rem] whitespace-nowrap">{item.entry.osFamily} {item.entry.osVersion} / {item.entry.arch}</td>
-                  <td className="py-[0.52rem] pr-[0.75rem] whitespace-nowrap">
-                    <span className={bootEnvBadge(item)}>
-                      {catalogNeedsBootEnvironment(item) ? item.bootEnvironment.phase : 'Not required'}
-                    </span>
-                  </td>
-                  <td className="py-[0.52rem] pr-[0.75rem] whitespace-nowrap">
-                    <span className={item.installed ? phaseClass('ready') : item.osImageError ? phaseClass('error') : phaseClass('pending')}>
-                      {item.installed ? 'Installed' : item.osImageError ? 'Error' : item.installing ? 'Installing' : 'Available'}
-                    </span>
-                  </td>
-                  <td className="py-[0.52rem] text-right">
-                    <button
-                      className="py-[0.34rem] px-[0.62rem] text-[0.8rem]"
-                      disabled={catalogActionDisabled(item)}
-                      onClick={() => void handleInstallCatalog(item.entry.name)}
-                    >
-                      {catalogActionLabel(item)}
-                    </button>
-                  </td>
-                </tr>
-              ))}
-              {catalogItems.length === 0 && (
-                <tr>
-                  <td className="py-[0.55rem] text-ink-soft" colSpan={5}>No catalog entries found</td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-      </section>
 
       <section className="min-h-0 grid grid-cols-1 md:grid-cols-[310px_minmax(0,1fr)] gap-[0.9rem]">
         <div className="min-h-0 grid grid-rows-[auto_minmax(0,1fr)] gap-[0.6rem]">

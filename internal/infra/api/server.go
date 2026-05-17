@@ -51,8 +51,6 @@ type Server struct {
 	vmMigrator       *vm.Migrator
 	vmRuntimeDeleter func(ctx context.Context, v vm.VirtualMachine) error
 	bootenvs         *bootenv.Manager
-	catalogMu        sync.Mutex
-	catalogInstalls  map[string]struct{}
 	setupMu          sync.Mutex
 }
 
@@ -136,7 +134,6 @@ func NewServer(cfg ServerConfig) *Server {
 		vmMigrator:       cfg.VMMigrator,
 		vmRuntimeDeleter: cfg.VMRuntimeDeleter,
 		bootenvs:         cfg.BootEnvs,
-		catalogInstalls:  map[string]struct{}{},
 	}
 	if s.provisionTimeout <= 0 {
 		s.provisionTimeout = 30 * time.Minute
@@ -270,8 +267,6 @@ func NewServer(cfg ServerConfig) *Server {
 	writer.DELETE("/cloud-init-templates/:name", s.DeleteCloudInitTemplate)
 
 	// OSImage routes — reads for all, writes for operator+.
-	authed.GET("/os-catalog", s.ListOSCatalog)
-	writer.POST("/os-catalog/:name/install", s.InstallOSCatalogEntry)
 	authed.GET("/boot-environments", s.ListBootEnvironments)
 	authed.GET("/boot-environments/:name/logs", s.GetBootEnvironmentLogs)
 	writer.POST("/boot-environments/:name/rebuild", s.RebuildBootEnvironment)
