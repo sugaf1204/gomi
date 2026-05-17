@@ -1838,6 +1838,9 @@ func TestPXECurtinConfig_DebianSquashFSSkipsCurtinPackageInstall(t *testing.T) {
 			Root: osimage.RootArtifact{
 				Format: osimage.FormatSquashFS,
 				Path:   "rootfs.squashfs",
+				RootPartition: osimage.Partition{
+					Filesystem: "xfs",
+				},
 			},
 		},
 		CreatedAt: now,
@@ -2064,6 +2067,9 @@ func TestPXECurtinConfig_FedoraBIOSSquashFSEmbedsMinimalGrubConfig(t *testing.T)
 			Root: osimage.RootArtifact{
 				Format: osimage.FormatSquashFS,
 				Path:   "rootfs.squashfs",
+				RootPartition: osimage.Partition{
+					Filesystem: "xfs",
+				},
 			},
 		},
 		CreatedAt: now,
@@ -2128,7 +2134,10 @@ func TestPXECurtinConfig_FedoraBIOSSquashFSEmbedsMinimalGrubConfig(t *testing.T)
 	for _, want := range []string{
 		"/boot/grub2/gomi.cfg",
 		"root=LABEL=rootfs rw",
+		"fstype: xfs",
+		"root_fstype='xfs'",
 		"grub2-mkimage",
+		"part_gpt 'xfs' search",
 		"gomi-grub-bootstrap.cfg",
 		"configfile (\\$root)$config_path",
 		"sh '/boot/grub2/gomi.cfg'",

@@ -748,7 +748,7 @@ func (h *Handler) buildCurtinInstallConfig(ctx context.Context, c echo.Context, 
 		buildRootFSFstabCommand(rootFilesystem),
 		`if [ -x "$TARGET_MOUNT_POINT/usr/sbin/netplan" ] && [ -x "$TARGET_MOUNT_POINT/lib/systemd/systemd-networkd" ]; then chroot "$TARGET_MOUNT_POINT" systemctl enable systemd-networkd; fi`,
 		`sed -i 's/discard,errors=remount-ro/defaults,errors=remount-ro/g' "$TARGET_MOUNT_POINT/etc/fstab" 2>/dev/null || true; sed -i -E 's/(root=[^ ]+) ro /\1 rw /g' "$TARGET_MOUNT_POINT/boot/grub/grub.cfg" 2>/dev/null || true`,
-		buildRootFSBootloaderCommand(capability, targetDisk, m.Firmware),
+		buildRootFSBootloaderCommand(capability, targetDisk, m.Firmware, rootFilesystem),
 	}
 
 	cfg := curtinConfig{
@@ -871,7 +871,18 @@ func buildRootFSFstabCommand(rootFilesystem string) string {
 	)
 }
 
-func buildRootFSBootloaderCommand(cap osInstallCapability, targetDisk string, firmware machine.Firmware) string {
+func rootFSGrubModule(rootFilesystem string) string {
+	switch strings.ToLower(strings.TrimSpace(rootFilesystem)) {
+	case "xfs":
+		return "xfs"
+	case "btrfs":
+		return "btrfs"
+	default:
+		return "ext2"
+	}
+}
+
+func buildRootFSBootloaderCommand(cap osInstallCapability, targetDisk string, firmware machine.Firmware, rootFilesystem string) string {
 	biosInstall := fmt.Sprintf(`if chroot "$TARGET_MOUNT_POINT" %s --target=i386-pc --recheck %s; then :; else echo "gomi: BIOS grub install skipped"; fi`,
 		shellQuote(cap.GrubInstallCommand),
 		shellQuote(targetDisk),
@@ -879,11 +890,12 @@ func buildRootFSBootloaderCommand(cap osInstallCapability, targetDisk string, fi
 	simpleConfig := buildRootFSSimpleGrubConfigCommand(cap)
 	if firmware == machine.FirmwareBIOS {
 		if cap.EmbedBIOSBootstrap {
-			return fmt.Sprintf(`set -e; for d in dev proc sys run; do mountpoint -q "$TARGET_MOUNT_POINT/$d" || mount --bind "/$d" "$TARGET_MOUNT_POINT/$d"; done; chroot "$TARGET_MOUNT_POINT" %s --target=i386-pc --recheck %s; %s; chroot "$TARGET_MOUNT_POINT" %s -O i386-pc -p /boot/grub2 -c /tmp/gomi-grub-bootstrap.cfg -o /boot/grub2/i386-pc/core.img biosdisk part_gpt ext2 search search_label configfile normal linux gzio; chroot "$TARGET_MOUNT_POINT" %s -d /boot/grub2/i386-pc %s`,
+			return fmt.Sprintf(`set -e; for d in dev proc sys run; do mountpoint -q "$TARGET_MOUNT_POINT/$d" || mount --bind "/$d" "$TARGET_MOUNT_POINT/$d"; done; chroot "$TARGET_MOUNT_POINT" %s --target=i386-pc --recheck %s; %s; chroot "$TARGET_MOUNT_POINT" %s -O i386-pc -p /boot/grub2 -c /tmp/gomi-grub-bootstrap.cfg -o /boot/grub2/i386-pc/core.img biosdisk part_gpt %s search search_label configfile normal linux gzio; chroot "$TARGET_MOUNT_POINT" %s -d /boot/grub2/i386-pc %s`,
 				shellQuote(cap.GrubInstallCommand),
 				shellQuote(targetDisk),
 				simpleConfig,
 				shellQuote(cap.GrubMkimageCommand),
+				shellQuote(rootFSGrubModule(rootFilesystem)),
 				shellQuote(cap.GrubBIOSSetupCommand),
 				shellQuote(targetDisk),
 			)
