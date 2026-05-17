@@ -1779,6 +1779,7 @@ func TestPXECurtinConfig_SquashFSImageUsesFSImageAndStorageConfig(t *testing.T) 
 		"flag: bios_grub",
 		"path: /boot/efi",
 		"fstype: ext4",
+		"root_fstype='ext4'",
 		"size: 1M",
 		"size: 512M",
 		"size: 64959M",
@@ -1942,6 +1943,9 @@ func TestPXECurtinConfig_FedoraSquashFSUsesFedoraBootloaderCommands(t *testing.T
 			Root: osimage.RootArtifact{
 				Format: osimage.FormatSquashFS,
 				Path:   "rootfs.squashfs",
+				RootPartition: osimage.Partition{
+					Filesystem: "xfs",
+				},
 			},
 		},
 		CreatedAt: now,
@@ -2005,6 +2009,8 @@ func TestPXECurtinConfig_FedoraSquashFSUsesFedoraBootloaderCommands(t *testing.T
 	body := rec.Body.String()
 	for _, want := range []string{
 		"type: fsimage",
+		"fstype: xfs",
+		"root_fstype='xfs'",
 		"grub2-mkconfig",
 		"/boot/grub2/grub.cfg",
 		"/boot/grub2/gomi.cfg",
@@ -2027,6 +2033,7 @@ func TestPXECurtinConfig_FedoraSquashFSUsesFedoraBootloaderCommands(t *testing.T
 		"--target=x86_64-efi",
 		"--removable",
 		"--bootloader-id='fedora'",
+		"root_fstype='ext4'",
 	} {
 		if strings.Contains(body, forbidden) {
 			t.Fatalf("fedora UEFI squashfs config must avoid unsupported UEFI grub2-install path %q, got:\n%s", forbidden, body)

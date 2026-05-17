@@ -101,6 +101,7 @@ type curtinConfig struct {
 
 type osInstallCapability struct {
 	Family               string
+	RootFilesystem       string
 	GrubInstallCommand   string
 	GrubEFIArgs          []string
 	GrubMkconfigCommand  string
@@ -722,13 +723,17 @@ func (h *Handler) buildCurtinInstallConfig(ctx context.Context, c echo.Context, 
 	var storageConfig *curtinStorage
 	stages := []string{"early", "partitioning", "network", "extract", "late"}
 	capability := installCapabilityForOSFamily(img.OSFamily)
+	rootFilesystem, err := rootFilesystemForImage(img, capability)
+	if err != nil {
+		return "", err
+	}
 	switch strings.ToLower(strings.TrimSpace(imageFormat)) {
 	case string(osimage.FormatSquashFS):
 		rootSizeMB, err := rootFSRootPartitionSizeMB(selectedDisk.Info)
 		if err != nil {
 			return "", err
 		}
-		storageConfig = buildRootFSStorageConfig(targetDisk, rootSizeMB)
+		storageConfig = buildRootFSStorageConfig(targetDisk, rootSizeMB, rootFilesystem)
 	default:
 		return "", fmt.Errorf("curtin deploy requires squashfs image, got format %q", imageFormat)
 	}
@@ -740,7 +745,7 @@ func (h *Handler) buildCurtinInstallConfig(ctx context.Context, c echo.Context, 
 		`mkdir -p "$TARGET_MOUNT_POINT/etc/cloud/cloud.cfg.d"; printf '%s\n' 'datasource_list: [ NoCloud, None ]' 'datasource:' '  NoCloud:' '    seedfrom: /var/lib/cloud/seed/nocloud/' 'ssh_deletekeys: false' > "$TARGET_MOUNT_POINT/etc/cloud/cloud.cfg.d/99_gomi_nocloud.cfg"; rm -f "$TARGET_MOUNT_POINT"/etc/cloud/cloud.cfg.d/50-curtin-networking.cfg "$TARGET_MOUNT_POINT"/etc/netplan/*.yaml`,
 		`mkdir -p "$TARGET_MOUNT_POINT/dev"; if [ ! -e "$TARGET_MOUNT_POINT/dev/null" ]; then mknod -m 666 "$TARGET_MOUNT_POINT/dev/null" c 1 3; else chmod 666 "$TARGET_MOUNT_POINT/dev/null"; fi`,
 		`if [ -x "$TARGET_MOUNT_POINT/usr/bin/ssh-keygen" ]; then rm -f "$TARGET_MOUNT_POINT"/etc/ssh/ssh_host_*_key "$TARGET_MOUNT_POINT"/etc/ssh/ssh_host_*_key.pub; chroot "$TARGET_MOUNT_POINT" ssh-keygen -A; fi`,
-		`printf '%s\n' 'LABEL=rootfs / ext4 defaults,errors=remount-ro 0 1' 'LABEL=EFI /boot/efi vfat umask=0077 0 1' > "$TARGET_MOUNT_POINT/etc/fstab"`,
+		buildRootFSFstabCommand(rootFilesystem),
 		`if [ -x "$TARGET_MOUNT_POINT/usr/sbin/netplan" ] && [ -x "$TARGET_MOUNT_POINT/lib/systemd/systemd-networkd" ]; then chroot "$TARGET_MOUNT_POINT" systemctl enable systemd-networkd; fi`,
 		`sed -i 's/discard,errors=remount-ro/defaults,errors=remount-ro/g' "$TARGET_MOUNT_POINT/etc/fstab" 2>/dev/null || true; sed -i -E 's/(root=[^ ]+) ro /\1 rw /g' "$TARGET_MOUNT_POINT/boot/grub/grub.cfg" 2>/dev/null || true`,
 		buildRootFSBootloaderCommand(capability, targetDisk, m.Firmware),
@@ -801,6 +806,7 @@ func installCapabilityForOSFamily(osFamily string) osInstallCapability {
 	case "fedora":
 		return osInstallCapability{
 			Family:               family,
+			RootFilesystem:       "ext4",
 			GrubInstallCommand:   "grub2-install",
 			GrubMkconfigCommand:  "grub2-mkconfig",
 			GrubMkimageCommand:   "grub2-mkimage",
@@ -816,6 +822,7 @@ func installCapabilityForOSFamily(osFamily string) osInstallCapability {
 	case "debian", "ubuntu":
 		return osInstallCapability{
 			Family:              family,
+			RootFilesystem:      "ext4",
 			GrubInstallCommand:  "grub-install",
 			GrubMkconfigCommand: "grub-mkconfig",
 			GrubConfigPath:      "/boot/grub/grub.cfg",
@@ -829,6 +836,7 @@ func installCapabilityForOSFamily(osFamily string) osInstallCapability {
 		}
 		return osInstallCapability{
 			Family:              family,
+			RootFilesystem:      "ext4",
 			GrubInstallCommand:  "grub-install",
 			GrubMkconfigCommand: "grub-mkconfig",
 			GrubConfigPath:      "/boot/grub/grub.cfg",
@@ -836,6 +844,31 @@ func installCapabilityForOSFamily(osFamily string) osInstallCapability {
 			InstallRemovableEFI: true,
 		}
 	}
+}
+
+func rootFilesystemForImage(img osimage.OSImage, cap osInstallCapability) (string, error) {
+	filesystem := ""
+	if img.Manifest != nil {
+		filesystem = img.Manifest.Root.RootPartition.Filesystem
+	}
+	if strings.TrimSpace(filesystem) == "" {
+		filesystem = cap.RootFilesystem
+	}
+	filesystem = strings.ToLower(strings.TrimSpace(filesystem))
+	switch filesystem {
+	case "":
+		return "ext4", nil
+	case "ext4", "xfs", "btrfs":
+		return filesystem, nil
+	default:
+		return "", fmt.Errorf("unsupported root filesystem %q for squashfs deploy", filesystem)
+	}
+}
+
+func buildRootFSFstabCommand(rootFilesystem string) string {
+	return fmt.Sprintf(`root_fstype=%s; printf '%%s\n' "LABEL=rootfs / $root_fstype defaults,errors=remount-ro 0 1" 'LABEL=EFI /boot/efi vfat umask=0077 0 1' > "$TARGET_MOUNT_POINT/etc/fstab"`,
+		shellQuote(rootFilesystem),
+	)
 }
 
 func buildRootFSBootloaderCommand(cap osInstallCapability, targetDisk string, firmware machine.Firmware) string {
@@ -932,7 +965,7 @@ EOF' sh %s`,
 	)
 }
 
-func buildRootFSStorageConfig(targetDisk string, rootSizeMB int64) *curtinStorage {
+func buildRootFSStorageConfig(targetDisk string, rootSizeMB int64, rootFilesystem string) *curtinStorage {
 	return &curtinStorage{
 		Storage: curtinStorageConfig{
 			Version: 1,
@@ -979,7 +1012,7 @@ func buildRootFSStorageConfig(targetDisk string, rootSizeMB int64) *curtinStorag
 					"id":     "fmt-root",
 					"type":   "format",
 					"volume": "part-root",
-					"fstype": "ext4",
+					"fstype": rootFilesystem,
 					"label":  "rootfs",
 				},
 				{
