@@ -386,6 +386,22 @@ func TestWithDeployCloudInitDefaultsDisablesPackageBackedLocaleAndResize(t *test
 	}
 }
 
+func TestWithDeployCloudInitDefaultsPreservesJinjaHeader(t *testing.T) {
+	got := withDeployCloudInitDefaults("## template: jinja\n#cloud-config\nhostname: '{{ ds.meta_data.local_hostname }}'\n")
+	if !strings.HasPrefix(got, "## template: jinja\n#cloud-config\n") {
+		t.Fatalf("expected jinja and cloud-config headers to be preserved, got:\n%s", got)
+	}
+	for _, want := range []string{
+		"hostname: '{{ ds.meta_data.local_hostname }}'",
+		"locale: false",
+		"resize_rootfs: false",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("expected rendered cloud-init to contain %q, got:\n%s", want, got)
+		}
+	}
+}
+
 func TestPXEPreseed_CustomInlineByMAC(t *testing.T) {
 	backend := memory.New()
 	vmSvc := vm.NewService(backend.VMs())
@@ -3261,7 +3277,7 @@ func TestPXENocloudNetworkConfig_DHCP(t *testing.T) {
 	}
 }
 
-func TestPXENocloudNetworkConfig_FedoraMachineStaticOmitsRenderer(t *testing.T) {
+func TestPXENocloudNetworkConfig_FedoraMachineStaticUsesNetworkManagerRenderer(t *testing.T) {
 	backend := memory.New()
 	machineSvc := machine.NewService(backend.Machines())
 	now := time.Now().UTC()
@@ -3298,6 +3314,7 @@ func TestPXENocloudNetworkConfig_FedoraMachineStaticOmitsRenderer(t *testing.T) 
 	}
 	body := rec.Body.String()
 	for _, want := range []string{
+		"renderer: NetworkManager",
 		`macaddress: "52:54:00:44:00:44"`,
 		"192.168.2.224/24",
 		"dhcp4: false",
@@ -3306,12 +3323,12 @@ func TestPXENocloudNetworkConfig_FedoraMachineStaticOmitsRenderer(t *testing.T) 
 			t.Fatalf("expected fedora network-config to contain %q, got:\n%s", want, body)
 		}
 	}
-	if strings.Contains(body, "renderer:") {
-		t.Fatalf("fedora network-config must let cloud-init select the renderer, got:\n%s", body)
+	if strings.Contains(body, "renderer: networkd") {
+		t.Fatalf("fedora network-config must not force networkd, got:\n%s", body)
 	}
 }
 
-func TestPXENocloudNetworkConfig_FedoraVMStaticOmitsRenderer(t *testing.T) {
+func TestPXENocloudNetworkConfig_FedoraVMStaticUsesNetworkManagerRenderer(t *testing.T) {
 	backend := memory.New()
 	vmSvc := vm.NewService(backend.VMs())
 	osImageSvc := osimage.NewService(backend.OSImages())
@@ -3354,6 +3371,7 @@ func TestPXENocloudNetworkConfig_FedoraVMStaticOmitsRenderer(t *testing.T) {
 	}
 	body := rec.Body.String()
 	for _, want := range []string{
+		"renderer: NetworkManager",
 		`macaddress: "52:54:00:44:00:45"`,
 		"192.168.2.225/24",
 		"dhcp4: false",
@@ -3362,8 +3380,8 @@ func TestPXENocloudNetworkConfig_FedoraVMStaticOmitsRenderer(t *testing.T) {
 			t.Fatalf("expected fedora VM network-config to contain %q, got:\n%s", want, body)
 		}
 	}
-	if strings.Contains(body, "renderer:") {
-		t.Fatalf("fedora VM network-config must let cloud-init select the renderer, got:\n%s", body)
+	if strings.Contains(body, "renderer: networkd") {
+		t.Fatalf("fedora VM network-config must not force networkd, got:\n%s", body)
 	}
 }
 

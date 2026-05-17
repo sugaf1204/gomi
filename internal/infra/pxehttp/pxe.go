@@ -562,7 +562,8 @@ type netplanNameServers struct {
 }
 
 const (
-	networkConfigRendererNetworkd = "networkd"
+	networkConfigRendererNetworkd       = "networkd"
+	networkConfigRendererNetworkManager = "NetworkManager"
 )
 
 func marshalYAMLString(value any) string {
@@ -1136,7 +1137,7 @@ func (h *Handler) resolveNodeOSFamily(ctx context.Context, n node.Node) string {
 
 func networkConfigRendererForOSFamily(osFamily string) string {
 	if isNetworkManagerOSFamily(osFamily) {
-		return ""
+		return networkConfigRendererNetworkManager
 	}
 	return networkConfigRendererNetworkd
 }
@@ -1194,6 +1195,11 @@ func withDeployCloudInitDefaults(userData string) string {
 	if trimmed == "" {
 		return ""
 	}
+	header := "#cloud-config"
+	if strings.HasPrefix(trimmed, "## template: jinja") {
+		header = "## template: jinja\n#cloud-config"
+		trimmed = strings.TrimSpace(strings.TrimPrefix(trimmed, "## template: jinja"))
+	}
 	cfg := map[string]any{}
 	if err := yaml.Unmarshal([]byte(trimmed), &cfg); err != nil {
 		return strings.TrimRight(userData, "\n") + "\n"
@@ -1208,7 +1214,7 @@ func withDeployCloudInitDefaults(userData string) string {
 	if err != nil {
 		return strings.TrimRight(userData, "\n") + "\n"
 	}
-	return "#cloud-config\n" + string(raw)
+	return header + "\n" + string(raw)
 }
 
 func (h *Handler) resolveCloudInitUserData(ctx context.Context, cloudInitRef string) (string, bool, error) {
