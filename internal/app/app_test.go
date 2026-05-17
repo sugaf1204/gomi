@@ -6,7 +6,9 @@ import (
 	"testing"
 
 	"github.com/sugaf1204/gomi/internal/infra/config"
+	"github.com/sugaf1204/gomi/internal/machine"
 	"github.com/sugaf1204/gomi/internal/subnet"
+	"github.com/sugaf1204/gomi/internal/vm"
 )
 
 func TestUEFILocalBootGRUBConfigFallsBackToFirmwareBootOrder(t *testing.T) {
@@ -122,6 +124,50 @@ func TestPXESubnetReadyAllowsProxyModeWithoutAddressRange(t *testing.T) {
 	spec := subnet.SubnetSpec{CIDR: "192.168.2.0/24"}
 	if !pxeSubnetReady("proxy", spec) {
 		t.Fatal("proxy DHCP mode should not require a lease address range")
+	}
+}
+
+func TestProvisioningMACWinsOverLocalBootMAC(t *testing.T) {
+	mac := "52:54:00:12:00:12"
+	localBootMACs := map[string]struct{}{}
+	provisioningMACs := map[string]struct{}{}
+
+	addLocalBootMAC(localBootMACs, &vm.VirtualMachine{
+		NetworkInterfaces: []vm.NetworkInterfaceStatus{{MAC: mac}},
+	})
+	addActiveProvisioningMAC(provisioningMACs, &machine.Machine{
+		MAC: mac,
+		Provision: &machine.ProvisionProgress{
+			Active: true,
+		},
+	})
+	removeProvisioningLocalBootMACs(localBootMACs, provisioningMACs)
+
+	if _, ok := localBootMACs[mac]; ok {
+		t.Fatal("active provisioning MAC must not be forced to local boot by another node with the same MAC")
+	}
+}
+
+func TestImageAppliedMachineUsesLocalBootMAC(t *testing.T) {
+	mac := "52:54:00:12:00:12"
+	localBootMACs := map[string]struct{}{}
+	provisioningMACs := map[string]struct{}{}
+
+	target := &machine.Machine{
+		MAC: mac,
+		Provision: &machine.ProvisionProgress{
+			Active: true,
+			Artifacts: map[string]string{
+				"imageApplied": "true",
+			},
+		},
+	}
+	addLocalBootMAC(localBootMACs, target)
+	addActiveProvisioningMAC(provisioningMACs, target)
+	removeProvisioningLocalBootMACs(localBootMACs, provisioningMACs)
+
+	if _, ok := localBootMACs[mac]; !ok {
+		t.Fatal("image-applied machine should use local boot")
 	}
 }
 

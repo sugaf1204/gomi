@@ -217,10 +217,11 @@ WantedBy=multi-user.target
 `
 
 type pxeTarget struct {
-	node        node.Node
-	installType vm.InstallConfigType
-	variant     string
-	osFamily   string
+	node            node.Node
+	installType     vm.InstallConfigType
+	variant         string
+	osFamily        string
+	completedRootFS bool
 }
 
 func (h *Handler) PXEBootScript(c echo.Context) error {
@@ -315,12 +316,13 @@ func (h *Handler) PXENocloudUserData(c echo.Context) error {
 
 	if target.node != nil && strings.TrimSpace(target.node.PrimaryMAC()) != "" {
 		if m, ok := target.node.(*machine.Machine); ok && m.Role == machine.RoleHypervisor {
-			result = injectBridgedNetplanConfig(result, m, target.osFamily, base, h.resolveSubnetSpec(ctx, target.node))
+			result = injectBridgedHostNetworkConfig(result, m, target.osFamily, base, h.resolveSubnetSpec(ctx, target.node))
 		} else {
-			result = injectNetplanConfigForHost(result, target.node, target.osFamily, base, h.resolveSubnetSpec(ctx, target.node))
+			result = injectHostNetworkConfig(result, target.node, target.osFamily, base, h.resolveSubnetSpec(ctx, target.node))
 		}
 	}
 
+	result = withDeployCloudInitDefaults(result, target.completedRootFS)
 	return c.Blob(gohttp.StatusOK, "text/plain; charset=utf-8", []byte(result))
 }
 
@@ -343,8 +345,8 @@ func (h *Handler) PXENocloudVendorData(c echo.Context) error {
 	return c.Blob(gohttp.StatusOK, "text/plain; charset=utf-8", []byte(defaultNoCloudVendorData))
 }
 
-// PXENocloudNetworkConfig serves netplan v2 network-config for the NoCloud datasource.
-// cloud-init prioritizes this over any /etc/netplan/*.yaml that ships in the cloud image.
+// PXENocloudNetworkConfig serves v2 network-config for the NoCloud datasource.
+// cloud-init prioritizes this over any baked network config that ships in the image.
 // Always matches by MAC address so the config is NIC-name-agnostic.
 func (h *Handler) PXENocloudNetworkConfig(c echo.Context) error {
 	rawMAC := c.Param("mac")
@@ -352,6 +354,7 @@ func (h *Handler) PXENocloudNetworkConfig(c echo.Context) error {
 	ctx := c.Request().Context()
 
 	n := h.findHostByMAC(ctx, rawMAC)
+	renderer := h.resolveNetworkConfigRenderer(ctx, n)
 
 	// Hypervisor machines get a bridged network config.
 	if m, ok := n.(*machine.Machine); ok && m.Role == machine.RoleHypervisor {
@@ -366,24 +369,28 @@ func (h *Handler) PXENocloudNetworkConfig(c echo.Context) error {
 			spec = h.resolveSubnetSpec(ctx, n)
 		}
 		return c.Blob(gohttp.StatusOK, "text/plain; charset=utf-8",
-			[]byte(buildBridgedNetworkConfig(mac, bridgeName, ip, spec)))
+			[]byte(buildBridgedNetworkConfigWithRenderer(mac, bridgeName, ip, spec, renderer)))
 	}
 
 	if n != nil && n.GetIPAssignment() == resource.IPAssignmentStatic {
 		if ip := n.StaticIP(); ip != "" {
 			spec := h.resolveSubnetSpec(ctx, n)
 			return c.Blob(gohttp.StatusOK, "text/plain; charset=utf-8",
-				[]byte(buildNetworkConfig(mac, ip, spec)))
+				[]byte(buildNetworkConfigWithRenderer(mac, ip, spec, renderer)))
 		}
 	}
 
 	return c.Blob(gohttp.StatusOK, "text/plain; charset=utf-8",
-		[]byte(buildNetworkConfig(mac, "", nil)))
+		[]byte(buildNetworkConfigWithRenderer(mac, "", nil, renderer)))
 }
 
 // buildNetworkConfig builds a netplan v2 network-config matched by MAC address.
 // If ip is empty, DHCP is configured. Otherwise a static address is configured.
 func buildNetworkConfig(mac, ip string, spec *subnet.SubnetSpec) string {
+	return buildNetworkConfigWithRenderer(mac, ip, spec, networkConfigRendererNetworkd)
+}
+
+func buildNetworkConfigWithRenderer(mac, ip string, spec *subnet.SubnetSpec, renderer string) string {
 	return marshalYAMLString(buildDirectNetplanConfig(
 		mac,
 		ip,
@@ -391,6 +398,7 @@ func buildNetworkConfig(mac, ip string, spec *subnet.SubnetSpec) string {
 		subnetGateway(spec),
 		subnetNameServers(spec),
 		ip == "",
+		renderer,
 	))
 }
 
@@ -554,6 +562,10 @@ type netplanNameServers struct {
 	Addresses []string `yaml:"addresses,omitempty"`
 }
 
+const (
+	networkConfigRendererNetworkd = "networkd"
+)
+
 func marshalYAMLString(value any) string {
 	raw, err := yaml.Marshal(value)
 	if err != nil {
@@ -617,7 +629,7 @@ func defaultRoute(gateway string) []netplanRoute {
 	return []netplanRoute{{To: "default", Via: gateway}}
 }
 
-func buildDirectNetplanConfig(mac, ip string, prefixLen int, gateway string, nameservers []string, dhcp bool) netplanConfig {
+func buildDirectNetplanConfig(mac, ip string, prefixLen int, gateway string, nameservers []string, dhcp bool, renderer string) netplanConfig {
 	nic := netplanNIC{
 		Match:     macMatch(mac),
 		WakeOnLAN: strings.TrimSpace(mac) != "",
@@ -631,12 +643,12 @@ func buildDirectNetplanConfig(mac, ip string, prefixLen int, gateway string, nam
 	}
 	return netplanConfig{
 		Version:   2,
-		Renderer:  "networkd",
+		Renderer:  renderer,
 		Ethernets: map[string]netplanNIC{"gomi-nic": nic},
 	}
 }
 
-func buildBridgedNetplanConfig(mac, bridgeName, ip string, prefixLen int, gateway string, nameservers []string, dhcp bool) netplanConfig {
+func buildBridgedNetplanConfig(mac, bridgeName, ip string, prefixLen int, gateway string, nameservers []string, dhcp bool, renderer string) netplanConfig {
 	bridgeName = strings.TrimSpace(bridgeName)
 	if bridgeName == "" {
 		bridgeName = "br0"
@@ -662,7 +674,7 @@ func buildBridgedNetplanConfig(mac, bridgeName, ip string, prefixLen int, gatewa
 	}
 	return netplanConfig{
 		Version:   2,
-		Renderer:  "networkd",
+		Renderer:  renderer,
 		Ethernets: map[string]netplanNIC{"gomi-nic": nic},
 		Bridges:   map[string]netplanBridge{bridgeName: bridge},
 	}
@@ -672,6 +684,10 @@ func buildBridgedNetplanConfig(mac, bridgeName, ip string, prefixLen int, gatewa
 // with the matched physical NIC as a member. Used for hypervisor machines so
 // VMs can share the same physical network.
 func buildBridgedNetworkConfig(mac, bridgeName, ip string, spec *subnet.SubnetSpec) string {
+	return buildBridgedNetworkConfigWithRenderer(mac, bridgeName, ip, spec, networkConfigRendererNetworkd)
+}
+
+func buildBridgedNetworkConfigWithRenderer(mac, bridgeName, ip string, spec *subnet.SubnetSpec, renderer string) string {
 	return marshalYAMLString(buildBridgedNetplanConfig(
 		mac,
 		bridgeName,
@@ -680,6 +696,7 @@ func buildBridgedNetworkConfig(mac, bridgeName, ip string, spec *subnet.SubnetSp
 		subnetGateway(spec),
 		subnetNameServers(spec),
 		ip == "",
+		renderer,
 	))
 }
 
@@ -1052,7 +1069,7 @@ func (h *Handler) resolvePXETarget(ctx context.Context, rawMAC string) (pxeTarge
 			node:        targetVM,
 			installType: vm.InstallConfigType(targetVM.PXEInstallType()),
 			variant:     h.resolveOSImageVariant(ctx, targetVM.OSImageVariantRef()),
-			osFamily:   h.resolveOSImageFamily(ctx, targetVM.OSImageVariantRef()),
+			osFamily:    h.resolveOSImageFamily(ctx, targetVM.OSImageVariantRef()),
 		}, true, nil
 	}
 
@@ -1061,18 +1078,43 @@ func (h *Handler) resolvePXETarget(ctx context.Context, rawMAC string) (pxeTarge
 		return pxeTarget{installType: vm.InstallConfigPreseed}, false, machineErr
 	}
 	if targetMachine != nil && targetMachine.IsProvisioningActive() {
+		completedRootFS := h.machineUsesCompletedRootFS(ctx, targetMachine)
 		if machineImageApplied(targetMachine) {
-			return pxeTarget{node: targetMachine, installType: vm.InstallConfigCurtin}, false, nil
+			return pxeTarget{
+				node:            targetMachine,
+				installType:     vm.InstallConfigCurtin,
+				variant:         h.resolveOSImageVariant(ctx, targetMachine.OSImageVariantRef()),
+				osFamily:        string(targetMachine.OSPreset.Family),
+				completedRootFS: completedRootFS,
+			}, false, nil
 		}
 		return pxeTarget{
-			node:        targetMachine,
-			installType: vm.InstallConfigType(targetMachine.PXEInstallType()),
-			variant:     h.resolveOSImageVariant(ctx, targetMachine.OSImageVariantRef()),
-			osFamily:   string(targetMachine.OSPreset.Family),
+			node:            targetMachine,
+			installType:     vm.InstallConfigType(targetMachine.PXEInstallType()),
+			variant:         h.resolveOSImageVariant(ctx, targetMachine.OSImageVariantRef()),
+			osFamily:        string(targetMachine.OSPreset.Family),
+			completedRootFS: completedRootFS,
 		}, true, nil
 	}
 
 	return pxeTarget{installType: vm.InstallConfigPreseed}, false, nil
+}
+
+func (h *Handler) machineUsesCompletedRootFS(ctx context.Context, m *machine.Machine) bool {
+	if machineImageApplied(m) {
+		return true
+	}
+	if h.osimages == nil || m == nil || strings.TrimSpace(m.OSPreset.ImageRef) == "" {
+		return false
+	}
+	img, err := h.osimages.Get(ctx, strings.TrimSpace(m.OSPreset.ImageRef))
+	if err != nil {
+		return false
+	}
+	if img.Manifest != nil && img.Manifest.Root.Format != "" {
+		return img.Manifest.Root.Format == osimage.FormatSquashFS
+	}
+	return img.Format == osimage.FormatSquashFS
 }
 
 func (h *Handler) resolveOSImageVariant(ctx context.Context, osImageRef string) string {
@@ -1095,6 +1137,31 @@ func (h *Handler) resolveOSImageFamily(ctx context.Context, osImageRef string) s
 		return ""
 	}
 	return img.OSFamily
+}
+
+func (h *Handler) resolveNetworkConfigRenderer(ctx context.Context, n node.Node) string {
+	return networkConfigRendererForOSFamily(h.resolveNodeOSFamily(ctx, n))
+}
+
+func (h *Handler) resolveNodeOSFamily(ctx context.Context, n node.Node) string {
+	switch t := n.(type) {
+	case *machine.Machine:
+		if family := strings.TrimSpace(string(t.OSPreset.Family)); family != "" {
+			return family
+		}
+		return h.resolveOSImageFamily(ctx, t.OSImageVariantRef())
+	case *vm.VirtualMachine:
+		return h.resolveOSImageFamily(ctx, t.OSImageVariantRef())
+	default:
+		if n != nil {
+			return h.resolveOSImageFamily(ctx, n.OSImageVariantRef())
+		}
+		return ""
+	}
+}
+
+func networkConfigRendererForOSFamily(osFamily string) string {
+	return networkConfigRendererNetworkd
 }
 
 func osImageVariantIsDesktop(variant string) bool {
@@ -1127,7 +1194,7 @@ func (h *Handler) resolvePXEInstallInline(ctx context.Context, rawMAC string, ex
 	}
 
 	if inline := n.CloudInitInline(resource.InstallType(expectedType)); inline != "" {
-		return inline + "\n", true, nil
+		return inline, true, nil
 	}
 
 	if !supportsCloudInitFallbackInstallType(expectedType) {
@@ -1138,7 +1205,38 @@ func (h *Handler) resolvePXEInstallInline(ctx context.Context, rawMAC string, ex
 	if ref == "" {
 		return "", false, nil
 	}
-	return h.resolveCloudInitUserData(ctx, ref)
+	userData, found, err := h.resolveCloudInitUserData(ctx, ref)
+	if err != nil || !found {
+		return userData, found, err
+	}
+	return userData, true, nil
+}
+
+func withDeployCloudInitDefaults(userData string, disableResizeRootfs bool) string {
+	trimmed := strings.TrimSpace(userData)
+	if trimmed == "" {
+		return ""
+	}
+	header := "#cloud-config"
+	if strings.HasPrefix(trimmed, "## template: jinja") {
+		header = "## template: jinja\n#cloud-config"
+		trimmed = strings.TrimSpace(strings.TrimPrefix(trimmed, "## template: jinja"))
+	}
+	cfg := map[string]any{}
+	if err := yaml.Unmarshal([]byte(trimmed), &cfg); err != nil {
+		return strings.TrimRight(userData, "\n") + "\n"
+	}
+	if _, ok := cfg["locale"]; !ok {
+		cfg["locale"] = false
+	}
+	if _, ok := cfg["resize_rootfs"]; disableResizeRootfs && !ok {
+		cfg["resize_rootfs"] = false
+	}
+	raw, err := yaml.Marshal(cfg)
+	if err != nil {
+		return strings.TrimRight(userData, "\n") + "\n"
+	}
+	return header + "\n" + string(raw)
 }
 
 func (h *Handler) resolveCloudInitUserData(ctx context.Context, cloudInitRef string) (string, bool, error) {
@@ -1808,7 +1906,7 @@ systemctl mask networking.service 2>/dev/null || true
 
 if command -v networkctl >/dev/null 2>&1; then
 	networkctl status --no-pager || true
-	networkctl is-online --timeout=30 || true
+	timeout 30 networkctl is-online || true
 fi
 ip addr show
 ip route show
@@ -1818,23 +1916,28 @@ func debianNetplanNetworkdConfirmScript(pxeBaseURL string) string {
 	healthURL := strings.TrimRight(strings.TrimSpace(pxeBaseURL), "/")
 	healthURL = strings.TrimSuffix(healthURL, "/pxe")
 	healthURL += "/healthz"
-return fmt.Sprintf(`#!/bin/sh
+	return fmt.Sprintf(`#!/bin/sh
 set -eu
 
 if ! systemctl is-active --quiet systemd-networkd.service; then
 	exit 0
 fi
 if command -v networkctl >/dev/null 2>&1; then
-	networkctl is-online --timeout=30
+	timeout 30 networkctl is-online || true
 fi
-curl -fsS --connect-timeout 5 --max-time 15 %s >/dev/null
-systemctl disable --now gomi-network-rollback.timer
-rm -f /etc/systemd/system/gomi-network-rollback.timer /etc/systemd/system/gomi-network-rollback.service /usr/local/sbin/gomi-rollback-networking /usr/local/sbin/gomi-confirm-netplan-networkd /etc/network/interfaces.gomi-netplan-save /etc/default/netplan.gomi-save
-systemctl daemon-reload
+if curl -fsS --connect-timeout 5 --max-time 15 %s >/dev/null; then
+	systemctl disable --now gomi-network-rollback.timer >/dev/null 2>&1 || true
+	rm -f /etc/systemd/system/gomi-network-rollback.timer /etc/systemd/system/gomi-network-rollback.service /usr/local/sbin/gomi-rollback-networking /usr/local/sbin/gomi-confirm-netplan-networkd /etc/network/interfaces.gomi-netplan-save /etc/default/netplan.gomi-save
+	systemctl daemon-reload >/dev/null 2>&1 || true
+fi
+exit 0
 `, shellQuote(healthURL))
 }
 
 func injectNetplanConfigFromParams(cloudConfig string, params netplanParams, spec *subnet.SubnetSpec) string {
+	if !supportsNetplanOSFamily(params.OSFamily) {
+		return cloudConfig
+	}
 	ip := net.ParseIP(strings.TrimSpace(params.IP))
 	mac := strings.TrimSpace(params.MAC)
 	if ip == nil && mac == "" {
@@ -1934,6 +2037,9 @@ func injectNetplanConfigFromParams(cloudConfig string, params netplanParams, spe
 // injectBridgedNetplanConfig injects a bridged netplan config into cloud-config
 // write_files so that the hypervisor machine gets a bridge with a static IP.
 func injectBridgedNetplanConfig(cloudConfig string, m *machine.Machine, osFamily, pxeBaseURL string, spec *subnet.SubnetSpec) string {
+	if !supportsNetplanOSFamily(osFamily) {
+		return cloudConfig
+	}
 	ip := ""
 	if m.GetIPAssignment() == resource.IPAssignmentStatic {
 		ip = m.StaticIP()
@@ -1952,6 +2058,7 @@ func injectBridgedNetplanConfig(cloudConfig string, m *machine.Machine, osFamily
 			subnetGateway(spec),
 			subnetNameServers(spec),
 			ip == "",
+			networkConfigRendererNetworkd,
 		),
 	})
 	if netplanYAML == "" {
@@ -2016,11 +2123,236 @@ func injectNetplanConfigForHost(cloudConfig string, h node.Node, osFamily, pxeBa
 		return cloudConfig
 	}
 	return injectNetplanConfigFromParams(cloudConfig, netplanParams{
-		IP:       ip,
-		MAC:      h.PrimaryMAC(),
-		OSFamily: osFamily,
+		IP:         ip,
+		MAC:        h.PrimaryMAC(),
+		OSFamily:   osFamily,
 		PXEBaseURL: pxeBaseURL,
 	}, spec)
+}
+
+func injectHostNetworkConfig(cloudConfig string, h node.Node, osFamily, pxeBaseURL string, spec *subnet.SubnetSpec) string {
+	if isNetworkManagerOSFamily(osFamily) {
+		return injectNetworkManagerConfigForHost(cloudConfig, h, osFamily, spec)
+	}
+	return injectNetplanConfigForHost(cloudConfig, h, osFamily, pxeBaseURL, spec)
+}
+
+func injectBridgedHostNetworkConfig(cloudConfig string, m *machine.Machine, osFamily, pxeBaseURL string, spec *subnet.SubnetSpec) string {
+	if isNetworkManagerOSFamily(osFamily) {
+		return injectBridgedNetworkManagerConfig(cloudConfig, m, osFamily, spec)
+	}
+	return injectBridgedNetplanConfig(cloudConfig, m, osFamily, pxeBaseURL, spec)
+}
+
+type networkManagerConnectionFile struct {
+	path    string
+	content string
+}
+
+func injectNetworkManagerConfigForHost(cloudConfig string, h node.Node, osFamily string, spec *subnet.SubnetSpec) string {
+	if !isNetworkManagerOSFamily(osFamily) {
+		return cloudConfig
+	}
+	ip := ""
+	if h.GetIPAssignment() == resource.IPAssignmentStatic {
+		ip = h.StaticIP()
+	}
+	mac := strings.TrimSpace(h.PrimaryMAC())
+	if ip == "" && mac == "" {
+		return cloudConfig
+	}
+	content := buildNetworkManagerEthernetConnection(mac, ip, spec)
+	if content == "" {
+		return cloudConfig
+	}
+	return injectNetworkManagerConnections(cloudConfig, []networkManagerConnectionFile{
+		{
+			path:    "/etc/NetworkManager/system-connections/gomi-nic.nmconnection",
+			content: content,
+		},
+	}, []string{"gomi-nic"})
+}
+
+func injectBridgedNetworkManagerConfig(cloudConfig string, m *machine.Machine, osFamily string, spec *subnet.SubnetSpec) string {
+	if !isNetworkManagerOSFamily(osFamily) {
+		return cloudConfig
+	}
+	ip := ""
+	if m.GetIPAssignment() == resource.IPAssignmentStatic {
+		ip = m.StaticIP()
+	}
+	mac := strings.TrimSpace(m.PrimaryMAC())
+	if ip == "" && mac == "" {
+		return cloudConfig
+	}
+	bridgeName := strings.TrimSpace(m.BridgeName)
+	if bridgeName == "" {
+		bridgeName = "br0"
+	}
+	bridgeContent := buildNetworkManagerBridgeConnection(bridgeName, ip, spec)
+	portContent := buildNetworkManagerBridgePortConnection(mac, bridgeName)
+	if bridgeContent == "" || portContent == "" {
+		return cloudConfig
+	}
+	return injectNetworkManagerConnections(cloudConfig, []networkManagerConnectionFile{
+		{
+			path:    "/etc/NetworkManager/system-connections/gomi-bridge.nmconnection",
+			content: bridgeContent,
+		},
+		{
+			path:    "/etc/NetworkManager/system-connections/gomi-nic.nmconnection",
+			content: portContent,
+		},
+	}, []string{bridgeName, "gomi-nic"})
+}
+
+func injectNetworkManagerConnections(cloudConfig string, files []networkManagerConnectionFile, upConnections []string) string {
+	if len(files) == 0 {
+		return cloudConfig
+	}
+	trimmed := strings.TrimSpace(cloudConfig)
+	if trimmed == "" {
+		trimmed = "#cloud-config\n{}"
+	}
+	cfg := map[string]any{}
+	if err := yaml.Unmarshal([]byte(trimmed), &cfg); err != nil {
+		return cloudConfig
+	}
+
+	writeFiles := []any{}
+	if existing, ok := cfg["write_files"].([]any); ok {
+		writeFiles = existing
+	}
+	for _, file := range files {
+		writeFiles = append(writeFiles, map[string]any{
+			"path":        file.path,
+			"content":     file.content,
+			"permissions": "0600",
+		})
+	}
+	cfg["write_files"] = writeFiles
+
+	runCmd := []any{}
+	if existing, ok := cfg["runcmd"].([]any); ok {
+		runCmd = existing
+	}
+	nmCmds := []any{
+		"chmod 600 /etc/NetworkManager/system-connections/gomi-*.nmconnection",
+		"nmcli connection reload || systemctl reload NetworkManager || true",
+	}
+	for _, name := range upConnections {
+		name = strings.TrimSpace(name)
+		if name == "" {
+			continue
+		}
+		nmCmds = append(nmCmds, "nmcli connection up "+shellQuote(name)+" || true")
+	}
+	runCmd = append(nmCmds, runCmd...)
+	cfg["runcmd"] = runCmd
+
+	raw, err := yaml.Marshal(cfg)
+	if err != nil {
+		return cloudConfig
+	}
+	return "#cloud-config\n" + string(raw)
+}
+
+func buildNetworkManagerEthernetConnection(mac, ip string, spec *subnet.SubnetSpec) string {
+	mac = strings.ToLower(strings.TrimSpace(mac))
+	ip = strings.TrimSpace(ip)
+	var b strings.Builder
+	b.WriteString("[connection]\n")
+	b.WriteString("id=gomi-nic\n")
+	b.WriteString("type=ethernet\n")
+	b.WriteString("autoconnect=true\n\n")
+	b.WriteString("[ethernet]\n")
+	if mac != "" {
+		b.WriteString("mac-address=")
+		b.WriteString(mac)
+		b.WriteString("\n")
+	}
+	b.WriteString("wake-on-lan=64\n\n")
+	writeNetworkManagerIPv4Config(&b, ip, spec)
+	b.WriteString("[ipv6]\n")
+	b.WriteString("method=ignore\n")
+	return b.String()
+}
+
+func buildNetworkManagerBridgeConnection(bridgeName, ip string, spec *subnet.SubnetSpec) string {
+	bridgeName = strings.TrimSpace(bridgeName)
+	if bridgeName == "" {
+		bridgeName = "br0"
+	}
+	ip = strings.TrimSpace(ip)
+	var b strings.Builder
+	b.WriteString("[connection]\n")
+	b.WriteString("id=")
+	b.WriteString(bridgeName)
+	b.WriteString("\n")
+	b.WriteString("type=bridge\n")
+	b.WriteString("interface-name=")
+	b.WriteString(bridgeName)
+	b.WriteString("\n")
+	b.WriteString("autoconnect=true\n\n")
+	b.WriteString("[bridge]\n")
+	b.WriteString("stp=false\n\n")
+	writeNetworkManagerIPv4Config(&b, ip, spec)
+	b.WriteString("[ipv6]\n")
+	b.WriteString("method=ignore\n")
+	return b.String()
+}
+
+func buildNetworkManagerBridgePortConnection(mac, bridgeName string) string {
+	mac = strings.ToLower(strings.TrimSpace(mac))
+	bridgeName = strings.TrimSpace(bridgeName)
+	if bridgeName == "" {
+		bridgeName = "br0"
+	}
+	var b strings.Builder
+	b.WriteString("[connection]\n")
+	b.WriteString("id=gomi-nic\n")
+	b.WriteString("type=ethernet\n")
+	b.WriteString("autoconnect=true\n")
+	b.WriteString("master=")
+	b.WriteString(bridgeName)
+	b.WriteString("\n")
+	b.WriteString("slave-type=bridge\n\n")
+	b.WriteString("[ethernet]\n")
+	if mac != "" {
+		b.WriteString("mac-address=")
+		b.WriteString(mac)
+		b.WriteString("\n")
+	}
+	b.WriteString("wake-on-lan=64\n\n")
+	b.WriteString("[ipv4]\n")
+	b.WriteString("method=disabled\n\n")
+	b.WriteString("[ipv6]\n")
+	b.WriteString("method=ignore\n")
+	return b.String()
+}
+
+func writeNetworkManagerIPv4Config(b *strings.Builder, ip string, spec *subnet.SubnetSpec) {
+	b.WriteString("[ipv4]\n")
+	if strings.TrimSpace(ip) == "" {
+		b.WriteString("method=auto\n\n")
+		return
+	}
+	b.WriteString("method=manual\n")
+	b.WriteString("address1=")
+	b.WriteString(strings.TrimSpace(ip))
+	b.WriteString("/")
+	b.WriteString(fmt.Sprint(subnetPrefixLen(spec)))
+	if gateway := subnetGateway(spec); gateway != "" {
+		b.WriteString(",")
+		b.WriteString(gateway)
+	}
+	b.WriteString("\n")
+	if nameservers := subnetNameServers(spec); len(nameservers) > 0 {
+		b.WriteString("dns=")
+		b.WriteString(strings.Join(nameservers, ";"))
+		b.WriteString(";\n")
+	}
+	b.WriteString("\n")
 }
 
 func netplanActivationCommands(osFamily string) []any {
@@ -2030,11 +2362,27 @@ func netplanActivationCommands(osFamily string) []any {
 	if isDebianOSFamily(osFamily) {
 		return append(cmds, "/usr/local/sbin/gomi-apply-netplan-networkd")
 	}
-	return append(cmds, "netplan apply")
+	return append(cmds,
+		"netplan apply",
+		"systemctl disable --now systemd-networkd-wait-online.service 2>/dev/null || true; systemctl reset-failed systemd-networkd-wait-online.service 2>/dev/null || true",
+	)
 }
 
 func isDebianOSFamily(osFamily string) bool {
 	return strings.EqualFold(strings.TrimSpace(osFamily), "debian")
+}
+
+func supportsNetplanOSFamily(osFamily string) bool {
+	return !isNetworkManagerOSFamily(osFamily)
+}
+
+func isNetworkManagerOSFamily(osFamily string) bool {
+	switch strings.ToLower(strings.TrimSpace(osFamily)) {
+	case "fedora", "rhel", "redhat", "centos", "rocky", "alma", "almalinux":
+		return true
+	default:
+		return false
+	}
 }
 
 func (h *Handler) leaseIPsByMAC(ctx context.Context) (map[string]string, error) {

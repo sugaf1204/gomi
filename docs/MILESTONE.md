@@ -169,7 +169,27 @@ typed OS family branches.
 - Add tests that cover at least one non-Ubuntu path, or the explicit
   unsupported-family error, whenever OS deploy behavior changes.
 
-## 25. Future macOS host support
+## 25. Curtin config cleanup and deploy acceleration
+
+The current curtin path still carries install-time behavior that is unnecessary
+when GOMI deploys a completed target OS image. Remove redundant package-manager
+and kernel-install work so completed images are written and finalized with the
+minimum required steps.
+
+- For completed rootfs or filesystem-image based deploys, stop asking curtin to
+  install or replace the target kernel package unless the image metadata
+  explicitly says the image is incomplete and requires it.
+- Remove unnecessary `apt update`, package refresh, or equivalent target-side
+  package-manager work from curtin/preseed completion flows when the deployed
+  image already contains the required packages.
+- Keep only the install steps that are still required for the selected artifact
+  type: storage layout, image extraction, bootloader/fstab integration,
+  cloud-init seed injection, and narrowly scoped target finalization.
+- Add timing-oriented tests or lab validation that prove the optimized path
+  reduces deploy time without regressing already working raw, squashfs, or
+  direct cloud-image flows.
+
+## 26. Future macOS host support
 
 Keep the architecture open so the GOMI server itself can run on macOS in the
 future, not only on Linux. This goal is limited to server runtime support; OS
