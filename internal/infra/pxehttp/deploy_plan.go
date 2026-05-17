@@ -949,19 +949,16 @@ func buildRootFSBootloaderCommand(cap osInstallCapability, targetDisk string, fi
 		removableArg,
 		efiArgs,
 	)
-	uefiBIOSFallback := biosInstall
 	if cap.SkipUEFIGrubInstall {
 		uefiInstall = ":"
-		uefiBIOSFallback = ":"
 	}
-	return fmt.Sprintf(`set -e; for d in dev proc sys run; do mountpoint -q "$TARGET_MOUNT_POINT/$d" || mount --bind "/$d" "$TARGET_MOUNT_POINT/$d"; done; %s; %s; chroot "$TARGET_MOUNT_POINT" %s -o %s; %s; %s; %s`,
+	return fmt.Sprintf(`set -e; for d in dev proc sys run; do mountpoint -q "$TARGET_MOUNT_POINT/$d" || mount --bind "/$d" "$TARGET_MOUNT_POINT/$d"; done; %s; %s; chroot "$TARGET_MOUNT_POINT" %s -o %s; %s; %s`,
 		simpleConfig,
 		uefiInstall,
 		shellQuote(cap.GrubMkconfigCommand),
 		shellQuote(cap.GrubConfigPath),
 		espConfig,
 		fallbackCopy,
-		uefiBIOSFallback,
 	)
 }
 

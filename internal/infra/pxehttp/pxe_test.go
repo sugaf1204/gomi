@@ -1951,6 +1951,7 @@ func TestPXECurtinConfig_DebianSquashFSSkipsCurtinPackageInstall(t *testing.T) {
 		"kernel:",
 		"package: linux-image-amd64",
 		"fallback-package: linux-image-amd64",
+		"--target=i386-pc",
 	} {
 		if strings.Contains(body, forbidden) {
 			t.Fatalf("debian squashfs curtin config must not ask curtin to install packages via %q, got:\n%s", forbidden, body)
@@ -3449,7 +3450,7 @@ func TestPXENocloudUserData_FedoraMachineStaticWritesNetworkManagerKeyfile(t *te
 		"mac-address=52:54:00:44:00:46",
 		"address1=192.168.2.226/24",
 		"nmcli connection reload",
-		"nmcli connection up gomi-nic",
+		"nmcli connection up 'gomi-nic'",
 	} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("expected Fedora user-data to contain %q, got:\n%s", want, body)
@@ -3460,6 +3461,77 @@ func TestPXENocloudUserData_FedoraMachineStaticWritesNetworkManagerKeyfile(t *te
 	}
 	if strings.Contains(body, "resize_rootfs: false") {
 		t.Fatalf("non-completed-rootfs Fedora deploy must not disable resize_rootfs, got:\n%s", body)
+	}
+}
+
+func TestPXENocloudUserData_FedoraHypervisorWritesNetworkManagerBridge(t *testing.T) {
+	backend := memory.New()
+	machineSvc := machine.NewService(backend.Machines())
+	now := time.Now().UTC()
+	deadline := now.Add(30 * time.Minute)
+	target := machine.Machine{
+		Name:         "bm-fedora-hv",
+		Hostname:     "bm-fedora-hv",
+		MAC:          "52:54:00:44:00:47",
+		Arch:         "amd64",
+		Firmware:     machine.FirmwareUEFI,
+		Role:         machine.RoleHypervisor,
+		BridgeName:   "br-fedora",
+		IP:           "192.168.2.227",
+		IPAssignment: machine.IPAssignmentModeStatic,
+		OSPreset: machine.OSPreset{
+			Family:   machine.OSType("fedora"),
+			Version:  "44",
+			ImageRef: "fedora-44-amd64-baremetal",
+		},
+		Phase: machine.PhaseProvisioning,
+		Provision: &machine.ProvisionProgress{
+			Active:          true,
+			StartedAt:       &now,
+			DeadlineAt:      &deadline,
+			CompletionToken: "token-fedora-hv",
+			Artifacts: map[string]string{
+				machine.ProvisionArtifactHypervisorRegistrationToken: "hv-registration-token",
+			},
+		},
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	if err := backend.Machines().Upsert(context.Background(), target); err != nil {
+		t.Fatalf("upsert machine: %v", err)
+	}
+
+	e := echo.New()
+	req := httptest.NewRequest(http.MethodGet, "/pxe/nocloud/525400440047/user-data", nil)
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+	c.SetParamNames("mac")
+	c.SetParamValues("525400440047")
+
+	h := &Handler{machines: machineSvc}
+	if err := h.PXENocloudUserData(c); err != nil {
+		t.Fatalf("PXENocloudUserData: %v", err)
+	}
+	body := rec.Body.String()
+	for _, want := range []string{
+		"/etc/NetworkManager/system-connections/gomi-bridge.nmconnection",
+		"/etc/NetworkManager/system-connections/gomi-nic.nmconnection",
+		"id=br-fedora",
+		"type=bridge",
+		"interface-name=br-fedora",
+		"master=br-fedora",
+		"slave-type=bridge",
+		"mac-address=52:54:00:44:00:47",
+		"address1=192.168.2.227/24",
+		"nmcli connection up 'br-fedora'",
+		"hv-registration-token",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("expected Fedora hypervisor user-data to contain %q, got:\n%s", want, body)
+		}
+	}
+	if strings.Contains(body, "99-gomi-network.yaml") || strings.Contains(body, "netplan apply") {
+		t.Fatalf("Fedora hypervisor must not receive netplan user-data, got:\n%s", body)
 	}
 }
 
