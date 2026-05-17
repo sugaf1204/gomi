@@ -2022,6 +2022,8 @@ func TestPXECurtinConfig_FedoraSquashFSUsesFedoraBootloaderCommands(t *testing.T
 	}
 	for _, forbidden := range []string{
 		"grub2-install",
+		`dirname '/boot/grub2/gomi.cfg'`,
+		`cat > '/boot/grub2/gomi.cfg'`,
 		"--target=x86_64-efi",
 		"--removable",
 		"--bootloader-id='fedora'",
@@ -2121,7 +2123,8 @@ func TestPXECurtinConfig_FedoraBIOSSquashFSEmbedsMinimalGrubConfig(t *testing.T)
 		"root=LABEL=rootfs rw",
 		"grub2-mkimage",
 		"gomi-grub-bootstrap.cfg",
-		"configfile (\\$root)/boot/grub2/gomi.cfg",
+		"configfile (\\$root)$config_path",
+		"sh '/boot/grub2/gomi.cfg'",
 		"grub2-bios-setup",
 		"-d /boot/grub2/i386-pc",
 		"/dev/vda",

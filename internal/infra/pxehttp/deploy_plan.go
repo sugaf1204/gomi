@@ -914,7 +914,7 @@ func buildRootFSSimpleGrubConfigCommand(cap osInstallCapability) string {
 	if cap.SimpleGrubConfigPath == "" {
 		return ":"
 	}
-	return fmt.Sprintf(`chroot "$TARGET_MOUNT_POINT" sh -c 'set -e; k="$(ls -1 /boot/vmlinuz-* | sort -V | tail -n 1)"; [ -n "$k" ]; v="${k#/boot/vmlinuz-}"; mkdir -p "$(dirname %s)"; cat > %s <<EOF
+	return fmt.Sprintf(`chroot "$TARGET_MOUNT_POINT" sh -c 'set -e; config_path="$1"; k="$(ls -1 /boot/vmlinuz-* | sort -V | tail -n 1)"; [ -n "$k" ]; v="${k#/boot/vmlinuz-}"; mkdir -p "$(dirname "$config_path")"; cat > "$config_path" <<EOF
 set timeout=3
 set default=0
 search --no-floppy --label rootfs --set=root
@@ -926,11 +926,9 @@ EOF
 cat > /tmp/gomi-grub-bootstrap.cfg <<EOF
 search --no-floppy --label rootfs --set=root
 set prefix=(\$root)/boot/grub2
-configfile (\$root)%s
-EOF'`,
+configfile (\$root)$config_path
+EOF' sh %s`,
 		shellQuote(cap.SimpleGrubConfigPath),
-		shellQuote(cap.SimpleGrubConfigPath),
-		cap.SimpleGrubConfigPath,
 	)
 }
 
