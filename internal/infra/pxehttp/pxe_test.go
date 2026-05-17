@@ -1780,6 +1780,7 @@ func TestPXECurtinConfig_SquashFSImageUsesFSImageAndStorageConfig(t *testing.T) 
 		"path: /boot/efi",
 		"fstype: ext4",
 		"root_fstype='ext4'",
+		"root_opts='defaults,errors=remount-ro'",
 		"size: 1M",
 		"size: 512M",
 		"size: 64959M",
@@ -2014,6 +2015,7 @@ func TestPXECurtinConfig_FedoraSquashFSUsesFedoraBootloaderCommands(t *testing.T
 		"type: fsimage",
 		"fstype: xfs",
 		"root_fstype='xfs'",
+		"root_opts='defaults'",
 		"grub2-mkconfig",
 		"/boot/grub2/grub.cfg",
 		"/boot/grub2/gomi.cfg",
@@ -2037,6 +2039,7 @@ func TestPXECurtinConfig_FedoraSquashFSUsesFedoraBootloaderCommands(t *testing.T
 		"--removable",
 		"--bootloader-id='fedora'",
 		"root_fstype='ext4'",
+		"root_opts='defaults,errors=remount-ro'",
 	} {
 		if strings.Contains(body, forbidden) {
 			t.Fatalf("fedora UEFI squashfs config must avoid unsupported UEFI grub2-install path %q, got:\n%s", forbidden, body)
@@ -2136,6 +2139,7 @@ func TestPXECurtinConfig_FedoraBIOSSquashFSEmbedsMinimalGrubConfig(t *testing.T)
 		"root=LABEL=rootfs rw",
 		"fstype: xfs",
 		"root_fstype='xfs'",
+		"root_opts='defaults'",
 		"grub2-mkimage",
 		"part_gpt 'xfs' search",
 		"gomi-grub-bootstrap.cfg",
@@ -2154,6 +2158,7 @@ func TestPXECurtinConfig_FedoraBIOSSquashFSEmbedsMinimalGrubConfig(t *testing.T)
 		"--removable",
 		"- curthooks",
 		"package: linux-image-amd64",
+		"BIOS grub install skipped",
 	} {
 		if strings.Contains(body, forbidden) {
 			t.Fatalf("fedora bios curtin config must not contain %q, got:\n%s", forbidden, body)

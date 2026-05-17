@@ -866,9 +866,19 @@ func rootFilesystemForImage(img osimage.OSImage, cap osInstallCapability) (strin
 }
 
 func buildRootFSFstabCommand(rootFilesystem string) string {
-	return fmt.Sprintf(`root_fstype=%s; printf '%%s\n' "LABEL=rootfs / $root_fstype defaults,errors=remount-ro 0 1" 'LABEL=EFI /boot/efi vfat umask=0077 0 1' > "$TARGET_MOUNT_POINT/etc/fstab"`,
+	return fmt.Sprintf(`root_fstype=%s; root_opts=%s; printf '%%s\n' "LABEL=rootfs / $root_fstype $root_opts 0 1" 'LABEL=EFI /boot/efi vfat umask=0077 0 1' > "$TARGET_MOUNT_POINT/etc/fstab"`,
 		shellQuote(rootFilesystem),
+		shellQuote(rootFSFstabOptions(rootFilesystem)),
 	)
+}
+
+func rootFSFstabOptions(rootFilesystem string) string {
+	switch strings.ToLower(strings.TrimSpace(rootFilesystem)) {
+	case "ext4":
+		return "defaults,errors=remount-ro"
+	default:
+		return "defaults"
+	}
 }
 
 func rootFSGrubModule(rootFilesystem string) string {
@@ -883,7 +893,7 @@ func rootFSGrubModule(rootFilesystem string) string {
 }
 
 func buildRootFSBootloaderCommand(cap osInstallCapability, targetDisk string, firmware machine.Firmware, rootFilesystem string) string {
-	biosInstall := fmt.Sprintf(`if chroot "$TARGET_MOUNT_POINT" %s --target=i386-pc --recheck %s; then :; else echo "gomi: BIOS grub install skipped"; fi`,
+	biosInstall := fmt.Sprintf(`chroot "$TARGET_MOUNT_POINT" %s --target=i386-pc --recheck %s`,
 		shellQuote(cap.GrubInstallCommand),
 		shellQuote(targetDisk),
 	)
