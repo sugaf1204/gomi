@@ -374,7 +374,7 @@ func TestRenderPXENoCloudLineConfig_PreseedEmpty(t *testing.T) {
 }
 
 func TestWithDeployCloudInitDefaultsDisablesPackageBackedLocaleAndResize(t *testing.T) {
-	got := withDeployCloudInitDefaults("#cloud-config\nhostname: test-node\n")
+	got := withDeployCloudInitDefaults("#cloud-config\nhostname: test-node\n", true)
 	for _, want := range []string{
 		"hostname: test-node",
 		"locale: false",
@@ -386,8 +386,23 @@ func TestWithDeployCloudInitDefaultsDisablesPackageBackedLocaleAndResize(t *test
 	}
 }
 
+func TestWithDeployCloudInitDefaultsKeepsResizeRootfsByDefault(t *testing.T) {
+	got := withDeployCloudInitDefaults("#cloud-config\nhostname: test-node\n", false)
+	for _, want := range []string{
+		"hostname: test-node",
+		"locale: false",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("expected rendered cloud-init to contain %q, got:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "resize_rootfs: false") {
+		t.Fatalf("resize_rootfs must not be disabled for non-completed-rootfs deploys, got:\n%s", got)
+	}
+}
+
 func TestWithDeployCloudInitDefaultsPreservesJinjaHeader(t *testing.T) {
-	got := withDeployCloudInitDefaults("## template: jinja\n#cloud-config\nhostname: '{{ ds.meta_data.local_hostname }}'\n")
+	got := withDeployCloudInitDefaults("## template: jinja\n#cloud-config\nhostname: '{{ ds.meta_data.local_hostname }}'\n", true)
 	if !strings.HasPrefix(got, "## template: jinja\n#cloud-config\n") {
 		t.Fatalf("expected jinja and cloud-config headers to be preserved, got:\n%s", got)
 	}
@@ -3277,7 +3292,7 @@ func TestPXENocloudNetworkConfig_DHCP(t *testing.T) {
 	}
 }
 
-func TestPXENocloudNetworkConfig_FedoraMachineStaticUsesNetworkManagerRenderer(t *testing.T) {
+func TestPXENocloudNetworkConfig_FedoraMachineStaticUsesNetworkdRenderer(t *testing.T) {
 	backend := memory.New()
 	machineSvc := machine.NewService(backend.Machines())
 	now := time.Now().UTC()
@@ -3314,7 +3329,7 @@ func TestPXENocloudNetworkConfig_FedoraMachineStaticUsesNetworkManagerRenderer(t
 	}
 	body := rec.Body.String()
 	for _, want := range []string{
-		"renderer: NetworkManager",
+		"renderer: networkd",
 		`macaddress: "52:54:00:44:00:44"`,
 		"192.168.2.224/24",
 		"dhcp4: false",
@@ -3323,12 +3338,12 @@ func TestPXENocloudNetworkConfig_FedoraMachineStaticUsesNetworkManagerRenderer(t
 			t.Fatalf("expected fedora network-config to contain %q, got:\n%s", want, body)
 		}
 	}
-	if strings.Contains(body, "renderer: networkd") {
-		t.Fatalf("fedora network-config must not force networkd, got:\n%s", body)
+	if strings.Contains(body, "renderer: NetworkManager") {
+		t.Fatalf("fedora network-config must not force NetworkManager, got:\n%s", body)
 	}
 }
 
-func TestPXENocloudNetworkConfig_FedoraVMStaticUsesNetworkManagerRenderer(t *testing.T) {
+func TestPXENocloudNetworkConfig_FedoraVMStaticUsesNetworkdRenderer(t *testing.T) {
 	backend := memory.New()
 	vmSvc := vm.NewService(backend.VMs())
 	osImageSvc := osimage.NewService(backend.OSImages())
@@ -3371,7 +3386,7 @@ func TestPXENocloudNetworkConfig_FedoraVMStaticUsesNetworkManagerRenderer(t *tes
 	}
 	body := rec.Body.String()
 	for _, want := range []string{
-		"renderer: NetworkManager",
+		"renderer: networkd",
 		`macaddress: "52:54:00:44:00:45"`,
 		"192.168.2.225/24",
 		"dhcp4: false",
@@ -3380,8 +3395,71 @@ func TestPXENocloudNetworkConfig_FedoraVMStaticUsesNetworkManagerRenderer(t *tes
 			t.Fatalf("expected fedora VM network-config to contain %q, got:\n%s", want, body)
 		}
 	}
-	if strings.Contains(body, "renderer: networkd") {
-		t.Fatalf("fedora VM network-config must not force networkd, got:\n%s", body)
+	if strings.Contains(body, "renderer: NetworkManager") {
+		t.Fatalf("fedora VM network-config must not force NetworkManager, got:\n%s", body)
+	}
+}
+
+func TestPXENocloudUserData_FedoraMachineStaticWritesNetworkManagerKeyfile(t *testing.T) {
+	backend := memory.New()
+	machineSvc := machine.NewService(backend.Machines())
+	now := time.Now().UTC()
+	deadline := now.Add(30 * time.Minute)
+	target := machine.Machine{
+		Name:         "bm-fedora-nm",
+		Hostname:     "bm-fedora-nm",
+		MAC:          "52:54:00:44:00:46",
+		Arch:         "amd64",
+		Firmware:     machine.FirmwareUEFI,
+		IP:           "192.168.2.226",
+		IPAssignment: machine.IPAssignmentModeStatic,
+		OSPreset: machine.OSPreset{
+			Family:   machine.OSType("fedora"),
+			Version:  "44",
+			ImageRef: "fedora-44-amd64-baremetal",
+		},
+		Phase: machine.PhaseProvisioning,
+		Provision: &machine.ProvisionProgress{
+			Active:          true,
+			StartedAt:       &now,
+			DeadlineAt:      &deadline,
+			CompletionToken: "token-fedora-nm",
+		},
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	if err := backend.Machines().Upsert(context.Background(), target); err != nil {
+		t.Fatalf("upsert machine: %v", err)
+	}
+
+	e := echo.New()
+	req := httptest.NewRequest(http.MethodGet, "/pxe/nocloud/525400440046/user-data", nil)
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+	c.SetParamNames("mac")
+	c.SetParamValues("525400440046")
+
+	h := &Handler{machines: machineSvc}
+	if err := h.PXENocloudUserData(c); err != nil {
+		t.Fatalf("PXENocloudUserData: %v", err)
+	}
+	body := rec.Body.String()
+	for _, want := range []string{
+		"/etc/NetworkManager/system-connections/gomi-nic.nmconnection",
+		"mac-address=52:54:00:44:00:46",
+		"address1=192.168.2.226/24",
+		"nmcli connection reload",
+		"nmcli connection up gomi-nic",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("expected Fedora user-data to contain %q, got:\n%s", want, body)
+		}
+	}
+	if strings.Contains(body, "99-gomi-network.yaml") || strings.Contains(body, "netplan apply") {
+		t.Fatalf("Fedora must not receive netplan user-data, got:\n%s", body)
+	}
+	if strings.Contains(body, "resize_rootfs: false") {
+		t.Fatalf("non-completed-rootfs Fedora deploy must not disable resize_rootfs, got:\n%s", body)
 	}
 }
 
