@@ -1078,24 +1078,43 @@ func (h *Handler) resolvePXETarget(ctx context.Context, rawMAC string) (pxeTarge
 		return pxeTarget{installType: vm.InstallConfigPreseed}, false, machineErr
 	}
 	if targetMachine != nil && targetMachine.IsProvisioningActive() {
+		completedRootFS := h.machineUsesCompletedRootFS(ctx, targetMachine)
 		if machineImageApplied(targetMachine) {
 			return pxeTarget{
 				node:            targetMachine,
 				installType:     vm.InstallConfigCurtin,
 				variant:         h.resolveOSImageVariant(ctx, targetMachine.OSImageVariantRef()),
 				osFamily:        string(targetMachine.OSPreset.Family),
-				completedRootFS: true,
+				completedRootFS: completedRootFS,
 			}, false, nil
 		}
 		return pxeTarget{
-			node:        targetMachine,
-			installType: vm.InstallConfigType(targetMachine.PXEInstallType()),
-			variant:     h.resolveOSImageVariant(ctx, targetMachine.OSImageVariantRef()),
-			osFamily:    string(targetMachine.OSPreset.Family),
+			node:            targetMachine,
+			installType:     vm.InstallConfigType(targetMachine.PXEInstallType()),
+			variant:         h.resolveOSImageVariant(ctx, targetMachine.OSImageVariantRef()),
+			osFamily:        string(targetMachine.OSPreset.Family),
+			completedRootFS: completedRootFS,
 		}, true, nil
 	}
 
 	return pxeTarget{installType: vm.InstallConfigPreseed}, false, nil
+}
+
+func (h *Handler) machineUsesCompletedRootFS(ctx context.Context, m *machine.Machine) bool {
+	if machineImageApplied(m) {
+		return true
+	}
+	if h.osimages == nil || m == nil || strings.TrimSpace(m.OSPreset.ImageRef) == "" {
+		return false
+	}
+	img, err := h.osimages.Get(ctx, strings.TrimSpace(m.OSPreset.ImageRef))
+	if err != nil {
+		return false
+	}
+	if img.Manifest != nil && img.Manifest.Root.Format != "" {
+		return img.Manifest.Root.Format == osimage.FormatSquashFS
+	}
+	return img.Format == osimage.FormatSquashFS
 }
 
 func (h *Handler) resolveOSImageVariant(ctx context.Context, osImageRef string) string {

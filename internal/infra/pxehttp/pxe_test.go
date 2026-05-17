@@ -3464,6 +3464,135 @@ func TestPXENocloudUserData_FedoraMachineStaticWritesNetworkManagerKeyfile(t *te
 	}
 }
 
+func TestPXENocloudUserData_CompletedRootFSDisablesResizeBeforeImageApplied(t *testing.T) {
+	backend := memory.New()
+	machineSvc := machine.NewService(backend.Machines())
+	osImageSvc := osimage.NewService(backend.OSImages())
+	now := time.Now().UTC()
+	deadline := now.Add(30 * time.Minute)
+	imageRef := "debian-13-amd64-baremetal"
+	if err := backend.OSImages().Upsert(context.Background(), osimage.OSImage{
+		Name:      imageRef,
+		OSFamily:  "debian",
+		OSVersion: "13",
+		Arch:      "amd64",
+		Format:    osimage.FormatSquashFS,
+		Source:    osimage.SourceUpload,
+		Ready:     true,
+		Manifest: &osimage.Manifest{
+			SchemaVersion: "gomi.osimage.v1",
+			Root: osimage.RootArtifact{
+				Format: osimage.FormatSquashFS,
+				Path:   "rootfs.squashfs",
+			},
+		},
+		CreatedAt: now,
+		UpdatedAt: now,
+	}); err != nil {
+		t.Fatalf("upsert os image: %v", err)
+	}
+	target := machine.Machine{
+		Name:     "bm-debian-rootfs",
+		Hostname: "bm-debian-rootfs",
+		MAC:      "52:54:00:44:00:48",
+		Arch:     "amd64",
+		Firmware: machine.FirmwareUEFI,
+		OSPreset: machine.OSPreset{
+			Family:   machine.OSTypeDebian,
+			Version:  "13",
+			ImageRef: imageRef,
+		},
+		Phase: machine.PhaseProvisioning,
+		Provision: &machine.ProvisionProgress{
+			Active:          true,
+			StartedAt:       &now,
+			DeadlineAt:      &deadline,
+			CompletionToken: "token-debian-rootfs",
+		},
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	if err := backend.Machines().Upsert(context.Background(), target); err != nil {
+		t.Fatalf("upsert machine: %v", err)
+	}
+
+	e := echo.New()
+	req := httptest.NewRequest(http.MethodGet, "/pxe/nocloud/525400440048/user-data", nil)
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+	c.SetParamNames("mac")
+	c.SetParamValues("525400440048")
+
+	h := &Handler{machines: machineSvc, osimages: osImageSvc}
+	if err := h.PXENocloudUserData(c); err != nil {
+		t.Fatalf("PXENocloudUserData: %v", err)
+	}
+	if body := rec.Body.String(); !strings.Contains(body, "resize_rootfs: false") {
+		t.Fatalf("completed rootfs deploy must disable resize_rootfs before image_applied, got:\n%s", body)
+	}
+}
+
+func TestPXENocloudUserData_QCOW2MachineDoesNotDisableResizeBeforeImageApplied(t *testing.T) {
+	backend := memory.New()
+	machineSvc := machine.NewService(backend.Machines())
+	osImageSvc := osimage.NewService(backend.OSImages())
+	now := time.Now().UTC()
+	deadline := now.Add(30 * time.Minute)
+	imageRef := "debian-13-amd64-cloud"
+	if err := backend.OSImages().Upsert(context.Background(), osimage.OSImage{
+		Name:      imageRef,
+		OSFamily:  "debian",
+		OSVersion: "13",
+		Arch:      "amd64",
+		Format:    osimage.FormatQCOW2,
+		Source:    osimage.SourceUpload,
+		Ready:     true,
+		CreatedAt: now,
+		UpdatedAt: now,
+	}); err != nil {
+		t.Fatalf("upsert os image: %v", err)
+	}
+	target := machine.Machine{
+		Name:     "bm-debian-qcow2",
+		Hostname: "bm-debian-qcow2",
+		MAC:      "52:54:00:44:00:49",
+		Arch:     "amd64",
+		Firmware: machine.FirmwareUEFI,
+		OSPreset: machine.OSPreset{
+			Family:   machine.OSTypeDebian,
+			Version:  "13",
+			ImageRef: imageRef,
+		},
+		Phase: machine.PhaseProvisioning,
+		Provision: &machine.ProvisionProgress{
+			Active:          true,
+			StartedAt:       &now,
+			DeadlineAt:      &deadline,
+			CompletionToken: "token-debian-qcow2",
+		},
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	if err := backend.Machines().Upsert(context.Background(), target); err != nil {
+		t.Fatalf("upsert machine: %v", err)
+	}
+
+	e := echo.New()
+	req := httptest.NewRequest(http.MethodGet, "/pxe/nocloud/525400440049/user-data", nil)
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+	c.SetParamNames("mac")
+	c.SetParamValues("525400440049")
+
+	h := &Handler{machines: machineSvc, osimages: osImageSvc}
+	if err := h.PXENocloudUserData(c); err != nil {
+		t.Fatalf("PXENocloudUserData: %v", err)
+	}
+	if body := rec.Body.String(); strings.Contains(body, "resize_rootfs: false") {
+		t.Fatalf("non-rootfs deploy must not disable resize_rootfs, got:\n%s", body)
+	}
+}
+
 func TestPXENocloudUserData_FedoraHypervisorWritesNetworkManagerBridge(t *testing.T) {
 	backend := memory.New()
 	machineSvc := machine.NewService(backend.Machines())
