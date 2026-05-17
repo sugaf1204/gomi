@@ -2005,12 +2005,9 @@ func TestPXECurtinConfig_FedoraSquashFSUsesFedoraBootloaderCommands(t *testing.T
 	body := rec.Body.String()
 	for _, want := range []string{
 		"type: fsimage",
-		"grub2-install",
 		"grub2-mkconfig",
 		"/boot/grub2/grub.cfg",
 		"/boot/grub2/gomi.cfg",
-		"--bootloader-id='fedora'",
-		"--force",
 		"bootloader_id='fedora'",
 		"/boot/efi/EFI/$bootloader_id/grub.cfg",
 		"/boot/efi/EFI/BOOT/grub.cfg",
@@ -2023,8 +2020,15 @@ func TestPXECurtinConfig_FedoraSquashFSUsesFedoraBootloaderCommands(t *testing.T
 			t.Fatalf("expected fedora squashfs curtin config to contain %q, got:\n%s", want, body)
 		}
 	}
-	if strings.Contains(body, "--removable") {
-		t.Fatalf("fedora squashfs curtin config should let grub2-install create a firmware boot entry, got:\n%s", body)
+	for _, forbidden := range []string{
+		"grub2-install",
+		"--target=x86_64-efi",
+		"--removable",
+		"--bootloader-id='fedora'",
+	} {
+		if strings.Contains(body, forbidden) {
+			t.Fatalf("fedora UEFI squashfs config must avoid unsupported UEFI grub2-install path %q, got:\n%s", forbidden, body)
+		}
 	}
 	if strings.Contains(body, "- curthooks") {
 		t.Fatalf("fedora squashfs curtin config must not run curthooks, got:\n%s", body)
