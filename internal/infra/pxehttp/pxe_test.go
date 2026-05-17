@@ -373,6 +373,19 @@ func TestRenderPXENoCloudLineConfig_PreseedEmpty(t *testing.T) {
 	}
 }
 
+func TestWithDeployCloudInitDefaultsDisablesPackageBackedLocaleAndResize(t *testing.T) {
+	got := withDeployCloudInitDefaults("#cloud-config\nhostname: test-node\n")
+	for _, want := range []string{
+		"hostname: test-node",
+		"locale: false",
+		"resize_rootfs: false",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("expected rendered cloud-init to contain %q, got:\n%s", want, got)
+		}
+	}
+}
+
 func TestPXEPreseed_CustomInlineByMAC(t *testing.T) {
 	backend := memory.New()
 	vmSvc := vm.NewService(backend.VMs())
@@ -743,13 +756,13 @@ func TestPXENocloudUserData_MachineLoginUserPasswordEnablesSSHPWAuth(t *testing.
 		"plain_text_passwd: gomi",
 		"lock_passwd: false",
 		"ssh_pwauth: true",
-		"chpasswd:",
-		"gomi:gomi",
-		"expire: false",
 	} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("expected %q in user-data, got: %s", want, body)
 		}
+	}
+	if strings.Contains(body, "chpasswd:") {
+		t.Fatalf("password login should use users.plain_text_passwd, not deprecated chpasswd.list: %s", body)
 	}
 }
 
@@ -1810,7 +1823,6 @@ func TestPXECurtinConfig_SquashFSImageUsesFSImageAndStorageConfig(t *testing.T) 
 		"size: 64959M",
 		"install_devices:",
 		"- /dev/nvme0n1",
-		"- curthooks",
 		"partitioning_commands:",
 		"builtin:",
 		"- curtin",
@@ -1820,20 +1832,31 @@ func TestPXECurtinConfig_SquashFSImageUsesFSImageAndStorageConfig(t *testing.T) 
 		"dev/null",
 		"mknod -m 666",
 		"ssh-keygen -A",
+		"grub-install",
+		"grub-mkconfig",
+		"--target=x86_64-efi",
+		"--removable",
+		"systemctl enable systemd-networkd",
 	} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("expected curtin squashfs config to contain %q, got:\n%s", want, body)
 		}
 	}
-	if strings.Contains(body, "package: linux-image-amd64") {
-		t.Fatalf("ubuntu squashfs config should keep curtin default kernel selection, got:\n%s", body)
+	for _, forbidden := range []string{
+		"- curthooks",
+		"package: linux-image-amd64",
+		"fallback-package: linux-image-amd64",
+	} {
+		if strings.Contains(body, forbidden) {
+			t.Fatalf("squashfs curtin config must not ask curtin to install packages via %q, got:\n%s", forbidden, body)
+		}
 	}
 	if strings.Contains(body, "size: -1") {
 		t.Fatalf("expected concrete root partition size, got:\n%s", body)
 	}
 }
 
-func TestPXECurtinConfig_DebianSquashFSUsesDebianKernelPackage(t *testing.T) {
+func TestPXECurtinConfig_DebianSquashFSSkipsCurtinPackageInstall(t *testing.T) {
 	backend := memory.New()
 	machineSvc := machine.NewService(backend.Machines())
 	hwInfoSvc := hwinfo.NewService(backend.HWInfo())
@@ -1916,13 +1939,240 @@ func TestPXECurtinConfig_DebianSquashFSUsesDebianKernelPackage(t *testing.T) {
 	body := rec.Body.String()
 	for _, want := range []string{
 		"type: fsimage",
+		"grub-install",
+		"grub-mkconfig",
+		"--target=x86_64-efi",
+		"--removable",
+		"systemctl enable systemd-networkd",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("expected debian squashfs curtin config to contain %q, got:\n%s", want, body)
+		}
+	}
+	for _, forbidden := range []string{
 		"- curthooks",
 		"kernel:",
 		"package: linux-image-amd64",
 		"fallback-package: linux-image-amd64",
 	} {
+		if strings.Contains(body, forbidden) {
+			t.Fatalf("debian squashfs curtin config must not ask curtin to install packages via %q, got:\n%s", forbidden, body)
+		}
+	}
+}
+
+func TestPXECurtinConfig_FedoraSquashFSUsesFedoraBootloaderCommands(t *testing.T) {
+	backend := memory.New()
+	machineSvc := machine.NewService(backend.Machines())
+	hwInfoSvc := hwinfo.NewService(backend.HWInfo())
+	osImageSvc := osimage.NewService(backend.OSImages())
+	now := time.Now().UTC()
+
+	img := osimage.OSImage{
+		Name:      "fedora-44-amd64-baremetal",
+		OSFamily:  "fedora",
+		OSVersion: "44",
+		Arch:      "amd64",
+		Format:    osimage.FormatSquashFS,
+		Source:    osimage.SourceURL,
+		Ready:     true,
+		LocalPath: "/var/lib/gomi/data/images/fedora-44-amd64-baremetal",
+		Manifest: &osimage.Manifest{
+			Root: osimage.RootArtifact{
+				Format: osimage.FormatSquashFS,
+				Path:   "rootfs.squashfs",
+			},
+		},
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	if err := backend.OSImages().Upsert(context.Background(), img); err != nil {
+		t.Fatalf("upsert os image: %v", err)
+	}
+	target := machine.Machine{
+		Name:     "bm-fedora-squashfs-plan",
+		Hostname: "bm-fedora-squashfs-plan",
+		MAC:      "52:54:00:aa:bb:44",
+		Arch:     "amd64",
+		Firmware: machine.FirmwareUEFI,
+		OSPreset: machine.OSPreset{
+			Family:   machine.OSType("fedora"),
+			Version:  "44",
+			ImageRef: "fedora-44-amd64-baremetal",
+		},
+		Phase: machine.PhaseProvisioning,
+		Provision: &machine.ProvisionProgress{
+			Active:          true,
+			AttemptID:       "attempt-fedora-squashfs-plan",
+			CompletionToken: "token-fedora-squashfs-plan",
+		},
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	if err := backend.Machines().Upsert(context.Background(), target); err != nil {
+		t.Fatalf("upsert machine: %v", err)
+	}
+	if _, err := hwInfoSvc.Upsert(context.Background(), hwinfo.HardwareInfo{
+		Name:        "bm-fedora-squashfs-plan-hwinfo",
+		MachineName: "bm-fedora-squashfs-plan",
+		AttemptID:   "attempt-fedora-squashfs-plan",
+		Disks: []hwinfo.DiskInfo{
+			{
+				Name:   "nvme0n1",
+				Path:   "/dev/nvme0n1",
+				Type:   "disk",
+				SizeMB: 65536,
+			},
+		},
+	}); err != nil {
+		t.Fatalf("upsert hwinfo: %v", err)
+	}
+
+	e := echo.New()
+	req := httptest.NewRequest(http.MethodGet, "/pxe/curtin-config?token=token-fedora-squashfs-plan&attempt_id=attempt-fedora-squashfs-plan", nil)
+	req.Host = "192.168.2.254:8080"
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+
+	h := &Handler{machines: machineSvc, hwinfo: hwInfoSvc, osimages: osImageSvc}
+	if err := h.PXECurtinConfig(c); err != nil {
+		t.Fatalf("PXECurtinConfig: %v", err)
+	}
+	if rec.Code != http.StatusOK {
+		t.Fatalf("unexpected status: %d body=%s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	for _, want := range []string{
+		"type: fsimage",
+		"grub2-install",
+		"grub2-mkconfig",
+		"/boot/grub2/grub.cfg",
+		"/boot/grub2/gomi.cfg",
+		"--bootloader-id='fedora'",
+		"--force",
+		"bootloader_id='fedora'",
+		"/boot/efi/EFI/$bootloader_id/grub.cfg",
+		"/boot/efi/EFI/BOOT/grub.cfg",
+		"configfile \\$prefix/gomi.cfg",
+		"/boot/efi/EFI/$bootloader_id/grubx64.efi",
+		"/boot/efi/EFI/BOOT/BOOTX64.EFI",
+		"/usr/lib/efi/grub2",
+	} {
 		if !strings.Contains(body, want) {
-			t.Fatalf("expected debian squashfs curtin config to contain %q, got:\n%s", want, body)
+			t.Fatalf("expected fedora squashfs curtin config to contain %q, got:\n%s", want, body)
+		}
+	}
+	if strings.Contains(body, "--removable") {
+		t.Fatalf("fedora squashfs curtin config should let grub2-install create a firmware boot entry, got:\n%s", body)
+	}
+	if strings.Contains(body, "- curthooks") {
+		t.Fatalf("fedora squashfs curtin config must not run curthooks, got:\n%s", body)
+	}
+}
+
+func TestPXECurtinConfig_FedoraBIOSSquashFSEmbedsMinimalGrubConfig(t *testing.T) {
+	backend := memory.New()
+	machineSvc := machine.NewService(backend.Machines())
+	hwInfoSvc := hwinfo.NewService(backend.HWInfo())
+	osImageSvc := osimage.NewService(backend.OSImages())
+	now := time.Now().UTC()
+
+	img := osimage.OSImage{
+		Name:      "fedora-44-amd64-baremetal",
+		OSFamily:  "fedora",
+		OSVersion: "44",
+		Arch:      "amd64",
+		Format:    osimage.FormatSquashFS,
+		Source:    osimage.SourceURL,
+		Ready:     true,
+		LocalPath: "/var/lib/gomi/data/images/fedora-44-amd64-baremetal",
+		Manifest: &osimage.Manifest{
+			Root: osimage.RootArtifact{
+				Format: osimage.FormatSquashFS,
+				Path:   "rootfs.squashfs",
+			},
+		},
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	if err := backend.OSImages().Upsert(context.Background(), img); err != nil {
+		t.Fatalf("upsert os image: %v", err)
+	}
+	target := machine.Machine{
+		Name:     "bm-fedora-bios-plan",
+		Hostname: "bm-fedora-bios-plan",
+		MAC:      "52:54:00:aa:bb:45",
+		Arch:     "amd64",
+		Firmware: machine.FirmwareBIOS,
+		OSPreset: machine.OSPreset{
+			Family:   machine.OSType("fedora"),
+			Version:  "44",
+			ImageRef: "fedora-44-amd64-baremetal",
+		},
+		Phase: machine.PhaseProvisioning,
+		Provision: &machine.ProvisionProgress{
+			Active:          true,
+			AttemptID:       "attempt-fedora-bios-plan",
+			CompletionToken: "token-fedora-bios-plan",
+		},
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	if err := backend.Machines().Upsert(context.Background(), target); err != nil {
+		t.Fatalf("upsert machine: %v", err)
+	}
+	if _, err := hwInfoSvc.Upsert(context.Background(), hwinfo.HardwareInfo{
+		Name:        "bm-fedora-bios-plan-hwinfo",
+		MachineName: "bm-fedora-bios-plan",
+		AttemptID:   "attempt-fedora-bios-plan",
+		Disks: []hwinfo.DiskInfo{
+			{
+				Name:   "vda",
+				Path:   "/dev/vda",
+				Type:   "disk",
+				SizeMB: 32768,
+			},
+		},
+	}); err != nil {
+		t.Fatalf("upsert hwinfo: %v", err)
+	}
+
+	e := echo.New()
+	req := httptest.NewRequest(http.MethodGet, "/pxe/curtin-config?token=token-fedora-bios-plan&attempt_id=attempt-fedora-bios-plan", nil)
+	req.Host = "192.168.2.254:8080"
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+
+	h := &Handler{machines: machineSvc, hwinfo: hwInfoSvc, osimages: osImageSvc}
+	if err := h.PXECurtinConfig(c); err != nil {
+		t.Fatalf("PXECurtinConfig: %v", err)
+	}
+	if rec.Code != http.StatusOK {
+		t.Fatalf("unexpected status: %d body=%s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	for _, want := range []string{
+		"/boot/grub2/gomi.cfg",
+		"root=LABEL=rootfs rw",
+		"grub2-mkimage",
+		"gomi-grub-bootstrap.cfg",
+		"configfile (\\$root)/boot/grub2/gomi.cfg",
+		"grub2-bios-setup",
+		"-d /boot/grub2/i386-pc",
+		"/dev/vda",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("expected fedora bios curtin config to contain %q, got:\n%s", want, body)
+		}
+	}
+	for _, forbidden := range []string{
+		"--target=x86_64-efi",
+		"--removable",
+		"- curthooks",
+		"package: linux-image-amd64",
+	} {
+		if strings.Contains(body, forbidden) {
+			t.Fatalf("fedora bios curtin config must not contain %q, got:\n%s", forbidden, body)
 		}
 	}
 }
@@ -3022,6 +3272,114 @@ func TestPXENocloudNetworkConfig_DHCP(t *testing.T) {
 	}
 }
 
+func TestPXENocloudNetworkConfig_FedoraMachineStaticUsesNetworkManagerRenderer(t *testing.T) {
+	backend := memory.New()
+	machineSvc := machine.NewService(backend.Machines())
+	now := time.Now().UTC()
+	target := machine.Machine{
+		Name:         "bm-fedora-static",
+		Hostname:     "bm-fedora-static",
+		MAC:          "52:54:00:44:00:44",
+		Arch:         "amd64",
+		Firmware:     machine.FirmwareUEFI,
+		IP:           "192.168.2.224",
+		IPAssignment: machine.IPAssignmentModeStatic,
+		OSPreset: machine.OSPreset{
+			Family:   machine.OSType("fedora"),
+			Version:  "44",
+			ImageRef: "fedora-44-amd64-baremetal",
+		},
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	if err := backend.Machines().Upsert(context.Background(), target); err != nil {
+		t.Fatalf("upsert machine: %v", err)
+	}
+
+	e := echo.New()
+	req := httptest.NewRequest(http.MethodGet, "/pxe/nocloud/525400440044/network-config", nil)
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+	c.SetParamNames("mac")
+	c.SetParamValues("525400440044")
+
+	h := &Handler{machines: machineSvc}
+	if err := h.PXENocloudNetworkConfig(c); err != nil {
+		t.Fatalf("PXENocloudNetworkConfig: %v", err)
+	}
+	body := rec.Body.String()
+	for _, want := range []string{
+		"renderer: NetworkManager",
+		`macaddress: "52:54:00:44:00:44"`,
+		"192.168.2.224/24",
+		"dhcp4: false",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("expected fedora network-config to contain %q, got:\n%s", want, body)
+		}
+	}
+	if strings.Contains(body, "renderer: networkd") {
+		t.Fatalf("fedora network-config must not force networkd, got:\n%s", body)
+	}
+}
+
+func TestPXENocloudNetworkConfig_FedoraVMStaticUsesOSImageFamilyRenderer(t *testing.T) {
+	backend := memory.New()
+	vmSvc := vm.NewService(backend.VMs())
+	osImageSvc := osimage.NewService(backend.OSImages())
+	now := time.Now().UTC()
+	if err := backend.OSImages().Upsert(context.Background(), osimage.OSImage{
+		Name:      "fedora-44-amd64-baremetal",
+		OSFamily:  "fedora",
+		OSVersion: "44",
+		Arch:      "amd64",
+		Ready:     true,
+		CreatedAt: now,
+		UpdatedAt: now,
+	}); err != nil {
+		t.Fatalf("upsert os image: %v", err)
+	}
+	target := vm.VirtualMachine{
+		Name:         "vm-fedora-static",
+		OSImageRef:   "fedora-44-amd64-baremetal",
+		IPAssignment: vm.IPAssignmentStatic,
+		Network: []vm.NetworkInterface{
+			{MAC: "52:54:00:44:00:45", IPAddress: "192.168.2.225"},
+		},
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	if err := backend.VMs().Upsert(context.Background(), target); err != nil {
+		t.Fatalf("upsert vm: %v", err)
+	}
+
+	e := echo.New()
+	req := httptest.NewRequest(http.MethodGet, "/pxe/nocloud/525400440045/network-config", nil)
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+	c.SetParamNames("mac")
+	c.SetParamValues("525400440045")
+
+	h := &Handler{vms: vmSvc, osimages: osImageSvc}
+	if err := h.PXENocloudNetworkConfig(c); err != nil {
+		t.Fatalf("PXENocloudNetworkConfig: %v", err)
+	}
+	body := rec.Body.String()
+	for _, want := range []string{
+		"renderer: NetworkManager",
+		`macaddress: "52:54:00:44:00:45"`,
+		"192.168.2.225/24",
+		"dhcp4: false",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("expected fedora VM network-config to contain %q, got:\n%s", want, body)
+		}
+	}
+	if strings.Contains(body, "renderer: networkd") {
+		t.Fatalf("fedora VM network-config must not force networkd, got:\n%s", body)
+	}
+}
+
 func TestPXENocloudUserData_DHCPMachineInjectsWakeOnLANNetplan(t *testing.T) {
 	backend := memory.New()
 	machineSvc := machine.NewService(backend.Machines())
@@ -3085,6 +3443,21 @@ func TestPXENocloudUserData_DHCPMachineInjectsWakeOnLANNetplan(t *testing.T) {
 	if !strings.Contains(body, "netplan apply") {
 		t.Fatalf("expected netplan apply in runcmd, got:\n%s", body)
 	}
+	if !strings.Contains(body, "systemd-networkd-wait-online.service") {
+		t.Fatalf("expected netplan runcmd to clear transient wait-online failures, got:\n%s", body)
+	}
+}
+
+func TestInjectNetplanConfigFromParamsSkipsFedora(t *testing.T) {
+	input := "#cloud-config\nhostname: fedora-node\n"
+	got := injectNetplanConfigFromParams(input, netplanParams{
+		IP:       "192.168.2.224",
+		MAC:      "52:54:00:44:00:44",
+		OSFamily: "fedora",
+	}, nil)
+	if got != input {
+		t.Fatalf("fedora must not receive Ubuntu/Debian netplan config, got:\n%s", got)
+	}
 }
 
 func TestPXENocloudUserData_DebianMachineSwitchesToNetworkdWithRollback(t *testing.T) {
@@ -3147,6 +3520,7 @@ func TestPXENocloudUserData_DebianMachineSwitchesToNetworkdWithRollback(t *testi
 		"systemctl mask networking.service",
 		"systemctl is-active --quiet systemd-networkd.service",
 		"networkctl status --no-pager",
+		"timeout 30 networkctl is-online",
 		"curl -fsS --connect-timeout 5 --max-time 15 'http://127.0.0.1:5392/healthz'",
 		"ip addr show",
 		"ip route show",
@@ -3157,6 +3531,9 @@ func TestPXENocloudUserData_DebianMachineSwitchesToNetworkdWithRollback(t *testi
 	}
 	if strings.Contains(body, "\n- netplan apply\n") {
 		t.Fatalf("Debian netplan switch must use rollback script instead of direct netplan apply, got:\n%s", body)
+	}
+	if strings.Contains(body, "networkctl is-online --timeout") {
+		t.Fatalf("Debian netplan switch must not use networkctl --timeout, got:\n%s", body)
 	}
 	applyIdx := strings.Index(body, "- /usr/local/sbin/gomi-apply-netplan-networkd")
 	completeIdx := strings.Index(body, "install-complete?token=token-debian-netplan")

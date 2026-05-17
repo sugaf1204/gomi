@@ -99,6 +99,22 @@ type curtinConfig struct {
 	LateCommands         map[string][]string     `yaml:"late_commands"`
 }
 
+type osInstallCapability struct {
+	Family               string
+	GrubInstallCommand   string
+	GrubEFIArgs          []string
+	GrubMkconfigCommand  string
+	GrubMkimageCommand   string
+	GrubBIOSSetupCommand string
+	GrubConfigPath       string
+	SimpleGrubConfigPath string
+	BootloaderID         string
+	InstallRemovableEFI  bool
+	NeedsESPGrubConfig   bool
+	CopyEFIToFallback    bool
+	EmbedBIOSBootstrap   bool
+}
+
 type selectedTargetDisk struct {
 	Path string
 	Info hwinfo.DiskInfo
@@ -708,6 +724,7 @@ func (h *Handler) buildCurtinInstallConfig(ctx context.Context, c echo.Context, 
 	sourceType := "dd-raw"
 	var storageConfig *curtinStorage
 	stages := []string{"early", "partitioning", "network", "extract", "late"}
+	capability := installCapabilityForOSFamily(img.OSFamily)
 	switch strings.ToLower(strings.TrimSpace(imageFormat)) {
 	case "", string(osimage.FormatRAW):
 		switch imageCompression {
@@ -724,7 +741,6 @@ func (h *Handler) buildCurtinInstallConfig(ctx context.Context, c echo.Context, 
 			return "", err
 		}
 		storageConfig = buildRootFSStorageConfig(targetDisk, rootSizeMB)
-		stages = []string{"early", "partitioning", "network", "extract", "curthooks", "late"}
 	default:
 		return "", fmt.Errorf("curtin deploy requires raw or squashfs image, got format %q", imageFormat)
 	}
@@ -735,7 +751,10 @@ func (h *Handler) buildCurtinInstallConfig(ctx context.Context, c echo.Context, 
 		`mkdir -p "$TARGET_MOUNT_POINT/etc/cloud/cloud.cfg.d"; printf '%s\n' 'datasource_list: [ NoCloud, None ]' 'datasource:' '  NoCloud:' '    seedfrom: /var/lib/cloud/seed/nocloud/' 'ssh_deletekeys: false' > "$TARGET_MOUNT_POINT/etc/cloud/cloud.cfg.d/99_gomi_nocloud.cfg"; rm -f "$TARGET_MOUNT_POINT"/etc/cloud/cloud.cfg.d/50-curtin-networking.cfg "$TARGET_MOUNT_POINT"/etc/netplan/*.yaml`,
 		`mkdir -p "$TARGET_MOUNT_POINT/dev"; if [ ! -e "$TARGET_MOUNT_POINT/dev/null" ]; then mknod -m 666 "$TARGET_MOUNT_POINT/dev/null" c 1 3; else chmod 666 "$TARGET_MOUNT_POINT/dev/null"; fi`,
 		`if [ -x "$TARGET_MOUNT_POINT/usr/bin/ssh-keygen" ]; then rm -f "$TARGET_MOUNT_POINT"/etc/ssh/ssh_host_*_key "$TARGET_MOUNT_POINT"/etc/ssh/ssh_host_*_key.pub; chroot "$TARGET_MOUNT_POINT" ssh-keygen -A; fi`,
+		`printf '%s\n' 'LABEL=rootfs / ext4 defaults,errors=remount-ro 0 1' 'LABEL=EFI /boot/efi vfat umask=0077 0 1' > "$TARGET_MOUNT_POINT/etc/fstab"`,
+		`if [ -x "$TARGET_MOUNT_POINT/usr/sbin/netplan" ] && [ -x "$TARGET_MOUNT_POINT/lib/systemd/systemd-networkd" ]; then chroot "$TARGET_MOUNT_POINT" systemctl enable systemd-networkd; fi`,
 		`sed -i 's/discard,errors=remount-ro/defaults,errors=remount-ro/g' "$TARGET_MOUNT_POINT/etc/fstab" 2>/dev/null || true; sed -i -E 's/(root=[^ ]+) ro /\1 rw /g' "$TARGET_MOUNT_POINT/boot/grub/grub.cfg" 2>/dev/null || true`,
+		buildRootFSBootloaderCommand(capability, targetDisk, m.Firmware),
 	}
 
 	cfg := curtinConfig{
@@ -773,7 +792,6 @@ func (h *Handler) buildCurtinInstallConfig(ctx context.Context, c echo.Context, 
 	if storageConfig != nil {
 		cfg.Storage = &storageConfig.Storage
 		cfg.Grub = &storageConfig.Grub
-		cfg.Kernel = curtinKernelForOSFamily(img.OSFamily)
 		cfg.PartitioningCommands = map[string][]string{
 			"builtin": {"curtin", "block-meta", "custom"},
 		}
@@ -788,16 +806,135 @@ func (h *Handler) buildCurtinInstallConfig(ctx context.Context, c echo.Context, 
 	return string(raw), nil
 }
 
-func curtinKernelForOSFamily(osFamily string) *curtinKernel {
-	switch strings.ToLower(strings.TrimSpace(osFamily)) {
-	case "debian":
-		return &curtinKernel{
-			Package:         "linux-image-amd64",
-			FallbackPackage: "linux-image-amd64",
+func installCapabilityForOSFamily(osFamily string) osInstallCapability {
+	family := strings.ToLower(strings.TrimSpace(osFamily))
+	switch family {
+	case "fedora":
+		return osInstallCapability{
+			Family:               family,
+			GrubInstallCommand:   "grub2-install",
+			GrubEFIArgs:          []string{"--force"},
+			GrubMkconfigCommand:  "grub2-mkconfig",
+			GrubMkimageCommand:   "grub2-mkimage",
+			GrubBIOSSetupCommand: "grub2-bios-setup",
+			GrubConfigPath:       "/boot/grub2/grub.cfg",
+			SimpleGrubConfigPath: "/boot/grub2/gomi.cfg",
+			BootloaderID:         "fedora",
+			NeedsESPGrubConfig:   true,
+			CopyEFIToFallback:    true,
+			EmbedBIOSBootstrap:   true,
+		}
+	case "debian", "ubuntu":
+		return osInstallCapability{
+			Family:              family,
+			GrubInstallCommand:  "grub-install",
+			GrubMkconfigCommand: "grub-mkconfig",
+			GrubConfigPath:      "/boot/grub/grub.cfg",
+			BootloaderID:        family,
+			InstallRemovableEFI: true,
 		}
 	default:
-		return nil
+		id := family
+		if id == "" {
+			id = "linux"
+		}
+		return osInstallCapability{
+			Family:              family,
+			GrubInstallCommand:  "grub-install",
+			GrubMkconfigCommand: "grub-mkconfig",
+			GrubConfigPath:      "/boot/grub/grub.cfg",
+			BootloaderID:        id,
+			InstallRemovableEFI: true,
+		}
 	}
+}
+
+func buildRootFSBootloaderCommand(cap osInstallCapability, targetDisk string, firmware machine.Firmware) string {
+	biosInstall := fmt.Sprintf(`if chroot "$TARGET_MOUNT_POINT" %s --target=i386-pc --recheck %s; then :; else echo "gomi: BIOS grub install skipped"; fi`,
+		shellQuote(cap.GrubInstallCommand),
+		shellQuote(targetDisk),
+	)
+	simpleConfig := buildRootFSSimpleGrubConfigCommand(cap)
+	if firmware == machine.FirmwareBIOS {
+		if cap.EmbedBIOSBootstrap {
+			return fmt.Sprintf(`set -e; for d in dev proc sys run; do mountpoint -q "$TARGET_MOUNT_POINT/$d" || mount --bind "/$d" "$TARGET_MOUNT_POINT/$d"; done; chroot "$TARGET_MOUNT_POINT" %s --target=i386-pc --recheck %s; %s; chroot "$TARGET_MOUNT_POINT" %s -O i386-pc -p /boot/grub2 -c /tmp/gomi-grub-bootstrap.cfg -o /boot/grub2/i386-pc/core.img biosdisk part_gpt ext2 search search_label configfile normal linux gzio; chroot "$TARGET_MOUNT_POINT" %s -d /boot/grub2/i386-pc %s`,
+				shellQuote(cap.GrubInstallCommand),
+				shellQuote(targetDisk),
+				simpleConfig,
+				shellQuote(cap.GrubMkimageCommand),
+				shellQuote(cap.GrubBIOSSetupCommand),
+				shellQuote(targetDisk),
+			)
+		}
+		return fmt.Sprintf(`set -e; for d in dev proc sys run; do mountpoint -q "$TARGET_MOUNT_POINT/$d" || mount --bind "/$d" "$TARGET_MOUNT_POINT/$d"; done; chroot "$TARGET_MOUNT_POINT" %s -o %s; %s`,
+			shellQuote(cap.GrubMkconfigCommand),
+			shellQuote(cap.GrubConfigPath),
+			biosInstall,
+		)
+	}
+	efiArgs := ""
+	for _, arg := range cap.GrubEFIArgs {
+		if strings.TrimSpace(arg) != "" {
+			efiArgs += " " + shellQuote(arg)
+		}
+	}
+	espConfig := ":"
+	if cap.NeedsESPGrubConfig {
+		configFile := `\$prefix/grub.cfg`
+		if cap.SimpleGrubConfigPath != "" {
+			configFile = `\$prefix/` + filepath.Base(cap.SimpleGrubConfigPath)
+		}
+		espConfig = fmt.Sprintf(`bootloader_id=%s; root_uuid="$(blkid -s UUID -o value "$(findmnt -no SOURCE "$TARGET_MOUNT_POINT")")"; cfg="search --no-floppy --fs-uuid --set=root ${root_uuid}\nset prefix=(\$root)/boot/grub2\nconfigfile %s\n"; mkdir -p "$TARGET_MOUNT_POINT/boot/efi/EFI/$bootloader_id" "$TARGET_MOUNT_POINT/boot/efi/EFI/BOOT"; printf '%%b' "$cfg" > "$TARGET_MOUNT_POINT/boot/efi/EFI/$bootloader_id/grub.cfg"; printf '%%b' "$cfg" > "$TARGET_MOUNT_POINT/boot/efi/EFI/BOOT/grub.cfg"`,
+			shellQuote(cap.BootloaderID),
+			configFile,
+		)
+	}
+	removableArg := ""
+	if cap.InstallRemovableEFI {
+		removableArg = " --removable"
+	}
+	fallbackCopy := ":"
+	if cap.CopyEFIToFallback {
+		fallbackCopy = fmt.Sprintf(`bootloader_id=%s; packaged_efi="$(find "$TARGET_MOUNT_POINT/usr/lib/efi/grub2" -path "*/EFI/$bootloader_id/grubx64.efi" -type f 2>/dev/null | head -n 1 || true)"; if [ -n "$packaged_efi" ]; then mkdir -p "$TARGET_MOUNT_POINT/boot/efi/EFI/$bootloader_id" "$TARGET_MOUNT_POINT/boot/efi/EFI/BOOT"; cp "$packaged_efi" "$TARGET_MOUNT_POINT/boot/efi/EFI/$bootloader_id/grubx64.efi"; cp "$packaged_efi" "$TARGET_MOUNT_POINT/boot/efi/EFI/BOOT/BOOTX64.EFI"; elif [ -f "$TARGET_MOUNT_POINT/boot/efi/EFI/$bootloader_id/grubx64.efi" ]; then mkdir -p "$TARGET_MOUNT_POINT/boot/efi/EFI/BOOT"; cp "$TARGET_MOUNT_POINT/boot/efi/EFI/$bootloader_id/grubx64.efi" "$TARGET_MOUNT_POINT/boot/efi/EFI/BOOT/BOOTX64.EFI"; fi`,
+			shellQuote(cap.BootloaderID),
+		)
+	}
+	return fmt.Sprintf(`set -e; for d in dev proc sys run; do mountpoint -q "$TARGET_MOUNT_POINT/$d" || mount --bind "/$d" "$TARGET_MOUNT_POINT/$d"; done; %s; chroot "$TARGET_MOUNT_POINT" %s --target=x86_64-efi --efi-directory=/boot/efi --bootloader-id=%s%s --recheck%s; chroot "$TARGET_MOUNT_POINT" %s -o %s; %s; %s; %s`,
+		simpleConfig,
+		shellQuote(cap.GrubInstallCommand),
+		shellQuote(cap.BootloaderID),
+		removableArg,
+		efiArgs,
+		shellQuote(cap.GrubMkconfigCommand),
+		shellQuote(cap.GrubConfigPath),
+		espConfig,
+		fallbackCopy,
+		biosInstall,
+	)
+}
+
+func buildRootFSSimpleGrubConfigCommand(cap osInstallCapability) string {
+	if cap.SimpleGrubConfigPath == "" {
+		return ":"
+	}
+	return fmt.Sprintf(`chroot "$TARGET_MOUNT_POINT" sh -c 'set -e; k="$(ls -1 /boot/vmlinuz-* | sort -V | tail -n 1)"; [ -n "$k" ]; v="${k#/boot/vmlinuz-}"; mkdir -p "$(dirname %s)"; cat > %s <<EOF
+set timeout=3
+set default=0
+search --no-floppy --label rootfs --set=root
+menuentry "Linux" {
+    linux /boot/vmlinuz-$v root=LABEL=rootfs rw console=tty0 console=ttyS0,115200n8
+    initrd /boot/initramfs-$v.img
+}
+EOF
+cat > /tmp/gomi-grub-bootstrap.cfg <<EOF
+search --no-floppy --label rootfs --set=root
+set prefix=(\$root)/boot/grub2
+configfile (\$root)%s
+EOF'`,
+		shellQuote(cap.SimpleGrubConfigPath),
+		shellQuote(cap.SimpleGrubConfigPath),
+		cap.SimpleGrubConfigPath,
+	)
 }
 
 func buildRootFSStorageConfig(targetDisk string, rootSizeMB int64) *curtinStorage {

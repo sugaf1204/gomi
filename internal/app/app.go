@@ -844,6 +844,24 @@ func addLocalBootMAC(localBootMACs map[string]struct{}, h node.Node) {
 	}
 }
 
+func addActiveProvisioningMAC(provisioningMACs map[string]struct{}, h node.Node) {
+	if h == nil || !h.IsProvisioningActive() || shouldDirectLocalBoot(h) {
+		return
+	}
+	for _, raw := range h.AllMACs() {
+		mac := strings.ToLower(strings.TrimSpace(raw))
+		if mac != "" {
+			provisioningMACs[mac] = struct{}{}
+		}
+	}
+}
+
+func removeProvisioningLocalBootMACs(localBootMACs, provisioningMACs map[string]struct{}) {
+	for mac := range provisioningMACs {
+		delete(localBootMACs, mac)
+	}
+}
+
 func shouldDirectLocalBoot(h node.Node) bool {
 	if !h.IsProvisioningActive() {
 		return true
@@ -865,6 +883,7 @@ func (r *Runtime) syncDHCPReservations(ctx context.Context) {
 
 	reservations := make(map[string]net.IP)
 	localBootMACs := make(map[string]struct{})
+	provisioningMACs := make(map[string]struct{})
 
 	// 1. Subnet manual reservations
 	subnets, err := r.subnetStore.List(ctx)
@@ -884,6 +903,7 @@ func (r *Runtime) syncDHCPReservations(ctx context.Context) {
 		for i := range machines {
 			addStaticReservation(reservations, &machines[i])
 			addLocalBootMAC(localBootMACs, &machines[i])
+			addActiveProvisioningMAC(provisioningMACs, &machines[i])
 		}
 	}
 
@@ -893,9 +913,11 @@ func (r *Runtime) syncDHCPReservations(ctx context.Context) {
 		for i := range vms {
 			addStaticReservation(reservations, &vms[i])
 			addLocalBootMAC(localBootMACs, &vms[i])
+			addActiveProvisioningMAC(provisioningMACs, &vms[i])
 		}
 	}
 
+	removeProvisioningLocalBootMACs(localBootMACs, provisioningMACs)
 	dhcpSrv.UpdateReservations(reservations)
 	dhcpSrv.UpdateLocalBootMACs(localBootMACs)
 	log.Printf("dhcp: reservation sync: %d reservations, %d direct local boot macs", len(reservations), len(localBootMACs))
