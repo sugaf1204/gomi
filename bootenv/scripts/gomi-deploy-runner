@@ -182,7 +182,7 @@ if [ "$deploy_mode" = "disk-image" ]; then
   qemu-img convert -f qcow2 -O raw "$image_input" "$target_disk" || fail "qemu-img convert failed"
   post_timing runner.write_disk_image "wrote qcow2 image to target disk"
   sync
-  partprobe "$target_disk" || true
+  partprobe "$target_disk" || fail "partition table reread failed"
   udevadm settle || true
   root_device="$(partition_device "$target_disk" "$root_part")" || fail "failed to resolve target root partition"
   [ -b "$root_device" ] || fail "target root partition is not a block device: $root_device"
