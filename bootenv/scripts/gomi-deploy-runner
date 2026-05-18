@@ -28,6 +28,7 @@ cmdline_value() {
 normalize_mac() {
   local mac="$1"
   mac="${mac#01-}"
+  mac="${mac#01:}"
   printf '%s\n' "$mac" | tr 'A-F-' 'a-f:'
 }
 
@@ -196,7 +197,7 @@ if [ "$deploy_mode" = "disk-image" ]; then
 datasource_list: [ NoCloud, None ]
 datasource:
   NoCloud:
-	seedfrom: /var/lib/cloud/seed/nocloud/
+    seedfrom: /var/lib/cloud/seed/nocloud/
 ssh_deletekeys: false
 EOF
   umount "$target_mount"
