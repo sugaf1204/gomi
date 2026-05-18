@@ -2,9 +2,11 @@ package vm
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"testing"
 
 	"github.com/sugaf1204/gomi/internal/hypervisor"
@@ -19,6 +21,48 @@ type fakeCloudImageStorage struct {
 	sizeBytes   int64
 	data        []byte
 	deletedName string
+}
+
+type concurrentCloudImageStorage struct {
+	mu          sync.Mutex
+	volumes     map[string]bool
+	inflight    map[string]bool
+	createCalls int
+}
+
+func (s *concurrentCloudImageStorage) VolumeExists(_ context.Context, name string, format string) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.volumes[name+"."+format], nil
+}
+
+func (s *concurrentCloudImageStorage) CreateVolumeFromReader(_ context.Context, name string, sizeBytes int64, format string, r io.Reader) error {
+	key := name + "." + format
+	s.mu.Lock()
+	if s.volumes[key] || s.inflight[key] {
+		s.mu.Unlock()
+		return errors.New("duplicate backing volume create")
+	}
+	s.inflight[key] = true
+	s.mu.Unlock()
+
+	if _, err := io.Copy(io.Discard, r); err != nil {
+		return err
+	}
+
+	s.mu.Lock()
+	delete(s.inflight, key)
+	s.volumes[key] = true
+	s.createCalls++
+	s.mu.Unlock()
+	return nil
+}
+
+func (s *concurrentCloudImageStorage) DeleteVolume(_ context.Context, name string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.volumes, name+".qcow2")
+	return nil
 }
 
 func (s *fakeCloudImageStorage) VolumeExists(_ context.Context, name string, format string) (bool, error) {
@@ -201,6 +245,62 @@ func TestPrepareCloudImageBacking_DownloadsURLImageToHypervisor(t *testing.T) {
 	}
 }
 
+func TestPrepareCloudImageBacking_SerializesConcurrentURLImageSync(t *testing.T) {
+	payload := []byte("qcow2-data")
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Length", "10")
+		if _, err := w.Write(payload); err != nil {
+			t.Fatalf("write response: %v", err)
+		}
+	}))
+	defer srv.Close()
+
+	store := &testOSImageStore{}
+	svc := osimage.NewService(store)
+	_, err := svc.Create(context.Background(), osimage.OSImage{
+		Name:      "ubuntu-24.04-amd64-cloud",
+		OSFamily:  "ubuntu",
+		OSVersion: "24.04",
+		Arch:      "amd64",
+		Format:    osimage.FormatQCOW2,
+		Source:    osimage.SourceURL,
+		URL:       srv.URL + "/ubuntu-24.04.img",
+		SizeBytes: int64(len(payload)),
+	})
+	if err != nil {
+		t.Fatalf("Create image: %v", err)
+	}
+	if _, err := svc.UpdateStatus(context.Background(), "ubuntu-24.04-amd64-cloud", true, "", ""); err != nil {
+		t.Fatalf("UpdateStatus: %v", err)
+	}
+
+	storage := &concurrentCloudImageStorage{
+		volumes:  map[string]bool{},
+		inflight: map[string]bool{},
+	}
+	d := &Deployer{OSImages: svc}
+	var wg sync.WaitGroup
+	errs := make(chan error, 2)
+	for i := 0; i < 2; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, _, err := d.prepareCloudImageBacking(context.Background(), storage, "ubuntu-24.04-amd64-cloud")
+			errs <- err
+		}()
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatalf("prepareCloudImageBacking: %v", err)
+		}
+	}
+	if storage.createCalls != 1 {
+		t.Fatalf("expected one backing upload, got %d", storage.createCalls)
+	}
+}
+
 func TestPrepareCloudImageBacking_SkipsDownloadWhenHypervisorVolumeExists(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		t.Fatal("server should not be called when backing volume exists")
@@ -232,6 +332,37 @@ func TestPrepareCloudImageBacking_SkipsDownloadWhenHypervisorVolumeExists(t *tes
 	}
 	if storage.data != nil {
 		t.Fatalf("expected no upload when volume exists")
+	}
+}
+
+func TestResolveCloudImageBacking_ImageNameWithQCOW2SuffixUsesSingleSuffix(t *testing.T) {
+	store := &testOSImageStore{}
+	svc := osimage.NewService(store)
+	_, err := svc.Create(context.Background(), osimage.OSImage{
+		Name:      "ubuntu-24.04-amd64-cloud.qcow2",
+		OSFamily:  "ubuntu",
+		OSVersion: "24.04",
+		Arch:      "amd64",
+		Format:    osimage.FormatQCOW2,
+		Source:    osimage.SourceUpload,
+	})
+	if err != nil {
+		t.Fatalf("Create image: %v", err)
+	}
+	if _, err := svc.UpdateStatus(context.Background(), "ubuntu-24.04-amd64-cloud.qcow2", true, "/var/lib/gomi/images/ubuntu-24.04-amd64-cloud.qcow2", ""); err != nil {
+		t.Fatalf("UpdateStatus: %v", err)
+	}
+
+	d := &Deployer{OSImages: svc}
+	path, format, err := d.resolveCloudImageBacking(context.Background(), "ubuntu-24.04-amd64-cloud.qcow2")
+	if err != nil {
+		t.Fatalf("resolveCloudImageBacking: %v", err)
+	}
+	if path != "/var/lib/libvirt/images/ubuntu-24.04-amd64-cloud.qcow2" {
+		t.Fatalf("expected single qcow2 suffix, got %q", path)
+	}
+	if format != "qcow2" {
+		t.Fatalf("expected qcow2 backing format, got %q", format)
 	}
 }
 

@@ -14,6 +14,7 @@ import (
 	"net/url"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"github.com/sugaf1204/gomi/internal/hypervisor"
 	"github.com/sugaf1204/gomi/internal/infra/netdetect"
@@ -23,6 +24,8 @@ import (
 )
 
 const hypervisorImageDir = "/var/lib/libvirt/images"
+
+var cloudImageBackingLocks sync.Map
 
 type Deployer struct {
 	Hypervisors *hypervisor.Service
@@ -214,6 +217,9 @@ func (d *Deployer) prepareCloudImageBacking(ctx context.Context, storage cloudIm
 	if strings.TrimSpace(img.URL) == "" {
 		return backingPath, backingFormat, nil
 	}
+	unlock := lockCloudImageBacking(img.Name, backingFormat)
+	defer unlock()
+
 	exists, err := storage.VolumeExists(ctx, img.Name, backingFormat)
 	if err != nil {
 		return "", "", fmt.Errorf("check cloud image backing %s: %w", img.Name, err)
@@ -258,8 +264,26 @@ func (d *Deployer) resolveCloudImageBackingImage(ctx context.Context, osImageRef
 	if img.Manifest == nil && strings.TrimSpace(img.LocalPath) == "" && strings.TrimSpace(img.URL) == "" {
 		return osimage.OSImage{}, "", "", fmt.Errorf("osImage %s has no localPath or url", ref)
 	}
-	backingPath := filepath.Join(hypervisorImageDir, img.Name+"."+backingFormat)
+	backingPath := filepath.Join(hypervisorImageDir, cloudImageVolumeName(img.Name, backingFormat))
 	return img, backingPath, backingFormat, nil
+}
+
+func lockCloudImageBacking(name string, format string) func() {
+	value, _ := cloudImageBackingLocks.LoadOrStore(cloudImageVolumeName(name, format), &sync.Mutex{})
+	mu := value.(*sync.Mutex)
+	mu.Lock()
+	return mu.Unlock
+}
+
+func cloudImageVolumeName(name string, format string) string {
+	if format == "" {
+		format = "qcow2"
+	}
+	suffix := "." + format
+	if strings.HasSuffix(name, suffix) {
+		return name
+	}
+	return name + suffix
 }
 
 func (d *Deployer) uploadCloudImageBacking(ctx context.Context, storage cloudImageStorage, img osimage.OSImage, backingFormat string) error {
