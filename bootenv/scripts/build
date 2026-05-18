@@ -62,8 +62,19 @@ with_chroot_mounts() {
   "$@"
 }
 
+generate_initramfs() {
+  local action kver module_dir
+  for module_dir in "$rootfs"/lib/modules/*; do
+    [ -d "$module_dir" ] || continue
+    kver="$(basename "$module_dir")"
+    action="-c"
+    [ -f "$rootfs/boot/initrd.img-$kver" ] && action="-u"
+    sudo chroot "$rootfs" update-initramfs "$action" -k "$kver"
+  done
+}
+
 install_into_rootfs
-with_chroot_mounts sudo chroot "$rootfs" update-initramfs -u -k all
+with_chroot_mounts generate_initramfs
 
 kernel="$(find "$rootfs/boot" -maxdepth 1 -type f -name 'vmlinuz-*' | sort -V | tail -n 1)"
 initrd="$(find "$rootfs/boot" -maxdepth 1 -type f -name 'initrd.img-*' | sort -V | tail -n 1)"
