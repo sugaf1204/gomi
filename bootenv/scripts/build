@@ -20,6 +20,25 @@ test -d "$rootfs" || { echo "mkosi did not create $rootfs" >&2; exit 1; }
 
 install_into_rootfs() {
   sudo install -D -m 0755 "$root/scripts/gomi-deploy-runner" "$rootfs/usr/local/sbin/gomi-deploy-runner"
+  sudo install -d -m 0755 "$rootfs/etc/systemd/system/multi-user.target.wants"
+  sudo tee "$rootfs/etc/systemd/system/gomi-deploy-runner.service" >/dev/null <<'EOF'
+[Unit]
+Description=Gomi deploy runner
+Wants=systemd-udev-settle.service
+After=systemd-udev-settle.service
+ConditionKernelCommandLine=gomi.base
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/gomi-deploy-runner
+StandardOutput=journal+console
+StandardError=journal+console
+
+[Install]
+WantedBy=multi-user.target
+EOF
+  sudo ln -sf ../gomi-deploy-runner.service "$rootfs/etc/systemd/system/multi-user.target.wants/gomi-deploy-runner.service"
+
   sudo install -d -m 0755 "$rootfs/etc/initramfs-tools/scripts/init-top" \
     "$rootfs/etc/initramfs-tools/scripts/local-top" \
     "$rootfs/etc/initramfs-tools/scripts/local-bottom" \
