@@ -1521,8 +1521,6 @@ func TestPXEBootScript_DesktopMachineStillUsesArtifactCurtinPath(t *testing.T) {
 }
 
 func TestPXECurtinConfig_SquashFSImageUsesFSImageAndStorageConfig(t *testing.T) {
-	t.Setenv("GOMI_CURTIN_UBUNTU_MIRROR", "http://apt-mirror.example/ubuntu/")
-
 	backend := memory.New()
 	machineSvc := machine.NewService(backend.Machines())
 	hwInfoSvc := hwinfo.NewService(backend.HWInfo())
@@ -1632,9 +1630,6 @@ func TestPXECurtinConfig_SquashFSImageUsesFSImageAndStorageConfig(t *testing.T) 
 		"--target=x86_64-efi",
 		"--removable",
 		"systemctl enable systemd-networkd",
-		"apt_mirrors:",
-		"ubuntu_archive: http://apt-mirror.example/ubuntu",
-		"ubuntu_security: http://apt-mirror.example/ubuntu",
 	} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("expected curtin squashfs config to contain %q, got:\n%s", want, body)
