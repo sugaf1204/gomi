@@ -3,6 +3,7 @@ package libvirt
 import (
 	"context"
 	"encoding/xml"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -156,7 +157,10 @@ func (e *rpcExecutor) VolumeExists(_ context.Context, name string, format string
 	}
 	_, err = e.l.StorageVolLookupByName(pool, volumeFileName(name, format))
 	if err != nil {
-		return false, nil
+		if isNoStorageVolumeError(err) {
+			return false, nil
+		}
+		return false, fmt.Errorf("lookup storage volume %s: %w", volumeFileName(name, format), err)
 	}
 	return true, nil
 }
@@ -230,6 +234,11 @@ func xmlEscape(s string) string {
 	var b strings.Builder
 	_ = xml.EscapeText(&b, []byte(s))
 	return b.String()
+}
+
+func isNoStorageVolumeError(err error) bool {
+	var libvirtErr golibvirt.Error
+	return errors.As(err, &libvirtErr) && libvirtErr.Code == uint32(golibvirt.ErrNoStorageVol)
 }
 
 func (e *rpcExecutor) DefineDomain(_ context.Context, cfg DomainConfig) error {

@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/sugaf1204/gomi/internal/hypervisor"
 	"github.com/sugaf1204/gomi/internal/infra/netdetect"
@@ -217,17 +218,18 @@ func (d *Deployer) prepareCloudImageBacking(ctx context.Context, storage cloudIm
 	if strings.TrimSpace(img.URL) == "" {
 		return backingPath, backingFormat, nil
 	}
-	unlock := lockCloudImageBacking(img.Name, backingFormat)
+	volumeName := cloudImageBackingVolumeBaseName(img, backingFormat)
+	unlock := lockCloudImageBacking(volumeName, backingFormat)
 	defer unlock()
 
-	exists, err := storage.VolumeExists(ctx, img.Name, backingFormat)
+	exists, err := storage.VolumeExists(ctx, volumeName, backingFormat)
 	if err != nil {
 		return "", "", fmt.Errorf("check cloud image backing %s: %w", img.Name, err)
 	}
 	if exists {
 		return backingPath, backingFormat, nil
 	}
-	if err := d.uploadCloudImageBacking(ctx, storage, img, backingFormat); err != nil {
+	if err := d.uploadCloudImageBacking(ctx, storage, img, volumeName, backingFormat); err != nil {
 		return "", "", err
 	}
 	return backingPath, backingFormat, nil
@@ -264,7 +266,7 @@ func (d *Deployer) resolveCloudImageBackingImage(ctx context.Context, osImageRef
 	if img.Manifest == nil && strings.TrimSpace(img.LocalPath) == "" && strings.TrimSpace(img.URL) == "" {
 		return osimage.OSImage{}, "", "", fmt.Errorf("osImage %s has no localPath or url", ref)
 	}
-	backingPath := filepath.Join(hypervisorImageDir, cloudImageVolumeName(img.Name, backingFormat))
+	backingPath := filepath.Join(hypervisorImageDir, cloudImageVolumeName(cloudImageBackingVolumeBaseName(img, backingFormat), backingFormat))
 	return img, backingPath, backingFormat, nil
 }
 
@@ -286,7 +288,25 @@ func cloudImageVolumeName(name string, format string) string {
 	return name + suffix
 }
 
-func (d *Deployer) uploadCloudImageBacking(ctx context.Context, storage cloudImageStorage, img osimage.OSImage, backingFormat string) error {
+func cloudImageBackingVolumeBaseName(img osimage.OSImage, format string) string {
+	name := strings.TrimSpace(img.Name)
+	if strings.TrimSpace(img.URL) == "" {
+		return name
+	}
+	suffix := "." + format
+	base := strings.TrimSuffix(name, suffix)
+
+	h := sha256.New()
+	_, _ = io.WriteString(h, "url="+strings.TrimSpace(img.URL))
+	_, _ = io.WriteString(h, "\nchecksum="+normalizeSHA256(img.Checksum))
+	_, _ = fmt.Fprintf(h, "\nsize=%d", img.SizeBytes)
+	if !img.CreatedAt.IsZero() {
+		_, _ = io.WriteString(h, "\ncreated="+img.CreatedAt.UTC().Format(time.RFC3339Nano))
+	}
+	return fmt.Sprintf("%s-%s", base, hex.EncodeToString(h.Sum(nil))[:12])
+}
+
+func (d *Deployer) uploadCloudImageBacking(ctx context.Context, storage cloudImageStorage, img osimage.OSImage, volumeName string, backingFormat string) error {
 	rawURL := strings.TrimSpace(img.URL)
 	if rawURL == "" {
 		return fmt.Errorf("osImage %s has no url", img.Name)
@@ -325,12 +345,12 @@ func (d *Deployer) uploadCloudImageBacking(ctx context.Context, storage cloudIma
 		checksum = newHashingReader(resp.Body)
 		reader = checksum
 	}
-	if err := storage.CreateVolumeFromReader(ctx, img.Name, sizeBytes, backingFormat, reader); err != nil {
+	if err := storage.CreateVolumeFromReader(ctx, volumeName, sizeBytes, backingFormat, reader); err != nil {
 		return fmt.Errorf("sync cloud image %s to hypervisor: %w", img.Name, err)
 	}
 	if checksum != nil {
 		if got, want := checksum.SumHex(), normalizeSHA256(img.Checksum); got != want {
-			_ = storage.DeleteVolume(ctx, img.Name)
+			_ = storage.DeleteVolume(ctx, volumeName)
 			return fmt.Errorf("cloud image checksum mismatch for %s: expected %s got %s", img.Name, want, got)
 		}
 	}

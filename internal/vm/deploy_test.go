@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/sugaf1204/gomi/internal/hypervisor"
 	"github.com/sugaf1204/gomi/internal/osimage"
@@ -15,12 +16,13 @@ import (
 )
 
 type fakeCloudImageStorage struct {
-	exists      bool
-	createdName string
-	format      string
-	sizeBytes   int64
-	data        []byte
-	deletedName string
+	exists       bool
+	existsByName map[string]bool
+	createdName  string
+	format       string
+	sizeBytes    int64
+	data         []byte
+	deletedName  string
 }
 
 type concurrentCloudImageStorage struct {
@@ -68,6 +70,9 @@ func (s *concurrentCloudImageStorage) DeleteVolume(_ context.Context, name strin
 func (s *fakeCloudImageStorage) VolumeExists(_ context.Context, name string, format string) (bool, error) {
 	s.createdName = name
 	s.format = format
+	if s.existsByName != nil {
+		return s.existsByName[cloudImageVolumeName(name, format)], nil
+	}
 	return s.exists, nil
 }
 
@@ -221,6 +226,11 @@ func TestPrepareCloudImageBacking_DownloadsURLImageToHypervisor(t *testing.T) {
 	if _, err := svc.UpdateStatus(context.Background(), "debian-13-amd64-cloud", true, "", ""); err != nil {
 		t.Fatalf("UpdateStatus: %v", err)
 	}
+	img, err := svc.Get(context.Background(), "debian-13-amd64-cloud")
+	if err != nil {
+		t.Fatalf("Get image: %v", err)
+	}
+	expectedVolumeName := cloudImageBackingVolumeBaseName(img, "qcow2")
 
 	storage := &fakeCloudImageStorage{}
 	d := &Deployer{OSImages: svc}
@@ -228,13 +238,13 @@ func TestPrepareCloudImageBacking_DownloadsURLImageToHypervisor(t *testing.T) {
 	if err != nil {
 		t.Fatalf("prepareCloudImageBacking: %v", err)
 	}
-	if path != "/var/lib/libvirt/images/debian-13-amd64-cloud.qcow2" {
+	if path != "/var/lib/libvirt/images/"+cloudImageVolumeName(expectedVolumeName, "qcow2") {
 		t.Fatalf("unexpected backing path: %q", path)
 	}
 	if format != "qcow2" {
 		t.Fatalf("unexpected backing format: %q", format)
 	}
-	if storage.createdName != "debian-13-amd64-cloud" {
+	if storage.createdName != expectedVolumeName {
 		t.Fatalf("expected uploaded image name, got %q", storage.createdName)
 	}
 	if storage.sizeBytes != int64(len(payload)) {
@@ -324,6 +334,11 @@ func TestPrepareCloudImageBacking_SkipsDownloadWhenHypervisorVolumeExists(t *tes
 	if _, err := svc.UpdateStatus(context.Background(), "ubuntu-24.04-amd64-cloud", true, "", ""); err != nil {
 		t.Fatalf("UpdateStatus: %v", err)
 	}
+	img, err := svc.Get(context.Background(), "ubuntu-24.04-amd64-cloud")
+	if err != nil {
+		t.Fatalf("Get image: %v", err)
+	}
+	expectedVolumeName := cloudImageBackingVolumeBaseName(img, "qcow2")
 
 	storage := &fakeCloudImageStorage{exists: true}
 	d := &Deployer{OSImages: svc}
@@ -332,6 +347,70 @@ func TestPrepareCloudImageBacking_SkipsDownloadWhenHypervisorVolumeExists(t *tes
 	}
 	if storage.data != nil {
 		t.Fatalf("expected no upload when volume exists")
+	}
+	if storage.createdName != expectedVolumeName {
+		t.Fatalf("expected lookup by content-addressed volume name %q, got %q", expectedVolumeName, storage.createdName)
+	}
+}
+
+func TestPrepareCloudImageBacking_DoesNotReuseOldURLBackingAfterImageRecreate(t *testing.T) {
+	payload := []byte("new-qcow2")
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Length", "9")
+		if _, err := w.Write(payload); err != nil {
+			t.Fatalf("write response: %v", err)
+		}
+	}))
+	defer srv.Close()
+
+	oldImage := osimage.OSImage{
+		Name:      "ubuntu-24.04-amd64-cloud",
+		OSFamily:  "ubuntu",
+		OSVersion: "24.04",
+		Arch:      "amd64",
+		Format:    osimage.FormatQCOW2,
+		Source:    osimage.SourceURL,
+		URL:       "https://example.invalid/old.img",
+		Ready:     true,
+		CreatedAt: time.Unix(100, 0).UTC(),
+		UpdatedAt: time.Unix(100, 0).UTC(),
+	}
+	newImage := oldImage
+	newImage.URL = srv.URL + "/new.img"
+	newImage.SizeBytes = int64(len(payload))
+	newImage.CreatedAt = time.Unix(200, 0).UTC()
+	newImage.UpdatedAt = time.Unix(200, 0).UTC()
+
+	oldVolumeName := cloudImageBackingVolumeBaseName(oldImage, "qcow2")
+	newVolumeName := cloudImageBackingVolumeBaseName(newImage, "qcow2")
+	if oldVolumeName == newVolumeName {
+		t.Fatalf("expected recreated image to use a different backing volume")
+	}
+
+	store := &testOSImageStore{items: map[string]osimage.OSImage{
+		newImage.Name: newImage,
+	}}
+	storage := &fakeCloudImageStorage{
+		existsByName: map[string]bool{
+			cloudImageVolumeName(oldVolumeName, "qcow2"): true,
+		},
+	}
+	d := &Deployer{OSImages: osimage.NewService(store)}
+	path, format, err := d.prepareCloudImageBacking(context.Background(), storage, newImage.Name)
+	if err != nil {
+		t.Fatalf("prepareCloudImageBacking: %v", err)
+	}
+	if format != "qcow2" {
+		t.Fatalf("unexpected backing format: %q", format)
+	}
+	if path != "/var/lib/libvirt/images/"+cloudImageVolumeName(newVolumeName, "qcow2") {
+		t.Fatalf("unexpected backing path: %q", path)
+	}
+	if storage.createdName != newVolumeName {
+		t.Fatalf("expected new backing volume %q, got %q", newVolumeName, storage.createdName)
+	}
+	if string(storage.data) != string(payload) {
+		t.Fatalf("unexpected uploaded payload %q", string(storage.data))
 	}
 }
 

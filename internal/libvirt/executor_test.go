@@ -2,8 +2,11 @@ package libvirt
 
 import (
 	"encoding/xml"
+	"fmt"
 	"strings"
 	"testing"
+
+	golibvirt "github.com/digitalocean/go-libvirt"
 )
 
 func TestDomainConfigValidate(t *testing.T) {
@@ -115,6 +118,19 @@ func TestLibvirtConfigValidate(t *testing.T) {
 				t.Errorf("error %q does not contain %q", err.Error(), tt.wantErr)
 			}
 		})
+	}
+}
+
+func TestIsNoStorageVolumeError(t *testing.T) {
+	if !isNoStorageVolumeError(golibvirt.Error{Code: uint32(golibvirt.ErrNoStorageVol), Message: "no storage vol"}) {
+		t.Fatal("expected ErrNoStorageVol to be classified as missing volume")
+	}
+	wrapped := fmt.Errorf("lookup volume: %w", golibvirt.Error{Code: uint32(golibvirt.ErrNoStorageVol), Message: "no storage vol"})
+	if !isNoStorageVolumeError(wrapped) {
+		t.Fatal("expected wrapped ErrNoStorageVol to be classified as missing volume")
+	}
+	if isNoStorageVolumeError(golibvirt.Error{Code: uint32(golibvirt.ErrRPC), Message: "rpc failed"}) {
+		t.Fatal("expected non-missing libvirt error to propagate")
 	}
 }
 
