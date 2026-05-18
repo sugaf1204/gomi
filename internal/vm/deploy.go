@@ -25,6 +25,7 @@ import (
 )
 
 const hypervisorImageDir = "/var/lib/libvirt/images"
+const cloudImageDownloadTimeout = 30 * time.Minute
 
 var cloudImageBackingLocks sync.Map
 
@@ -337,7 +338,10 @@ func (d *Deployer) uploadCloudImageBacking(ctx context.Context, storage cloudIma
 	if parsed.Scheme != "http" && parsed.Scheme != "https" {
 		return fmt.Errorf("unsupported cloud image URL scheme for %s: %s", img.Name, parsed.Scheme)
 	}
-	req, err := gohttp.NewRequestWithContext(ctx, gohttp.MethodGet, rawURL, nil)
+	downloadCtx, cancel := context.WithTimeout(ctx, cloudImageDownloadTimeout)
+	defer cancel()
+
+	req, err := gohttp.NewRequestWithContext(downloadCtx, gohttp.MethodGet, rawURL, nil)
 	if err != nil {
 		return err
 	}
@@ -364,12 +368,14 @@ func (d *Deployer) uploadCloudImageBacking(ctx context.Context, storage cloudIma
 		checksum = newHashingReader(resp.Body)
 		reader = checksum
 	}
-	if err := storage.CreateVolumeFromReader(ctx, volumeName, sizeBytes, backingFormat, reader); err != nil {
+	if err := storage.CreateVolumeFromReader(downloadCtx, volumeName, sizeBytes, backingFormat, reader); err != nil {
 		return fmt.Errorf("sync cloud image %s to hypervisor: %w", img.Name, err)
 	}
 	if checksum != nil {
 		if got, want := checksum.SumHex(), normalizeSHA256(img.Checksum); got != want {
-			_ = storage.DeleteVolume(ctx, volumeName)
+			if err := storage.DeleteVolume(ctx, volumeName); err != nil {
+				return fmt.Errorf("cloud image checksum mismatch for %s: expected %s got %s; cleanup failed: %w", img.Name, want, got, err)
+			}
 			return fmt.Errorf("cloud image checksum mismatch for %s: expected %s got %s", img.Name, want, got)
 		}
 	}

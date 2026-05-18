@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -19,13 +20,15 @@ import (
 )
 
 type fakeCloudImageStorage struct {
-	exists       bool
-	existsByName map[string]bool
-	createdName  string
-	format       string
-	sizeBytes    int64
-	data         []byte
-	deletedName  string
+	exists            bool
+	existsByName      map[string]bool
+	createdName       string
+	format            string
+	sizeBytes         int64
+	data              []byte
+	deletedName       string
+	deleteErr         error
+	createHadDeadline bool
 }
 
 type concurrentCloudImageStorage struct {
@@ -79,10 +82,11 @@ func (s *fakeCloudImageStorage) VolumeExists(_ context.Context, name string, for
 	return s.exists, nil
 }
 
-func (s *fakeCloudImageStorage) CreateVolumeFromReader(_ context.Context, name string, sizeBytes int64, format string, r io.Reader) error {
+func (s *fakeCloudImageStorage) CreateVolumeFromReader(ctx context.Context, name string, sizeBytes int64, format string, r io.Reader) error {
 	s.createdName = name
 	s.format = format
 	s.sizeBytes = sizeBytes
+	_, s.createHadDeadline = ctx.Deadline()
 	data, err := io.ReadAll(r)
 	if err != nil {
 		return err
@@ -93,7 +97,7 @@ func (s *fakeCloudImageStorage) CreateVolumeFromReader(_ context.Context, name s
 
 func (s *fakeCloudImageStorage) DeleteVolume(_ context.Context, name string) error {
 	s.deletedName = name
-	return nil
+	return s.deleteErr
 }
 
 type testOSImageStore struct {
@@ -258,6 +262,38 @@ func TestPrepareCloudImageBacking_DownloadsURLImageToHypervisor(t *testing.T) {
 	}
 	if string(storage.data) != string(payload) {
 		t.Fatalf("unexpected uploaded payload %q", string(storage.data))
+	}
+	if !storage.createHadDeadline {
+		t.Fatalf("expected cloud image upload to use a bounded context")
+	}
+}
+
+func TestUploadCloudImageBacking_ReturnsCleanupErrorAfterChecksumMismatch(t *testing.T) {
+	payload := []byte("corrupt-qcow2")
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Length", strconv.Itoa(len(payload)))
+		if _, err := w.Write(payload); err != nil {
+			t.Fatalf("write response: %v", err)
+		}
+	}))
+	defer srv.Close()
+
+	storage := &fakeCloudImageStorage{deleteErr: errors.New("delete failed")}
+	d := &Deployer{}
+	err := d.uploadCloudImageBacking(context.Background(), storage, osimage.OSImage{
+		Name:      "bad-cloud-image",
+		URL:       srv.URL + "/bad.qcow2",
+		Checksum:  strings.Repeat("0", 64),
+		SizeBytes: int64(len(payload)),
+	}, "bad-cloud-image", "qcow2")
+	if err == nil {
+		t.Fatal("expected checksum mismatch error")
+	}
+	if !strings.Contains(err.Error(), "checksum mismatch") || !strings.Contains(err.Error(), "cleanup failed") || !strings.Contains(err.Error(), "delete failed") {
+		t.Fatalf("expected checksum cleanup error, got %v", err)
+	}
+	if storage.deletedName != "bad-cloud-image" {
+		t.Fatalf("expected corrupted volume cleanup, got %q", storage.deletedName)
 	}
 }
 
