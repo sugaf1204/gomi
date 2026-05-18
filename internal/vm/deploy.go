@@ -216,17 +216,8 @@ func (d *Deployer) prepareCloudImageBacking(ctx context.Context, storage cloudIm
 	if err != nil {
 		return "", "", err
 	}
-	if strings.TrimSpace(img.URL) == "" || useLocalCloudImageBacking(img) {
-		if strings.TrimSpace(img.URL) == "" {
-			return backingPath, backingFormat, nil
-		}
-		exists, err := storage.VolumeExists(ctx, img.Name, backingFormat)
-		if err != nil {
-			return "", "", fmt.Errorf("check local cloud image backing %s: %w", img.Name, err)
-		}
-		if exists {
-			return backingPath, backingFormat, nil
-		}
+	if strings.TrimSpace(img.URL) == "" {
+		return backingPath, backingFormat, nil
 	}
 	volumeName := cloudImageURLVolumeBaseName(img, backingFormat)
 	backingPath = filepath.Join(hypervisorImageDir, cloudImageVolumeName(volumeName, backingFormat))
@@ -301,7 +292,7 @@ func cloudImageVolumeName(name string, format string) string {
 
 func cloudImageBackingVolumeBaseName(img osimage.OSImage, format string) string {
 	name := strings.TrimSpace(img.Name)
-	if strings.TrimSpace(img.URL) == "" || useLocalCloudImageBacking(img) {
+	if strings.TrimSpace(img.URL) == "" {
 		return name
 	}
 	return cloudImageURLVolumeBaseName(img, format)
@@ -320,10 +311,6 @@ func cloudImageURLVolumeBaseName(img osimage.OSImage, format string) string {
 		_, _ = io.WriteString(h, "\ncreated="+img.CreatedAt.UTC().Format(time.RFC3339Nano))
 	}
 	return fmt.Sprintf("%s-%s", base, hex.EncodeToString(h.Sum(nil))[:12])
-}
-
-func useLocalCloudImageBacking(img osimage.OSImage) bool {
-	return img.Manifest != nil || strings.TrimSpace(img.LocalPath) != ""
 }
 
 func (d *Deployer) uploadCloudImageBacking(ctx context.Context, storage cloudImageStorage, img osimage.OSImage, volumeName string, backingFormat string) error {

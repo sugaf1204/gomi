@@ -395,9 +395,13 @@ func TestPrepareCloudImageBacking_SkipsDownloadWhenHypervisorVolumeExists(t *tes
 	}
 }
 
-func TestPrepareCloudImageBacking_UsesLocalBackingWhenURLImageIsPreStaged(t *testing.T) {
+func TestPrepareCloudImageBacking_DownloadsURLImageEvenWhenSameNamedLocalBackingExists(t *testing.T) {
+	payload := []byte("fresh-qcow2")
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		t.Fatal("server should not be called for pre-staged URL image")
+		w.Header().Set("Content-Length", strconv.Itoa(len(payload)))
+		if _, err := w.Write(payload); err != nil {
+			t.Fatalf("write response: %v", err)
+		}
 	}))
 	defer srv.Close()
 
@@ -418,21 +422,33 @@ func TestPrepareCloudImageBacking_UsesLocalBackingWhenURLImageIsPreStaged(t *tes
 	if _, err := svc.UpdateStatus(context.Background(), "ubuntu-24.04-amd64-cloud", true, "/var/lib/gomi/images/ubuntu-24.04-amd64-cloud.qcow2", ""); err != nil {
 		t.Fatalf("UpdateStatus: %v", err)
 	}
+	img, err := svc.Get(context.Background(), "ubuntu-24.04-amd64-cloud")
+	if err != nil {
+		t.Fatalf("Get image: %v", err)
+	}
+	expectedVolumeName := cloudImageURLVolumeBaseName(img, "qcow2")
 
-	storage := &fakeCloudImageStorage{exists: true}
+	storage := &fakeCloudImageStorage{
+		existsByName: map[string]bool{
+			cloudImageVolumeName("ubuntu-24.04-amd64-cloud", "qcow2"): true,
+		},
+	}
 	d := &Deployer{OSImages: svc}
 	path, format, err := d.prepareCloudImageBacking(context.Background(), storage, "ubuntu-24.04-amd64-cloud")
 	if err != nil {
 		t.Fatalf("prepareCloudImageBacking: %v", err)
 	}
-	if path != "/var/lib/libvirt/images/ubuntu-24.04-amd64-cloud.qcow2" {
-		t.Fatalf("expected local backing path, got %q", path)
+	if path != "/var/lib/libvirt/images/"+cloudImageVolumeName(expectedVolumeName, "qcow2") {
+		t.Fatalf("expected content-addressed backing path, got %q", path)
 	}
 	if format != "qcow2" {
 		t.Fatalf("expected qcow2 backing format, got %q", format)
 	}
-	if storage.createdName != "ubuntu-24.04-amd64-cloud" || storage.data != nil {
-		t.Fatalf("expected local backing lookup without upload, got lookup=%q data=%q", storage.createdName, string(storage.data))
+	if storage.createdName != expectedVolumeName {
+		t.Fatalf("expected content-addressed upload %q, got %q", expectedVolumeName, storage.createdName)
+	}
+	if string(storage.data) != string(payload) {
+		t.Fatalf("unexpected uploaded payload %q", string(storage.data))
 	}
 }
 
