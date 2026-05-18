@@ -70,3 +70,17 @@ func TestValidateOSImage_BareMetalQCOW2RequiresManifestRootPartition(t *testing.
 		t.Fatalf("expected bare-metal qcow2 with manifest to validate, got %v", err)
 	}
 }
+
+func TestValidateOSImage_BareMetalQCOW2UsesManifestRootFormat(t *testing.T) {
+	img := validImage()
+	img.Format = ""
+	img.Variant = VariantBareMetal
+	img.Manifest = &Manifest{Root: RootArtifact{Format: FormatQCOW2, Path: "root.qcow2"}}
+	if err := ValidateOSImage(img); err == nil || !strings.Contains(err.Error(), "rootPartition.number") {
+		t.Fatalf("expected bare-metal qcow2 root partition error from manifest format, got %v", err)
+	}
+	img.Manifest.Root.RootPartition.Number = 1
+	if err := ValidateOSImage(img); err != nil {
+		t.Fatalf("expected manifest qcow2 format to validate, got %v", err)
+	}
+}

@@ -141,20 +141,23 @@ if [ "$deploy_mode" = "disk-image" ]; then
   [ -n "$image_url" ] || fail "disk image URL is required"
   [ -b "$target_disk" ] || fail "target disk is not a block device: $target_disk"
   [ "$root_part" -gt 0 ] || fail "root partition number is required"
-  image="$tmpdir/gomi-root.qcow2"
-  post_event progress "downloading qcow2 image"
-  curl -fL --retry 3 -o "$image" "$image_url" || fail "qcow2 download failed"
-  post_timing runner.download_image "downloaded qcow2 image"
   if [ -n "$sha256" ]; then
-    actual="$(sha256sum "$image" | awk '{print $1}')"
+    post_event progress "verifying qcow2 checksum"
+    if ! actual="$(curl -fL --retry 3 "$image_url" | sha256sum | awk '{print $1}')"; then
+      fail "qcow2 checksum download failed"
+    fi
     expected="${sha256#sha256:}"
     [ "$actual" = "$expected" ] || fail "qcow2 checksum mismatch"
+    post_timing runner.verify_image "verified qcow2 checksum"
   fi
-  virtual_size="$(qemu-img info --output=json "$image" | jq -r '.["virtual-size"] // 0')"
+  if ! image_info="$(qemu-img info --output=json "$image_url")"; then
+    fail "qcow2 metadata read failed"
+  fi
+  virtual_size="$(printf '%s\n' "$image_info" | jq -r '.["virtual-size"] // 0')"
   target_size="$(blockdev --getsize64 "$target_disk")"
   [ "$virtual_size" -le "$target_size" ] || fail "qcow2 virtual size exceeds target disk"
   post_event progress "writing qcow2 image to target disk"
-  qemu-img convert -f qcow2 -O raw "$image" "$target_disk" || fail "qemu-img convert failed"
+  qemu-img convert -f qcow2 -O raw "$image_url" "$target_disk" || fail "qemu-img convert failed"
   post_timing runner.write_disk_image "wrote qcow2 image to target disk"
   sync
   partprobe "$target_disk" || true

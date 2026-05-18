@@ -22,8 +22,9 @@ func ValidateOSImage(img OSImage) error {
 	if strings.TrimSpace(img.OSVersion) == "" {
 		return ErrInvalidOSVersion
 	}
-	if img.Format != "" && img.Format != FormatQCOW2 && img.Format != FormatISO && img.Format != FormatSquashFS {
-		return fmt.Errorf("unsupported format: %s", img.Format)
+	format := effectiveImageFormat(img)
+	if format != "" && format != FormatQCOW2 && format != FormatISO && format != FormatSquashFS {
+		return fmt.Errorf("unsupported format: %s", format)
 	}
 	if img.Source != "" && img.Source != SourceUpload && img.Source != SourceURL {
 		return fmt.Errorf("unsupported source: %s", img.Source)
@@ -31,7 +32,7 @@ func ValidateOSImage(img OSImage) error {
 	if img.Source == SourceURL && strings.TrimSpace(img.URL) == "" {
 		return errors.New("url is required for url source")
 	}
-	if img.Format == FormatQCOW2 && img.Variant == VariantBareMetal {
+	if format == FormatQCOW2 && img.Variant == VariantBareMetal {
 		if img.Manifest == nil || strings.TrimSpace(img.Manifest.Root.Path) == "" {
 			return errors.New("manifest.root.path is required for bare-metal qcow2 images")
 		}
@@ -40,4 +41,11 @@ func ValidateOSImage(img OSImage) error {
 		}
 	}
 	return nil
+}
+
+func effectiveImageFormat(img OSImage) ImageFormat {
+	if img.Manifest != nil && img.Manifest.Root.Format != "" {
+		return img.Manifest.Root.Format
+	}
+	return img.Format
 }
