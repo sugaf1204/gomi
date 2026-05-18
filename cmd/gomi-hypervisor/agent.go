@@ -415,9 +415,10 @@ func writeManagedMarker(path string) error {
 }
 
 var managedExtensions = map[string]bool{
-	".qcow2": true,
-	".iso":   true,
-	".img":   true,
+	".qcow2":    true,
+	".iso":      true,
+	".img":      true,
+	".squashfs": true,
 }
 
 func isManagedFile(filename string) bool {

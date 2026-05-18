@@ -327,6 +327,7 @@ func TestCleanupStaleFiles(t *testing.T) {
 		"keep.qcow2":    "keep",
 		"stale.qcow2":   "remove",
 		"old.iso":       "remove",
+		"old.squashfs":  "remove",
 		"manual.txt":    "keep (not managed)",
 		"another.vmdk":  "keep (not managed)",
 		"keep-too.img":  "keep",
@@ -335,7 +336,7 @@ func TestCleanupStaleFiles(t *testing.T) {
 	for name, content := range files {
 		os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644)
 	}
-	for _, name := range []string{"stale.qcow2", "old.iso"} {
+	for _, name := range []string{"stale.qcow2", "old.iso", "old.squashfs"} {
 		os.WriteFile(filepath.Join(dir, name+managedMarkerSuffix), []byte("gomi-hypervisor\n"), 0o644)
 	}
 
@@ -350,7 +351,7 @@ func TestCleanupStaleFiles(t *testing.T) {
 	}
 
 	sort.Strings(removed)
-	wantRemoved := []string{"old.iso", "stale.qcow2"}
+	wantRemoved := []string{"old.iso", "old.squashfs", "stale.qcow2"}
 	if len(removed) != len(wantRemoved) {
 		t.Fatalf("removed = %v, want %v", removed, wantRemoved)
 	}
