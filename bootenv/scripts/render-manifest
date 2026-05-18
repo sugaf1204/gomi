@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+dir="${1:?usage: render-manifest <artifact-dir> [version]}"
+version="${2:-dev}"
+
+artifact_json() {
+  local key="$1" path="$2"
+  local file="$dir/$path"
+  local sha size
+  sha="$(sha256sum "$file" | awk '{print $1}')"
+  size="$(stat -c %s "$file")"
+  printf '    "%s": {"path": "%s", "sha256": "%s", "size": %s}' "$key" "$path" "$sha" "$size"
+}
+
+cat >"$dir/manifest.json" <<JSON
+{
+  "schemaVersion": "gomi.bootenv/v1",
+  "name": "ubuntu-minimal-cloud-amd64",
+  "version": "$version",
+  "distribution": "ubuntu",
+  "release": "jammy",
+  "arch": "amd64",
+  "artifacts": {
+$(artifact_json kernel boot-kernel),
+$(artifact_json initrd boot-initrd),
+$(artifact_json rootfs rootfs.squashfs)
+  },
+  "build": {
+    "builder": "mkosi-shell"
+  }
+}
+JSON

@@ -2210,6 +2210,271 @@ func TestPXEInventory_StoresAPIInventoryJSON(t *testing.T) {
 	}
 }
 
+func TestPXEInventory_QCOW2ImageReturnsDiskImageDeployPlan(t *testing.T) {
+	backend := memory.New()
+	machineSvc := machine.NewService(backend.Machines())
+	hwInfoSvc := hwinfo.NewService(backend.HWInfo())
+	osImageSvc := osimage.NewService(backend.OSImages())
+	now := time.Now().UTC()
+	imageRef := "debian-13-amd64-qcow2"
+
+	if err := backend.OSImages().Upsert(context.Background(), osimage.OSImage{
+		Name:      imageRef,
+		OSFamily:  "debian",
+		OSVersion: "13",
+		Arch:      "amd64",
+		Format:    osimage.FormatQCOW2,
+		Source:    osimage.SourceURL,
+		Variant:   osimage.VariantBareMetal,
+		Ready:     true,
+		LocalPath: "/var/lib/gomi/data/images/debian-13-amd64-qcow2",
+		Manifest: &osimage.Manifest{
+			Root: osimage.RootArtifact{
+				Format: osimage.FormatQCOW2,
+				Path:   "root.qcow2",
+				SHA256: "sha256:abc123",
+				RootPartition: osimage.Partition{
+					Number:     1,
+					Filesystem: "ext4",
+				},
+				EFIPartition: &osimage.Partition{Number: 15, Filesystem: "vfat"},
+			},
+		},
+		CreatedAt: now,
+		UpdatedAt: now,
+	}); err != nil {
+		t.Fatalf("upsert os image: %v", err)
+	}
+	target := machine.Machine{
+		Name:     "bm-qcow2-inventory",
+		Hostname: "bm-qcow2-inventory",
+		MAC:      "52:54:00:aa:bb:05",
+		Arch:     "amd64",
+		Firmware: machine.FirmwareUEFI,
+		OSPreset: machine.OSPreset{
+			Family:   machine.OSTypeDebian,
+			Version:  "13",
+			ImageRef: imageRef,
+		},
+		Phase: machine.PhaseProvisioning,
+		Provision: &machine.ProvisionProgress{
+			Active:          true,
+			AttemptID:       "attempt-qcow2-inventory",
+			CompletionToken: "token-qcow2-inventory",
+		},
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	if err := backend.Machines().Upsert(context.Background(), target); err != nil {
+		t.Fatalf("upsert machine: %v", err)
+	}
+
+	payload, err := json.Marshal(apiinventory.HardwareInventory{
+		Runtime: apiinventory.RuntimeInfo{KernelVersion: "6.8.0-31-generic"},
+		Boot:    apiinventory.BootInfo{FirmwareMode: "uefi", EFIVars: true},
+		Disks: []apiinventory.DiskInfo{{
+			Name:   "nvme0n1",
+			Path:   "/dev/nvme0n1",
+			SizeMB: 65536,
+			Type:   "disk",
+		}},
+		NICs: []apiinventory.NICInfo{{Name: "enp1s0", MAC: "52:54:00:aa:bb:05", State: "up"}},
+	})
+	if err != nil {
+		t.Fatalf("marshal inventory: %v", err)
+	}
+
+	e := echo.New()
+	req := httptest.NewRequest(http.MethodPost, "/pxe/inventory?token=token-qcow2-inventory", strings.NewReader(string(payload)))
+	req.Header.Set("Content-Type", "application/json")
+	req.Host = "192.168.2.254:8080"
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+
+	h := &Handler{machines: machineSvc, hwinfo: hwInfoSvc, osimages: osImageSvc}
+	if err := h.PXEInventory(c); err != nil {
+		t.Fatalf("PXEInventory: %v", err)
+	}
+	if rec.Code != http.StatusOK {
+		t.Fatalf("unexpected status: %d body=%s", rec.Code, rec.Body.String())
+	}
+	var response map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode inventory response: %v", err)
+	}
+	if response["deployMode"] != "disk-image" {
+		t.Fatalf("deployMode = %v, want disk-image; body=%s", response["deployMode"], rec.Body.String())
+	}
+	if _, ok := response["curtinConfigUrl"]; ok {
+		t.Fatalf("disk-image response must not include curtinConfigUrl: %s", rec.Body.String())
+	}
+	deploy, ok := response["diskImageDeploy"].(map[string]any)
+	if !ok {
+		t.Fatalf("missing diskImageDeploy: %s", rec.Body.String())
+	}
+	if deploy["format"] != "qcow2" || deploy["targetDisk"] != "/dev/nvme0n1" || deploy["rootPartitionNumber"].(float64) != 1 {
+		t.Fatalf("unexpected diskImageDeploy: %#v", deploy)
+	}
+	if _, ok := deploy["sha256"]; ok {
+		t.Fatalf("disk-image response must not force runner to download qcow2 into tmpfs: %#v", deploy)
+	}
+	if !strings.Contains(deploy["imageUrl"].(string), "/pxe/artifacts/os-images/debian-13-amd64-qcow2/root.qcow2") {
+		t.Fatalf("unexpected image URL: %#v", deploy["imageUrl"])
+	}
+	if deploy["seedUrl"] != "http://192.168.2.254:8080/pxe/nocloud/525400aabb05" {
+		t.Fatalf("unexpected seed URL: %#v", deploy["seedUrl"])
+	}
+}
+
+func TestPXEInventory_NonBareMetalQCOW2ImageKeepsCurtinDeployPlan(t *testing.T) {
+	backend := memory.New()
+	machineSvc := machine.NewService(backend.Machines())
+	hwInfoSvc := hwinfo.NewService(backend.HWInfo())
+	osImageSvc := osimage.NewService(backend.OSImages())
+	now := time.Now().UTC()
+	imageRef := "debian-13-amd64-cloud-qcow2"
+
+	if err := backend.OSImages().Upsert(context.Background(), osimage.OSImage{
+		Name:      imageRef,
+		OSFamily:  "debian",
+		OSVersion: "13",
+		Arch:      "amd64",
+		Format:    osimage.FormatQCOW2,
+		Source:    osimage.SourceURL,
+		Ready:     true,
+		URL:       "https://cloud.debian.org/images/cloud/bookworm/latest/debian-13-genericcloud-amd64.qcow2",
+		Manifest: &osimage.Manifest{
+			Root: osimage.RootArtifact{Format: osimage.FormatQCOW2, Path: "root.qcow2"},
+		},
+		CreatedAt: now,
+		UpdatedAt: now,
+	}); err != nil {
+		t.Fatalf("upsert os image: %v", err)
+	}
+	target := machine.Machine{
+		Name:     "cloud-qcow2-inventory",
+		Hostname: "cloud-qcow2-inventory",
+		MAC:      "52:54:00:aa:bb:07",
+		Arch:     "amd64",
+		Firmware: machine.FirmwareUEFI,
+		OSPreset: machine.OSPreset{
+			Family:   machine.OSTypeDebian,
+			Version:  "13",
+			ImageRef: imageRef,
+		},
+		Phase: machine.PhaseProvisioning,
+		Provision: &machine.ProvisionProgress{
+			Active:          true,
+			AttemptID:       "attempt-cloud-qcow2-inventory",
+			CompletionToken: "token-cloud-qcow2-inventory",
+		},
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	if err := backend.Machines().Upsert(context.Background(), target); err != nil {
+		t.Fatalf("upsert machine: %v", err)
+	}
+	payload := `{"runtime":{"kernelVersion":"6.8"},"disks":[{"name":"vda","path":"/dev/vda","sizeMB":32768,"type":"disk"}]}`
+
+	e := echo.New()
+	req := httptest.NewRequest(http.MethodPost, "/pxe/inventory?token=token-cloud-qcow2-inventory", strings.NewReader(payload))
+	req.Header.Set("Content-Type", "application/json")
+	req.Host = "192.168.2.254:8080"
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+
+	h := &Handler{machines: machineSvc, hwinfo: hwInfoSvc, osimages: osImageSvc}
+	if err := h.PXEInventory(c); err != nil {
+		t.Fatalf("PXEInventory: %v", err)
+	}
+	if rec.Code != http.StatusOK {
+		t.Fatalf("unexpected status: %d body=%s", rec.Code, rec.Body.String())
+	}
+	var response map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode inventory response: %v", err)
+	}
+	if response["deployMode"] != "curtin" {
+		t.Fatalf("deployMode = %v, want curtin; body=%s", response["deployMode"], rec.Body.String())
+	}
+	if response["curtinConfigUrl"] == "" || response["eventsUrl"] == "" {
+		t.Fatalf("unexpected curtin response: %s", rec.Body.String())
+	}
+	if _, ok := response["diskImageDeploy"]; ok {
+		t.Fatalf("curtin response must not include diskImageDeploy: %s", rec.Body.String())
+	}
+}
+
+func TestPXEInventory_QCOW2ImageRequiresRootPartitionManifest(t *testing.T) {
+	backend := memory.New()
+	machineSvc := machine.NewService(backend.Machines())
+	hwInfoSvc := hwinfo.NewService(backend.HWInfo())
+	osImageSvc := osimage.NewService(backend.OSImages())
+	now := time.Now().UTC()
+	imageRef := "debian-13-amd64-qcow2-bad"
+
+	if err := backend.OSImages().Upsert(context.Background(), osimage.OSImage{
+		Name:      imageRef,
+		OSFamily:  "debian",
+		OSVersion: "13",
+		Arch:      "amd64",
+		Format:    osimage.FormatQCOW2,
+		Source:    osimage.SourceURL,
+		Variant:   osimage.VariantBareMetal,
+		Ready:     true,
+		LocalPath: "/var/lib/gomi/data/images/debian-13-amd64-qcow2-bad",
+		Manifest: &osimage.Manifest{
+			Root: osimage.RootArtifact{Format: osimage.FormatQCOW2, Path: "root.qcow2"},
+		},
+		CreatedAt: now,
+		UpdatedAt: now,
+	}); err != nil {
+		t.Fatalf("upsert os image: %v", err)
+	}
+	target := machine.Machine{
+		Name:     "bm-qcow2-bad-inventory",
+		Hostname: "bm-qcow2-bad-inventory",
+		MAC:      "52:54:00:aa:bb:06",
+		Arch:     "amd64",
+		Firmware: machine.FirmwareUEFI,
+		OSPreset: machine.OSPreset{
+			Family:   machine.OSTypeDebian,
+			Version:  "13",
+			ImageRef: imageRef,
+		},
+		Phase: machine.PhaseProvisioning,
+		Provision: &machine.ProvisionProgress{
+			Active:          true,
+			AttemptID:       "attempt-qcow2-bad-inventory",
+			CompletionToken: "token-qcow2-bad-inventory",
+		},
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	if err := backend.Machines().Upsert(context.Background(), target); err != nil {
+		t.Fatalf("upsert machine: %v", err)
+	}
+	payload := `{"runtime":{"kernelVersion":"6.8"},"disks":[{"name":"vda","path":"/dev/vda","sizeMB":32768,"type":"disk"}]}`
+
+	e := echo.New()
+	req := httptest.NewRequest(http.MethodPost, "/pxe/inventory?token=token-qcow2-bad-inventory", strings.NewReader(payload))
+	req.Header.Set("Content-Type", "application/json")
+	req.Host = "192.168.2.254:8080"
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+
+	h := &Handler{machines: machineSvc, hwinfo: hwInfoSvc, osimages: osImageSvc}
+	if err := h.PXEInventory(c); err != nil {
+		t.Fatalf("PXEInventory: %v", err)
+	}
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("unexpected status: %d body=%s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "manifest.root.rootPartition.number") {
+		t.Fatalf("expected root partition manifest error, got: %s", rec.Body.String())
+	}
+}
+
 func TestPXEArtifact_OnlyServesManifestArtifactsAndRejectsSymlinkEscape(t *testing.T) {
 	backend := memory.New()
 	osImageSvc := osimage.NewService(backend.OSImages())

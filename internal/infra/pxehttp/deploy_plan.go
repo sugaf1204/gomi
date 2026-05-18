@@ -203,11 +203,29 @@ func (h *Handler) PXEInventory(c echo.Context) error {
 	}
 
 	base := h.resolvePXEBaseURL(c)
-	return c.JSON(gohttp.StatusOK, inventoryResponse{
+	eventsURL := buildPXEDeployEventsURL(base, token, attemptID)
+	response := inventoryResponse{
 		AttemptID:       attemptID,
+		DeployMode:      "curtin",
 		CurtinConfigURL: buildPXECurtinConfigURL(base, token, attemptID),
-		EventsURL:       buildPXEDeployEventsURL(base, token, attemptID),
-	})
+		EventsURL:       eventsURL,
+	}
+	if h.osimages != nil && strings.TrimSpace(target.OSPreset.ImageRef) != "" {
+		img, err := h.osimages.Get(ctx, strings.TrimSpace(target.OSPreset.ImageRef))
+		if err != nil {
+			return c.JSON(gohttp.StatusNotFound, jsonError(fmt.Sprintf("os image %q not found: %v", target.OSPreset.ImageRef, err)))
+		}
+		if img.Variant == osimage.VariantBareMetal && rootImageFormat(img) == osimage.FormatQCOW2 {
+			deploy, err := h.buildDiskImageDeployResponse(base, token, attemptID, target, img, &info)
+			if err != nil {
+				return c.JSON(gohttp.StatusConflict, jsonErrorErr(err))
+			}
+			response.DeployMode = "disk-image"
+			response.CurtinConfigURL = ""
+			response.DiskImageDeploy = deploy
+		}
+	}
+	return c.JSON(gohttp.StatusOK, response)
 }
 
 func (h *Handler) PXECurtinConfig(c echo.Context) error {
@@ -780,6 +798,47 @@ func (h *Handler) buildCurtinInstallConfig(ctx context.Context, c echo.Context, 
 		return "", err
 	}
 	return string(raw), nil
+}
+
+func (h *Handler) buildDiskImageDeployResponse(base, token, attemptID string, m *machine.Machine, img osimage.OSImage, info *hwinfo.HardwareInfo) (*diskImageDeployResponse, error) {
+	if !img.Ready {
+		return nil, fmt.Errorf("os image %q is not ready", img.Name)
+	}
+	if rootImageFormat(img) != osimage.FormatQCOW2 {
+		return nil, fmt.Errorf("disk image deploy requires qcow2 image, got format %q", rootImageFormat(img))
+	}
+	if img.Manifest == nil || strings.TrimSpace(img.Manifest.Root.Path) == "" {
+		return nil, fmt.Errorf("bare-metal qcow2 deploy requires manifest.root.path")
+	}
+	if img.Manifest.Root.RootPartition.Number <= 0 {
+		return nil, fmt.Errorf("bare-metal qcow2 deploy requires manifest.root.rootPartition.number")
+	}
+	selectedDisk, err := selectTargetDiskInfo(m, info)
+	if err != nil {
+		return nil, err
+	}
+	imageURL, err := h.artifactURL(base, img, img.Manifest.Root.Path)
+	if err != nil {
+		return nil, err
+	}
+	deploy := &diskImageDeployResponse{
+		ImageURL:            appendProvisionQuery(imageURL, token, attemptID),
+		Format:              string(osimage.FormatQCOW2),
+		TargetDisk:          selectedDisk.Path,
+		RootPartitionNumber: img.Manifest.Root.RootPartition.Number,
+		SeedURL:             fmt.Sprintf("%s/nocloud/%s", strings.TrimRight(base, "/"), macToken(m.MAC)),
+	}
+	if img.Manifest.Root.EFIPartition != nil {
+		deploy.EFIPartitionNumber = img.Manifest.Root.EFIPartition.Number
+	}
+	return deploy, nil
+}
+
+func rootImageFormat(img osimage.OSImage) osimage.ImageFormat {
+	if img.Manifest != nil && img.Manifest.Root.Format != "" {
+		return img.Manifest.Root.Format
+	}
+	return img.Format
 }
 
 func installCapabilityForOSFamily(osFamily string) osInstallCapability {

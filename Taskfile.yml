@@ -595,46 +595,22 @@ tasks:
       - task: deploy:health
 
   bootenv:validate:
-    desc: Validate the GOMI boot environment spec
+    desc: Validate the GOMI boot environment shell scripts
     dir: bootenv
     cmds:
-      - make validate GOCACHE={{.GOCACHE | default "/tmp/go-build"}} SPEC={{.SPEC | default "bootenvs/ubuntu-minimal-cloud-amd64.yaml"}}
-
-  bootenv:plan:
-    desc: Print the GOMI boot environment build plan
-    dir: bootenv
-    cmds:
-      - make plan GOCACHE={{.GOCACHE | default "/tmp/go-build"}} SPEC={{.SPEC | default "bootenvs/ubuntu-minimal-cloud-amd64.yaml"}}
-
-  bootenv:render:
-    desc: Render GOMI boot environment metadata
-    dir: bootenv
-    cmds:
-      - make render GOCACHE={{.GOCACHE | default "/tmp/go-build"}} SPEC={{.SPEC | default "bootenvs/ubuntu-minimal-cloud-amd64.yaml"}} RENDER_OUT={{.OUT | default "dist/rendered"}}
+      - make validate
 
   bootenv:test:
-    desc: Run GOMI boot environment unit tests
+    desc: Run GOMI boot environment shell checks
     dir: bootenv
     cmds:
-      - make test GOCACHE={{.GOCACHE | default "/tmp/go-build"}}
-
-  bootenv:build-runner:
-    desc: Build the Go deploy runner injected into the boot environment
-    dir: bootenv
-    cmds:
-      - make build-runner GOCACHE={{.GOCACHE | default "/tmp/go-build"}} GOARCH={{.GOARCH | default "amd64"}} RUNNER_OUT={{.RUNNER_OUT | default "dist/bin/gomi-deploy-runner"}}
-
-  bootenv:build-runner-tinygo:
-    desc: Build the deploy runner with TinyGo when tinygo is installed
-    dir: bootenv
-    cmds:
-      - make build-runner-tinygo RUNNER_OUT={{.RUNNER_OUT | default "dist/bin/gomi-deploy-runner-tinygo"}}
+      - make test
 
   bootenv:build:
     desc: Build GOMI boot environment release assets
     dir: bootenv
     cmds:
-      - make build GOCACHE={{.GOCACHE | default "/tmp/go-build"}} SPEC={{.SPEC | default "bootenvs/ubuntu-minimal-cloud-amd64.yaml"}} OUT={{.OUT | default "dist/ubuntu-minimal-cloud-amd64"}}
+      - make build OUT={{.OUT | default "dist/ubuntu-minimal-cloud-amd64"}} VERSION={{.VERSION | default "dev"}}
 
   e2e:provisioning-smoke:
     desc: Run local provisioning smoke test
