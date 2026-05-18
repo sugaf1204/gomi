@@ -46,6 +46,23 @@ func TestValidateOSImage_UnsupportedSource(t *testing.T) {
 	}
 }
 
+func TestValidateOSImage_UnsupportedTopLevelFormat(t *testing.T) {
+	img := validImage()
+	img.Format = ImageFormat("vhdx")
+	img.Manifest = &Manifest{Root: RootArtifact{Format: FormatQCOW2, Path: "root.qcow2"}}
+	if err := ValidateOSImage(img); err == nil || !strings.Contains(err.Error(), "unsupported format: vhdx") {
+		t.Fatalf("expected top-level format error, got %v", err)
+	}
+}
+
+func TestValidateOSImage_UnsupportedManifestRootFormat(t *testing.T) {
+	img := validImage()
+	img.Manifest = &Manifest{Root: RootArtifact{Format: ImageFormat("vhdx"), Path: "root.vhdx"}}
+	if err := ValidateOSImage(img); err == nil || !strings.Contains(err.Error(), "unsupported format: vhdx") {
+		t.Fatalf("expected manifest root format error, got %v", err)
+	}
+}
+
 func TestValidateOSImage_URLNeedsURL(t *testing.T) {
 	img := validImage()
 	img.Source = SourceURL

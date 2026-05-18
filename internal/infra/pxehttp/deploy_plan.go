@@ -215,7 +215,7 @@ func (h *Handler) PXEInventory(c echo.Context) error {
 		if err != nil {
 			return c.JSON(gohttp.StatusNotFound, jsonError(fmt.Sprintf("os image %q not found: %v", target.OSPreset.ImageRef, err)))
 		}
-		if rootImageFormat(img) == osimage.FormatQCOW2 {
+		if img.Variant == osimage.VariantBareMetal && rootImageFormat(img) == osimage.FormatQCOW2 {
 			deploy, err := h.buildDiskImageDeployResponse(base, token, attemptID, target, img, &info)
 			if err != nil {
 				return c.JSON(gohttp.StatusConflict, jsonErrorErr(err))
