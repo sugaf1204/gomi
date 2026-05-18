@@ -558,7 +558,6 @@ func TestGenerateDomainXML_ContainsExpectedElements(t *testing.T) {
 		`device="cdrom"`,
 		`bridge="virbr0"`,
 		`address="52:54:00:de:ad:01"`,
-		`type="pty"`,
 		`type="vnc"`,
 	}
 
@@ -566,6 +565,9 @@ func TestGenerateDomainXML_ContainsExpectedElements(t *testing.T) {
 		if !strings.Contains(xmlStr, frag) {
 			t.Errorf("XML does not contain expected fragment %q\nXML:\n%s", frag, xmlStr)
 		}
+	}
+	if strings.Contains(xmlStr, `<console`) || strings.Contains(xmlStr, `<serial`) {
+		t.Errorf("XML should not define PTY console or serial by default\nXML:\n%s", xmlStr)
 	}
 }
 
