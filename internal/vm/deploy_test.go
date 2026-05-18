@@ -353,6 +353,47 @@ func TestPrepareCloudImageBacking_SkipsDownloadWhenHypervisorVolumeExists(t *tes
 	}
 }
 
+func TestPrepareCloudImageBacking_UsesLocalBackingWhenURLImageIsPreStaged(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatal("server should not be called for pre-staged URL image")
+	}))
+	defer srv.Close()
+
+	store := &testOSImageStore{}
+	svc := osimage.NewService(store)
+	_, err := svc.Create(context.Background(), osimage.OSImage{
+		Name:      "ubuntu-24.04-amd64-cloud",
+		OSFamily:  "ubuntu",
+		OSVersion: "24.04",
+		Arch:      "amd64",
+		Format:    osimage.FormatQCOW2,
+		Source:    osimage.SourceURL,
+		URL:       srv.URL + "/ubuntu-24.04.img",
+	})
+	if err != nil {
+		t.Fatalf("Create image: %v", err)
+	}
+	if _, err := svc.UpdateStatus(context.Background(), "ubuntu-24.04-amd64-cloud", true, "/var/lib/gomi/images/ubuntu-24.04-amd64-cloud.qcow2", ""); err != nil {
+		t.Fatalf("UpdateStatus: %v", err)
+	}
+
+	storage := &fakeCloudImageStorage{}
+	d := &Deployer{OSImages: svc}
+	path, format, err := d.prepareCloudImageBacking(context.Background(), storage, "ubuntu-24.04-amd64-cloud")
+	if err != nil {
+		t.Fatalf("prepareCloudImageBacking: %v", err)
+	}
+	if path != "/var/lib/libvirt/images/ubuntu-24.04-amd64-cloud.qcow2" {
+		t.Fatalf("expected local backing path, got %q", path)
+	}
+	if format != "qcow2" {
+		t.Fatalf("expected qcow2 backing format, got %q", format)
+	}
+	if storage.createdName != "" || storage.data != nil {
+		t.Fatalf("expected no storage lookup or upload for pre-staged image")
+	}
+}
+
 func TestPrepareCloudImageBacking_DoesNotReuseOldURLBackingAfterImageRecreate(t *testing.T) {
 	payload := []byte("new-qcow2")
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
