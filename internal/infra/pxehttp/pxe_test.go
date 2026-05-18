@@ -2930,6 +2930,7 @@ func TestPXENocloudUserData_HypervisorRunsSetupAndRegisterScript(t *testing.T) {
 	for _, want := range []string{
 		"qemu-system",
 		"zstd",
+		"xz-utils",
 		`auth_tcp = "none"`,
 		"systemctl start libvirtd-tcp.socket",
 		"/api/v1/hypervisors/setup-and-register.sh",

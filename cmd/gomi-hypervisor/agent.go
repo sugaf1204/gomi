@@ -250,7 +250,7 @@ func (c *apiClient) downloadArtifactImage(ctx context.Context, img OSImage, dest
 
 	compression := strings.ToLower(strings.TrimSpace(root.Compression))
 	sourceChecksum := strings.TrimSpace(root.SHA256)
-	if compression == "" {
+	if compression == "" || !isExternallyCompressedArtifact(root.Path, compression) {
 		if err := atomicWriteFromReader(destPath, resp.Body); err != nil {
 			return err
 		}
@@ -263,24 +263,45 @@ func (c *apiClient) downloadArtifactImage(ctx context.Context, img OSImage, dest
 		}
 		return nil
 	}
-	if compression != "zst" && compression != "zstd" {
+	switch compression {
+	case "zst", "zstd":
+		return c.downloadCompressedArtifactImage(ctx, resp.Body, img, destPath, sourceChecksum, "zstd", decompressZstd)
+	case "xz":
+		return c.downloadCompressedArtifactImage(ctx, resp.Body, img, destPath, sourceChecksum, "xz", decompressXZ)
+	default:
 		return fmt.Errorf("unsupported artifact compression for %s: %s", img.Name, root.Compression)
 	}
+}
 
+func isExternallyCompressedArtifact(path string, compression string) bool {
+	ext := strings.ToLower(filepath.Ext(strings.TrimSpace(path)))
+	switch strings.ToLower(strings.TrimSpace(compression)) {
+	case "zst", "zstd":
+		return ext == ".zst" || ext == ".zstd"
+	case "xz":
+		return ext == ".xz"
+	default:
+		return false
+	}
+}
+
+func (c *apiClient) downloadCompressedArtifactImage(ctx context.Context, body io.Reader, img OSImage, destPath, sourceChecksum, suffix string, decompress func(context.Context, string, string) error) error {
 	compressedPath := destPath + ".download"
-	if err := atomicWriteFromReader(compressedPath, resp.Body); err != nil {
+	if suffix != "" {
+		compressedPath += "." + suffix
+	}
+	if err := atomicWriteFromReader(compressedPath, body); err != nil {
 		return err
 	}
 	defer os.Remove(compressedPath)
-	if sourceChecksum != "" {
-		if err := verifyChecksum(compressedPath, sourceChecksum); err != nil {
-			return err
-		}
-	}
-	if err := decompressZstd(ctx, compressedPath, destPath); err != nil {
+	if err := decompress(ctx, compressedPath, destPath); err != nil {
 		return err
 	}
 	if sourceChecksum != "" {
+		if err := verifyChecksum(destPath, sourceChecksum); err != nil {
+			os.Remove(destPath)
+			return err
+		}
 		return writeSourceChecksum(destPath, sourceChecksum)
 	}
 	return nil
@@ -302,20 +323,28 @@ func buildArtifactURL(serverURL, name, relPath string) (string, error) {
 }
 
 func decompressZstd(ctx context.Context, compressedPath, destPath string) error {
+	return decompressWithCommand(ctx, "zstd", []string{"-dc", compressedPath}, compressedPath, destPath)
+}
+
+func decompressXZ(ctx context.Context, compressedPath, destPath string) error {
+	return decompressWithCommand(ctx, "xz", []string{"-dc", compressedPath}, compressedPath, destPath)
+}
+
+func decompressWithCommand(ctx context.Context, command string, args []string, compressedPath, destPath string) error {
 	tmpPath := destPath + ".tmp"
 	out, err := os.Create(tmpPath)
 	if err != nil {
 		return err
 	}
 	defer os.Remove(tmpPath)
-	cmd := exec.CommandContext(ctx, "zstd", "-dc", compressedPath)
+	cmd := exec.CommandContext(ctx, command, args...)
 	cmd.Stdout = out
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	runErr := cmd.Run()
 	closeErr := out.Close()
 	if runErr != nil {
-		return fmt.Errorf("zstd decompress %s: %w: %s", compressedPath, runErr, strings.TrimSpace(stderr.String()))
+		return fmt.Errorf("%s decompress %s: %w: %s", command, compressedPath, runErr, strings.TrimSpace(stderr.String()))
 	}
 	if closeErr != nil {
 		return closeErr

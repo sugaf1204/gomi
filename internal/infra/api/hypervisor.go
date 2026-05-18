@@ -101,7 +101,7 @@ GOMI_TOKEN="${GOMI_TOKEN:?GOMI_TOKEN env var is required}"
 
 echo "Installing libvirt and dependencies..."
 apt-get update -qq
-apt-get install -y -qq libvirt-daemon-system libvirt-clients qemu-system virtinst cloud-image-utils curl jq zstd
+apt-get install -y -qq libvirt-daemon-system libvirt-clients qemu-system virtinst cloud-image-utils curl jq zstd xz-utils
 
 virsh pool-define-as default dir --target /var/lib/libvirt/images >/dev/null 2>&1 || true
 virsh pool-build default >/dev/null 2>&1 || true
