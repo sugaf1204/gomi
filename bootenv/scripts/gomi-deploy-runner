@@ -57,13 +57,17 @@ fail() {
 }
 
 partition_device() {
-  local disk="$1" part="$2"
+  local disk="$1" part="$2" resolved
   case "$disk" in
     /dev/disk/by-id/*|/dev/disk/by-path/*)
       if [ -e "${disk}-part${part}" ]; then
         printf '%s\n' "${disk}-part${part}"
         return 0
       fi
+      resolved="$(readlink -f "$disk" 2>/dev/null || true)"
+      [ -n "$resolved" ] || return 1
+      partition_device "$resolved" "$part"
+      return 0
       ;;
     *nvme*|*mmcblk*)
       printf '%sp%s\n' "$disk" "$part"
@@ -171,7 +175,8 @@ if [ "$deploy_mode" = "disk-image" ]; then
   sync
   partprobe "$target_disk" || true
   udevadm settle || true
-  root_device="$(partition_device "$target_disk" "$root_part")"
+  root_device="$(partition_device "$target_disk" "$root_part")" || fail "failed to resolve target root partition"
+  [ -b "$root_device" ] || fail "target root partition is not a block device: $root_device"
   mkdir -p /mnt/gomi-target
   mount "$root_device" /mnt/gomi-target || fail "failed to mount target root partition"
   seed_dir="/mnt/gomi-target/var/lib/cloud/seed/nocloud"

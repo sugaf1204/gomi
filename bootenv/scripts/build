@@ -5,7 +5,10 @@ out="${1:-dist/ubuntu-minimal-cloud-amd64}"
 version="${2:-dev}"
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 work="$root/.build/ubuntu-minimal-cloud-amd64"
-out_abs="$root/$out"
+case "$out" in
+  /*) out_abs="$out" ;;
+  *) out_abs="$root/$out" ;;
+esac
 
 for cmd in mkosi mksquashfs sha256sum stat find sort; do
   command -v "$cmd" >/dev/null || { echo "missing command: $cmd" >&2; exit 1; }
