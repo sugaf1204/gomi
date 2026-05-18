@@ -1,73 +1,86 @@
-# Next Milestone: Bridge, Subnet, and VLAN Management
+# Milestones
 
-## Overview
+## Priority: High
 
-Introduce flexible network topology management by allowing hypervisors to own
-multiple bridges, enabling per-machine bridge selection (with optional
-auto-creation), and adding VLAN support.
+### 1. OS Image Creation with mkosi
+Use `mkosi` for OS image creation. Separate the GitHub Actions workflow for image creation and artifact storage into another repository.
 
----
+### 2. Fast OS Installation / Curtin-less Mode
+Speed up the `curtin` installation time. Eliminate `apt-get` operations during the curtin phase. Alternatively, design and implement a curtin-less mode and conduct performance measurement experiments.
 
-## 1. Hypervisor Bridge Management
+### 3. Universal Netplan Support
+Adopt `netplan` for network configuration on non-Ubuntu OSes as well.
+
+### 4. Change Netplan File Prefix
+Change the generated netplan file's number prefix to `50` (e.g., `50-gomi-network.yaml`).
+
+### 5. Improve Deploy Timeline Design
+Improve the visual design and UX of the deploy timeline in the web UI.
+
+### 6. Fix DNS Name Resolution Timeout
+Investigate and fix the issue where DNS name resolution times out during operations.
+
+## Priority: Medium
+### 6. Hypervisor Bridge Management
 
 - Allow a hypervisor to have **multiple bridges** (currently limited to one).
 - When creating a machine, provide a **checkbox to auto-create a bridge**.
   - If the checkbox is enabled, the system automatically provisions the bridge
     on the target hypervisor before attaching the machine.
 
-## 2. VirtualMachine Creation — Bridge Selection
+### 7. VirtualMachine Creation — Bridge Selection
 
 - When a hypervisor is **explicitly specified**, present a **selectable list of
   its bridges** so the user can pick which bridge to attach the VM to.
 - When no hypervisor is specified (random placement), the system selects a
   hypervisor and bridge automatically.
 
-## 3. VLAN Support
+### 8. VLAN Support
 
 - Add VLAN awareness to the networking layer.
 - Allow bridges and/or subnets to be associated with a VLAN ID.
 - Ensure VLAN tagging is correctly applied when provisioning network interfaces.
 
-## 4. DNS integration
+### 9. DNS integration
 integrate with RFC2136 and PowerDNS
 
-## 5. live migration
+### 10. live migration
 live migration is implemented but not tested.
 
-## 6. vnc
+### 11. vnc
 you can use vnc console on web ui.
 
-## 7. cli
+### 12. cli
 create gmctl that can operate gomi.
 
-## 8. metadata
+### 13. metadata
 add tag to machine which can be used filtering
 
-## 9. Support Desktop Ubuntu/Debian, and other linux distribution
+### 14. Support Desktop Ubuntu/Debian, and other linux distribution
 Support deploying desktop Ubuntu/Debian
 
-## 10. cleanup qcow2
+### 15. cleanup qcow2
 At deleting VirtualMachine, delete vm image qcow2 file on hypervisor.
 
-## 11. Register Hypervisor
+### 16. Register Hypervisor
 When deploying machine, register it as hypervisor with selected hypervisor checkbox
 
-## 12. Log severity
+### 17. Log severity
 make gomi server log severity variable setting
 
-## 13. don't use pkg pattern
+### 18. don't use pkg pattern
 rearchitecte gomi go source.
 
-## 14. install OS images from web ui
+### 19. install OS images from web ui
 List up OS Image that supported gomi, and you can install there by click install button.
 
-## 15. Storage layout
+### 20. Storage layout
 wip
 
-## 16. apt proxy cache
+### 21. apt proxy cache
 implemet apt proxy on gomi
 
-## 17. Separate API DTOs from internal models
+### 22. Separate API DTOs from internal models
 
 Machine and VM API handlers currently return internal domain models directly.
 Introduce explicit request/response DTOs so persisted fields, runtime-only
@@ -75,10 +88,10 @@ fields, and external API fields can evolve independently. This should include
 redaction rules for sensitive or internal-only fields and focused tests for list,
 detail, create, update, and redeploy responses.
 
-## 18. deploy workflow
+### 23. deploy workflow
 use taskfile
 
-## 19. Embed Hypervisor setup script
+### 24. Embed Hypervisor setup script
 
 Move Hypervisor setup-and-register shell script out of Go raw strings and serve
 it with go:embed. Keep libvirt TCP auth setup in that script, avoid complex
@@ -87,7 +100,7 @@ checks and bash syntax validation. For the current lab/dev TCP flow, configure
 libvirt with auth_tcp = "none" directly and revisit SSH/TLS/SASL support before
 production use.
 
-## 20. Redesign API following Google AIP guidelines
+### 25. Redesign API following Google AIP guidelines
 
 Redesign the REST API to align with Google AIP (API Improvement Proposals:
 https://google.aip.dev/). Priority issues identified:
@@ -104,7 +117,7 @@ https://google.aip.dev/). Priority issues identified:
 - **Deduplicate actions**: `reinstall` and `redeploy` are identical on both
   `/machines` and `/virtual-machines`; consolidate to a single endpoint.
 
-## 21. Target OS rootfs and hardware bundle deployment
+### 26. Target OS rootfs and hardware bundle deployment
 
 Reduce target OS image size without losing bare-metal driver support. Do not mix
 the PXE runtime OS with the installed target OS.
@@ -129,7 +142,7 @@ the PXE runtime OS with the installed target OS.
   manifest-driven hardware bundles, without requiring users to build images on
   the GOMI server.
 
-## 22. Bug: loginUser cannot override default cloud user password
+### 27. Bug: loginUser cannot override default cloud user password
 
 When deploying a cloud-image VirtualMachine with `loginUser.username=ubuntu` and
 `loginUser.password` set, password SSH login does not work, while a separate
@@ -139,7 +152,7 @@ the distribution's default cloud user. Fix the cloud-init generation so
 password-backed login works for both default users and custom users, and add an
 integration-style test for Ubuntu cloud images.
 
-## 23. Secure production libvirt authentication
+### 28. Secure production libvirt authentication
 
 The current VM deploy implementation still uses libvirt TCP from the GOMI
 server to the hypervisor. The lab-only `auth_tcp = "none"` setup must not be the
@@ -148,7 +161,7 @@ such as SSH transport, TLS client certificates, SASL, or a `gomi-hypervisor`
 agent API, and update the setup/register flow so unauthenticated libvirt TCP is
 clearly limited to local lab/dev testing.
 
-## 24. Multi-OS curtin and artifact deploy design
+### 29. Multi-OS curtin and artifact deploy design
 
 The current curtin/rootfs deployment path was validated primarily with Ubuntu
 and must not grow into Ubuntu-specific behavior hidden inside generic deploy
