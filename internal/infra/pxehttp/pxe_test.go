@@ -2315,6 +2315,9 @@ func TestPXEInventory_QCOW2ImageReturnsDiskImageDeployPlan(t *testing.T) {
 	if deploy["format"] != "qcow2" || deploy["targetDisk"] != "/dev/nvme0n1" || deploy["rootPartitionNumber"].(float64) != 1 {
 		t.Fatalf("unexpected diskImageDeploy: %#v", deploy)
 	}
+	if _, ok := deploy["sha256"]; ok {
+		t.Fatalf("disk-image response must not force runner to download qcow2 into tmpfs: %#v", deploy)
+	}
 	if !strings.Contains(deploy["imageUrl"].(string), "/pxe/artifacts/os-images/debian-13-amd64-qcow2/root.qcow2") {
 		t.Fatalf("unexpected image URL: %#v", deploy["imageUrl"])
 	}

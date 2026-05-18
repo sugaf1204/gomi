@@ -827,7 +827,6 @@ func (h *Handler) buildDiskImageDeployResponse(base, token, attemptID string, m 
 		TargetDisk:          selectedDisk.Path,
 		RootPartitionNumber: img.Manifest.Root.RootPartition.Number,
 		SeedURL:             fmt.Sprintf("%s/nocloud/%s", strings.TrimRight(base, "/"), macToken(m.MAC)),
-		SHA256:              strings.TrimSpace(img.Manifest.Root.SHA256),
 	}
 	if img.Manifest.Root.EFIPartition != nil {
 		deploy.EFIPartitionNumber = img.Manifest.Root.EFIPartition.Number

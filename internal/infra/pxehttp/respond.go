@@ -36,7 +36,6 @@ type diskImageDeployResponse struct {
 	RootPartitionNumber int    `json:"rootPartitionNumber"`
 	EFIPartitionNumber  int    `json:"efiPartitionNumber,omitempty"`
 	SeedURL             string `json:"seedUrl"`
-	SHA256              string `json:"sha256,omitempty"`
 }
 
 type installCompleteVMResponse struct {

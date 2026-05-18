@@ -156,25 +156,12 @@ if [ "$deploy_mode" = "disk-image" ]; then
   image_format="$(jq -r '.diskImageDeploy.format // empty' "$response_file")"
   target_disk="$(jq -r '.diskImageDeploy.targetDisk // empty' "$response_file")"
   root_part="$(jq -r '.diskImageDeploy.rootPartitionNumber // 0' "$response_file")"
-  sha256="$(jq -r '.diskImageDeploy.sha256 // empty' "$response_file")"
   seed_url="$(jq -r '.diskImageDeploy.seedUrl // empty' "$response_file")"
   [ "$image_format" = "qcow2" ] || fail "unsupported disk image format: $image_format"
   [ -n "$image_url" ] || fail "disk image URL is required"
   [ -b "$target_disk" ] || fail "target disk is not a block device: $target_disk"
   [ "$root_part" -gt 0 ] || fail "root partition number is required"
   image_input="$image_url"
-  if [ -n "$sha256" ]; then
-    image="$tmpdir/gomi-root.qcow2"
-    post_event progress "downloading qcow2 image"
-    curl -fL --retry 3 -o "$image" "$image_url" || fail "qcow2 download failed"
-    post_timing runner.download_image "downloaded qcow2 image"
-    actual="$(sha256sum "$image" | awk '{print $1}' | tr 'A-F' 'a-f')"
-    expected="$(printf '%s' "$sha256" | tr 'A-Z' 'a-z')"
-    expected="${expected#sha256:}"
-    [ "$actual" = "$expected" ] || fail "qcow2 checksum mismatch"
-    image_input="$image"
-    post_timing runner.verify_image "verified qcow2 checksum"
-  fi
   if ! image_info="$(qemu-img info --output=json "$image_input")"; then
     fail "qcow2 metadata read failed"
   fi
