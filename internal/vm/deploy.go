@@ -216,9 +216,19 @@ func (d *Deployer) prepareCloudImageBacking(ctx context.Context, storage cloudIm
 		return "", "", err
 	}
 	if strings.TrimSpace(img.URL) == "" || useLocalCloudImageBacking(img) {
-		return backingPath, backingFormat, nil
+		if strings.TrimSpace(img.URL) == "" {
+			return backingPath, backingFormat, nil
+		}
+		exists, err := storage.VolumeExists(ctx, img.Name, backingFormat)
+		if err != nil {
+			return "", "", fmt.Errorf("check local cloud image backing %s: %w", img.Name, err)
+		}
+		if exists {
+			return backingPath, backingFormat, nil
+		}
 	}
-	volumeName := cloudImageBackingVolumeBaseName(img, backingFormat)
+	volumeName := cloudImageURLVolumeBaseName(img, backingFormat)
+	backingPath = filepath.Join(hypervisorImageDir, cloudImageVolumeName(volumeName, backingFormat))
 	unlock := lockCloudImageBacking(volumeName, backingFormat)
 	defer unlock()
 
@@ -293,6 +303,11 @@ func cloudImageBackingVolumeBaseName(img osimage.OSImage, format string) string 
 	if strings.TrimSpace(img.URL) == "" || useLocalCloudImageBacking(img) {
 		return name
 	}
+	return cloudImageURLVolumeBaseName(img, format)
+}
+
+func cloudImageURLVolumeBaseName(img osimage.OSImage, format string) string {
+	name := strings.TrimSpace(img.Name)
 	suffix := "." + format
 	base := strings.TrimSuffix(name, suffix)
 
@@ -385,7 +400,7 @@ func (r *hashingReader) SumHex() string {
 func normalizeSHA256(value string) string {
 	value = strings.TrimSpace(value)
 	value = strings.TrimPrefix(value, "sha256:")
-	return strings.TrimSpace(value)
+	return strings.ToLower(strings.TrimSpace(value))
 }
 
 func (d *Deployer) resolvePXEBaseURL(hv hypervisor.Hypervisor, installType InstallConfigType) (string, error) {

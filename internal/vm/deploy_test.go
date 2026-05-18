@@ -2,10 +2,13 @@ package vm
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -207,6 +210,8 @@ func TestPrepareCloudImageBacking_DownloadsURLImageToHypervisor(t *testing.T) {
 		}
 	}))
 	defer srv.Close()
+	sum := sha256.Sum256(payload)
+	checksum := strings.ToUpper(hex.EncodeToString(sum[:]))
 
 	store := &testOSImageStore{}
 	svc := osimage.NewService(store)
@@ -218,6 +223,7 @@ func TestPrepareCloudImageBacking_DownloadsURLImageToHypervisor(t *testing.T) {
 		Format:    osimage.FormatQCOW2,
 		Source:    osimage.SourceURL,
 		URL:       srv.URL + "/debian-13.qcow2",
+		Checksum:  checksum,
 		SizeBytes: int64(len(payload)),
 	})
 	if err != nil {
@@ -377,7 +383,7 @@ func TestPrepareCloudImageBacking_UsesLocalBackingWhenURLImageIsPreStaged(t *tes
 		t.Fatalf("UpdateStatus: %v", err)
 	}
 
-	storage := &fakeCloudImageStorage{}
+	storage := &fakeCloudImageStorage{exists: true}
 	d := &Deployer{OSImages: svc}
 	path, format, err := d.prepareCloudImageBacking(context.Background(), storage, "ubuntu-24.04-amd64-cloud")
 	if err != nil {
@@ -389,8 +395,62 @@ func TestPrepareCloudImageBacking_UsesLocalBackingWhenURLImageIsPreStaged(t *tes
 	if format != "qcow2" {
 		t.Fatalf("expected qcow2 backing format, got %q", format)
 	}
-	if storage.createdName != "" || storage.data != nil {
-		t.Fatalf("expected no storage lookup or upload for pre-staged image")
+	if storage.createdName != "ubuntu-24.04-amd64-cloud" || storage.data != nil {
+		t.Fatalf("expected local backing lookup without upload, got lookup=%q data=%q", storage.createdName, string(storage.data))
+	}
+}
+
+func TestPrepareCloudImageBacking_DownloadsWhenPreStagedURLImageIsMissingOnHypervisor(t *testing.T) {
+	payload := []byte("qcow2-data")
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Length", "10")
+		if _, err := w.Write(payload); err != nil {
+			t.Fatalf("write response: %v", err)
+		}
+	}))
+	defer srv.Close()
+
+	store := &testOSImageStore{}
+	svc := osimage.NewService(store)
+	_, err := svc.Create(context.Background(), osimage.OSImage{
+		Name:      "ubuntu-24.04-amd64-cloud",
+		OSFamily:  "ubuntu",
+		OSVersion: "24.04",
+		Arch:      "amd64",
+		Format:    osimage.FormatQCOW2,
+		Source:    osimage.SourceURL,
+		URL:       srv.URL + "/ubuntu-24.04.img",
+		SizeBytes: int64(len(payload)),
+	})
+	if err != nil {
+		t.Fatalf("Create image: %v", err)
+	}
+	if _, err := svc.UpdateStatus(context.Background(), "ubuntu-24.04-amd64-cloud", true, "/var/lib/gomi/images/ubuntu-24.04-amd64-cloud.qcow2", ""); err != nil {
+		t.Fatalf("UpdateStatus: %v", err)
+	}
+	img, err := svc.Get(context.Background(), "ubuntu-24.04-amd64-cloud")
+	if err != nil {
+		t.Fatalf("Get image: %v", err)
+	}
+	expectedVolumeName := cloudImageURLVolumeBaseName(img, "qcow2")
+
+	storage := &fakeCloudImageStorage{}
+	d := &Deployer{OSImages: svc}
+	path, format, err := d.prepareCloudImageBacking(context.Background(), storage, "ubuntu-24.04-amd64-cloud")
+	if err != nil {
+		t.Fatalf("prepareCloudImageBacking: %v", err)
+	}
+	if path != "/var/lib/libvirt/images/"+cloudImageVolumeName(expectedVolumeName, "qcow2") {
+		t.Fatalf("expected downloaded backing path, got %q", path)
+	}
+	if format != "qcow2" {
+		t.Fatalf("expected qcow2 backing format, got %q", format)
+	}
+	if storage.createdName != expectedVolumeName {
+		t.Fatalf("expected fallback download to %q, got %q", expectedVolumeName, storage.createdName)
+	}
+	if string(storage.data) != string(payload) {
+		t.Fatalf("unexpected uploaded payload %q", string(storage.data))
 	}
 }
 
