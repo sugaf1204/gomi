@@ -5,8 +5,15 @@ tmpdir="${TMPDIR:-/tmp}"
 inventory_file="$tmpdir/gomi-inventory.tsv"
 response_file="$tmpdir/gomi-inventory-response.json"
 curtin_cfg="$tmpdir/gomi-curtin.yaml"
+target_mount=""
 
 log() { printf '%s %s\n' "$(date -u +%FT%TZ)" "$*" >&2; }
+
+cleanup_target_mount() {
+  [ -n "$target_mount" ] || return 0
+  umount "$target_mount" 2>/dev/null || true
+}
+trap cleanup_target_mount EXIT
 
 cmdline_value() {
   local key="$1" value
@@ -179,6 +186,7 @@ if [ "$deploy_mode" = "disk-image" ]; then
   [ -b "$root_device" ] || fail "target root partition is not a block device: $root_device"
   mkdir -p /mnt/gomi-target
   mount "$root_device" /mnt/gomi-target || fail "failed to mount target root partition"
+  target_mount="/mnt/gomi-target"
   seed_dir="/mnt/gomi-target/var/lib/cloud/seed/nocloud"
   mkdir -p "$seed_dir" /mnt/gomi-target/etc/cloud/cloud.cfg.d
   for file in user-data meta-data vendor-data network-config; do
@@ -188,10 +196,11 @@ if [ "$deploy_mode" = "disk-image" ]; then
 datasource_list: [ NoCloud, None ]
 datasource:
   NoCloud:
-    seedfrom: /var/lib/cloud/seed/nocloud/
+	seedfrom: /var/lib/cloud/seed/nocloud/
 ssh_deletekeys: false
 EOF
-  umount /mnt/gomi-target
+  umount "$target_mount"
+  target_mount=""
   post_timing runner.inject_seed "injected NoCloud seed"
   post_event image_applied "disk image written"
 else
