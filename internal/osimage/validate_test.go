@@ -1,6 +1,7 @@
 package osimage
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -51,5 +52,21 @@ func TestValidateOSImage_URLNeedsURL(t *testing.T) {
 	img.URL = ""
 	if err := ValidateOSImage(img); err == nil {
 		t.Fatal("expected error for missing url")
+	}
+}
+
+func TestValidateOSImage_BareMetalQCOW2RequiresManifestRootPartition(t *testing.T) {
+	img := validImage()
+	img.Variant = VariantBareMetal
+	if err := ValidateOSImage(img); err == nil || !strings.Contains(err.Error(), "manifest.root.path") {
+		t.Fatalf("expected bare-metal qcow2 manifest path error, got %v", err)
+	}
+	img.Manifest = &Manifest{Root: RootArtifact{Format: FormatQCOW2, Path: "root.qcow2"}}
+	if err := ValidateOSImage(img); err == nil || !strings.Contains(err.Error(), "rootPartition.number") {
+		t.Fatalf("expected bare-metal qcow2 root partition error, got %v", err)
+	}
+	img.Manifest.Root.RootPartition.Number = 1
+	if err := ValidateOSImage(img); err != nil {
+		t.Fatalf("expected bare-metal qcow2 with manifest to validate, got %v", err)
 	}
 }

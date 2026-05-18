@@ -14,8 +14,9 @@ curl -H "Authorization: Bearer $GOMI_TOKEN" \
 
 GOMI does not build target OS images. Target rootfs images are produced outside
 this repository, for example by the mkosi-based `os-image` pipeline, then
-registered with the OS image API as `squashfs` for bare-metal deployment or
-`qcow2` for cloud-image VM deployment.
+registered with the OS image API as `squashfs` or `qcow2`. Bare-metal `qcow2`
+images are whole-disk images and require manifest partition metadata so the
+deploy runtime can inject NoCloud seed data after writing the disk.
 
 For boot environments, GOMI fetches `manifest.json`, verifies the declared
 SHA256/size for each artifact, and publishes:
@@ -24,8 +25,8 @@ SHA256/size for each artifact, and publishes:
 - `files/linux/boot-initrd`
 - `files/linux/rootfs.squashfs`
 
-The boot environment builder lives in `bootenv/`. It builds Ubuntu Minimal
-cloud SquashFS based kernel/initrd/SquashFS assets and emits:
+The boot environment builder lives in `bootenv/`. It uses mkosi plus shell
+scripts to build kernel/initrd/SquashFS assets and emits:
 
 - `manifest.json`
 - `checksums.txt`
@@ -43,9 +44,7 @@ The GOMI Taskfile delegates convenience commands to `bootenv/`:
 
 ```sh
 task bootenv:validate
-task bootenv:plan
-task bootenv:render
-task bootenv:build-runner
+task bootenv:test
 task bootenv:build
 ```
 
@@ -91,18 +90,15 @@ the final image written to disk.
 
 ## Decision
 
-Use a split kernel/initrd/SquashFS rootfs model as the first backend, not an
-all-in-one initrd or a direct shell/Go port.
+Use a split kernel/initrd/SquashFS rootfs model for the deploy runtime, not an
+all-in-one initrd.
 
 `bootenv/` owns the runtime build:
 
-- input: a generic `BootEnvironment` spec;
-- source: Debian Live ISO kernel, initrd, and SquashFS rootfs by default;
-- mutation: build and inject the Go GOMI deploy runner plus declared rootfs
-  files/services;
+- input: `mkosi.conf` plus shell scripts;
+- mutation: install the shell GOMI deploy runner and initramfs timing hooks;
 - output: release-style kernel, initrd, SquashFS, iPXE, manifest, and checksums;
 - runtime: GOMI deploy agent inside a SquashFS ephemeral rootfs;
-- initramfs: the thin distro live-boot initrd, not a custom all-in-one initrd;
 
 GOMI owns only consumption:
 

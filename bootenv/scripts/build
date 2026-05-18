@@ -1,0 +1,87 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+out="${1:-dist/ubuntu-minimal-cloud-amd64}"
+version="${2:-dev}"
+root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+work="$root/.build/ubuntu-minimal-cloud-amd64"
+out_abs="$root/$out"
+
+for cmd in mkosi mksquashfs sha256sum stat find sort; do
+  command -v "$cmd" >/dev/null || { echo "missing command: $cmd" >&2; exit 1; }
+done
+
+sudo rm -rf "$work" "$out_abs"
+mkdir -p "$work" "$out_abs"
+
+sudo mkosi --directory "$root" --output-dir "$work" --force build
+rootfs="$work/rootfs"
+test -d "$rootfs" || { echo "mkosi did not create $rootfs" >&2; exit 1; }
+
+install_into_rootfs() {
+  sudo install -D -m 0755 "$root/scripts/gomi-deploy-runner" "$rootfs/usr/local/sbin/gomi-deploy-runner"
+  sudo install -d -m 0755 "$rootfs/etc/initramfs-tools/scripts/init-top" \
+    "$rootfs/etc/initramfs-tools/scripts/local-top" \
+    "$rootfs/etc/initramfs-tools/scripts/local-bottom" \
+    "$rootfs/etc/initramfs-tools/scripts/init-bottom" \
+    "$rootfs/etc/initramfs-tools/conf.d"
+
+  for stage in init-top local-top local-bottom init-bottom; do
+    sudo tee "$rootfs/etc/initramfs-tools/scripts/$stage/gomi-timing" >/dev/null <<'SCRIPT'
+#!/bin/sh
+PREREQ=""
+prereqs() { echo "$PREREQ"; }
+case "$1" in
+  prereqs) prereqs; exit 0 ;;
+esac
+mkdir -p /run/gomi
+stage="$(basename "$(dirname "$0")")"
+uptime_s="$(cut -d' ' -f1 /proc/uptime 2>/dev/null || echo 0)"
+printf '{"source":"initramfs","name":"initramfs.%s","eventType":"marker","message":"initramfs %s reached","monotonicSeconds":%s}\n' "$stage" "$stage" "$uptime_s" >> /run/gomi/timing.ndjson
+if [ "$stage" = "init-bottom" ] && [ -n "$rootmnt" ] && [ -d "$rootmnt" ]; then
+  mkdir -p "$rootmnt/run/gomi"
+  cp /run/gomi/timing.ndjson "$rootmnt/run/gomi/timing.ndjson" 2>/dev/null || true
+fi
+SCRIPT
+    sudo chmod 0755 "$rootfs/etc/initramfs-tools/scripts/$stage/gomi-timing"
+  done
+
+  echo "MODULES=netboot" | sudo tee "$rootfs/etc/initramfs-tools/conf.d/gomi-netboot" >/dev/null
+  sudo install -d -m 0755 "$rootfs/etc/gomi"
+  sudo tee "$rootfs/etc/gomi/agent.env" >/dev/null <<'EOF'
+GOMI_METADATA_URL=http://gomi.local/metadata
+GOMI_WORKFLOW_URL=http://gomi.local/workflows
+EOF
+}
+
+with_chroot_mounts() {
+  sudo mount -t proc proc "$rootfs/proc"
+  sudo mount -t sysfs sysfs "$rootfs/sys"
+  sudo mount --bind /dev "$rootfs/dev"
+  trap 'sudo umount -lf "$rootfs/dev" "$rootfs/sys" "$rootfs/proc" 2>/dev/null || true' RETURN
+  "$@"
+}
+
+install_into_rootfs
+with_chroot_mounts sudo chroot "$rootfs" update-initramfs -u -k all
+
+kernel="$(find "$rootfs/boot" -maxdepth 1 -type f -name 'vmlinuz-*' | sort -V | tail -n 1)"
+initrd="$(find "$rootfs/boot" -maxdepth 1 -type f -name 'initrd.img-*' | sort -V | tail -n 1)"
+test -n "$kernel" || { echo "rootfs has no kernel in /boot" >&2; exit 1; }
+test -n "$initrd" || { echo "rootfs has no initrd in /boot" >&2; exit 1; }
+
+sudo cp "$kernel" "$out_abs/boot-kernel"
+sudo cp "$initrd" "$out_abs/boot-initrd"
+sudo mksquashfs "$rootfs" "$out_abs/rootfs.squashfs" -noappend -comp zstd -b 1M -processors "$(nproc)" -all-root
+sudo chown "$(id -u):$(id -g)" "$out_abs/boot-kernel" "$out_abs/boot-initrd" "$out_abs/rootfs.squashfs"
+
+cat >"$out_abs/boot.ipxe" <<'EOF'
+#!ipxe
+set base http://gomi.local/files/linux
+kernel ${base}/boot-kernel initrd=boot-initrd ip=dhcp overlayroot=tmpfs:recurse=0 rw root=squash:${base}/rootfs.squashfs gomi.base=${base} ${extra_args} ---
+initrd --name boot-initrd ${base}/boot-initrd
+boot
+EOF
+
+"$root/scripts/render-manifest" "$out_abs" "$version"
+sha256sum "$out_abs"/boot-kernel "$out_abs"/boot-initrd "$out_abs"/rootfs.squashfs "$out_abs"/boot.ipxe "$out_abs"/manifest.json > "$out_abs/checksums.txt"

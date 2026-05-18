@@ -31,5 +31,13 @@ func ValidateOSImage(img OSImage) error {
 	if img.Source == SourceURL && strings.TrimSpace(img.URL) == "" {
 		return errors.New("url is required for url source")
 	}
+	if img.Format == FormatQCOW2 && img.Variant == VariantBareMetal {
+		if img.Manifest == nil || strings.TrimSpace(img.Manifest.Root.Path) == "" {
+			return errors.New("manifest.root.path is required for bare-metal qcow2 images")
+		}
+		if img.Manifest.Root.RootPartition.Number <= 0 {
+			return errors.New("manifest.root.rootPartition.number is required for bare-metal qcow2 images")
+		}
+	}
 	return nil
 }

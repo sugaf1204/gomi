@@ -22,9 +22,21 @@ type statusResponse struct {
 }
 
 type inventoryResponse struct {
-	AttemptID       string `json:"attemptId"`
-	CurtinConfigURL string `json:"curtinConfigUrl"`
-	EventsURL       string `json:"eventsUrl"`
+	AttemptID       string                   `json:"attemptId"`
+	DeployMode      string                   `json:"deployMode,omitempty"`
+	CurtinConfigURL string                   `json:"curtinConfigUrl,omitempty"`
+	EventsURL       string                   `json:"eventsUrl"`
+	DiskImageDeploy *diskImageDeployResponse `json:"diskImageDeploy,omitempty"`
+}
+
+type diskImageDeployResponse struct {
+	ImageURL            string `json:"imageUrl"`
+	Format              string `json:"format"`
+	TargetDisk          string `json:"targetDisk"`
+	RootPartitionNumber int    `json:"rootPartitionNumber"`
+	EFIPartitionNumber  int    `json:"efiPartitionNumber,omitempty"`
+	SeedURL             string `json:"seedUrl"`
+	SHA256              string `json:"sha256,omitempty"`
 }
 
 type installCompleteVMResponse struct {

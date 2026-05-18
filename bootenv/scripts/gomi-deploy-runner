@@ -1,0 +1,194 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+tmpdir="${TMPDIR:-/tmp}"
+inventory_file="$tmpdir/gomi-inventory.tsv"
+response_file="$tmpdir/gomi-inventory-response.json"
+curtin_cfg="$tmpdir/gomi-curtin.yaml"
+
+log() { printf '%s %s\n' "$(date -u +%FT%TZ)" "$*" >&2; }
+
+cmdline_value() {
+  local key="$1" value
+  for value in $(tr '\0' ' ' </proc/cmdline); do
+    case "$value" in
+      "$key="*) printf '%s\n' "${value#*=}"; return 0 ;;
+    esac
+  done
+  return 1
+}
+
+normalize_mac() {
+  local mac="$1"
+  mac="${mac#01-}"
+  printf '%s\n' "$mac" | tr 'A-F-' 'a-f:'
+}
+
+post_form() {
+  local url="$1"; shift
+  [ -n "$url" ] || return 0
+  curl -fsS -X POST "$@" "$url" >/dev/null || true
+}
+
+event_url=""
+post_event() {
+  local type="$1" message="$2" reason="${3:-}"
+  post_form "$event_url" \
+    --data-urlencode "type=$type" \
+    --data-urlencode "message=$message" \
+    --data-urlencode "reason=$reason"
+}
+
+post_timing() {
+  local name="$1" message="$2" result="${3:-success}"
+  post_form "$event_url" \
+    --data-urlencode "type=timing" \
+    --data-urlencode "source=runner" \
+    --data-urlencode "name=$name" \
+    --data-urlencode "message=$message" \
+    --data-urlencode "result=$result"
+}
+
+fail() {
+  local message="$1"
+  post_event failed "$message" "$message"
+  echo "ERROR: $message" >&2
+  exit 1
+}
+
+partition_device() {
+  local disk="$1" part="$2"
+  case "$disk" in
+    /dev/disk/by-id/*|/dev/disk/by-path/*)
+      if [ -e "${disk}-part${part}" ]; then
+        printf '%s\n' "${disk}-part${part}"
+        return 0
+      fi
+      ;;
+    *nvme*|*mmcblk*)
+      printf '%sp%s\n' "$disk" "$part"
+      return 0
+      ;;
+  esac
+  printf '%s%s\n' "$disk" "$part"
+}
+
+base="$(cmdline_value gomi.base || true)"
+token="$(cmdline_value gomi.token || true)"
+bootif="$(cmdline_value gomi.boot_mac || cmdline_value BOOTIF || true)"
+[ -n "$base" ] || fail "gomi.base is required"
+[ -n "$token" ] || fail "gomi.token is required"
+boot_mac="$(normalize_mac "$bootif")"
+
+select_iface() {
+  local name mac fallback=""
+  for path in /sys/class/net/*; do
+    name="$(basename "$path")"
+    [ "$name" = lo ] && continue
+    [ "$(cat "$path/type" 2>/dev/null || true)" = "1" ] || continue
+    [ -n "$fallback" ] || fallback="$name"
+    mac="$(cat "$path/address" 2>/dev/null || true)"
+    if [ -n "$boot_mac" ] && [ "$mac" = "$boot_mac" ]; then
+      printf '%s\n' "$name"
+      return 0
+    fi
+  done
+  [ -n "$fallback" ] || return 1
+  printf '%s\n' "$fallback"
+}
+
+iface="$(select_iface)" || fail "no network interface found"
+ip link set dev "$iface" up || fail "failed to bring up $iface"
+dhcpcd -4 -w "$iface" || fail "DHCP failed on $iface"
+
+collect_inventory() {
+  printf 'runtime\t%s\n' "$(uname -r)"
+  if [ -d /sys/firmware/efi ]; then
+    printf 'boot\tuefi\t%s\n' "$([ -d /sys/firmware/efi/efivars ] && echo true || echo false)"
+  else
+    printf 'boot\tbios\tfalse\n'
+  fi
+  for dev in /sys/block/*; do
+    name="$(basename "$dev")"
+    case "$name" in loop*|ram*|sr*|fd*|dm-*|md*|zram*) continue ;; esac
+    size_mb="$(( $(cat "$dev/size" 2>/dev/null || echo 0) / 2048 ))"
+    removable="$(cat "$dev/removable" 2>/dev/null || echo 0)"
+    byid="$(find /dev/disk/by-id -samefile "/dev/$name" -print 2>/dev/null | paste -sd, -)"
+    bypath="$(find /dev/disk/by-path -samefile "/dev/$name" -print 2>/dev/null | paste -sd, -)"
+    printf 'disk\t%s\t/dev/%s\t%s\t%s\t%s\t%s\n' "$name" "$name" "$size_mb" "$([ "$removable" = 1 ] && echo true || echo false)" "$byid" "$bypath"
+  done
+  for nic in /sys/class/net/*; do
+    name="$(basename "$nic")"
+    [ "$name" = lo ] && continue
+    printf 'nic\t%s\t%s\t%s\n' "$name" "$(cat "$nic/address" 2>/dev/null || true)" "$(cat "$nic/operstate" 2>/dev/null || true)"
+  done
+}
+
+collect_inventory > "$inventory_file"
+curl -fsS -H 'Content-Type: text/plain' --data-binary "@$inventory_file" "$base/inventory?token=$token" > "$response_file" || fail "inventory callback failed"
+event_url="$(jq -r '.eventsUrl // empty' "$response_file")"
+deploy_mode="$(jq -r '.deployMode // "curtin"' "$response_file")"
+post_timing runner.inventory "posted hardware inventory"
+
+if [ "$deploy_mode" = "disk-image" ]; then
+  image_url="$(jq -r '.diskImageDeploy.imageUrl // empty' "$response_file")"
+  image_format="$(jq -r '.diskImageDeploy.format // empty' "$response_file")"
+  target_disk="$(jq -r '.diskImageDeploy.targetDisk // empty' "$response_file")"
+  root_part="$(jq -r '.diskImageDeploy.rootPartitionNumber // 0' "$response_file")"
+  sha256="$(jq -r '.diskImageDeploy.sha256 // empty' "$response_file")"
+  seed_url="$(jq -r '.diskImageDeploy.seedUrl // empty' "$response_file")"
+  [ "$image_format" = "qcow2" ] || fail "unsupported disk image format: $image_format"
+  [ -n "$image_url" ] || fail "disk image URL is required"
+  [ -b "$target_disk" ] || fail "target disk is not a block device: $target_disk"
+  [ "$root_part" -gt 0 ] || fail "root partition number is required"
+  image="$tmpdir/gomi-root.qcow2"
+  post_event progress "downloading qcow2 image"
+  curl -fL --retry 3 -o "$image" "$image_url" || fail "qcow2 download failed"
+  post_timing runner.download_image "downloaded qcow2 image"
+  if [ -n "$sha256" ]; then
+    actual="$(sha256sum "$image" | awk '{print $1}')"
+    expected="${sha256#sha256:}"
+    [ "$actual" = "$expected" ] || fail "qcow2 checksum mismatch"
+  fi
+  virtual_size="$(qemu-img info --output=json "$image" | jq -r '.["virtual-size"] // 0')"
+  target_size="$(blockdev --getsize64 "$target_disk")"
+  [ "$virtual_size" -le "$target_size" ] || fail "qcow2 virtual size exceeds target disk"
+  post_event progress "writing qcow2 image to target disk"
+  qemu-img convert -f qcow2 -O raw "$image" "$target_disk" || fail "qemu-img convert failed"
+  post_timing runner.write_disk_image "wrote qcow2 image to target disk"
+  sync
+  partprobe "$target_disk" || true
+  udevadm settle || true
+  root_device="$(partition_device "$target_disk" "$root_part")"
+  mkdir -p /mnt/gomi-target
+  mount "$root_device" /mnt/gomi-target || fail "failed to mount target root partition"
+  seed_dir="/mnt/gomi-target/var/lib/cloud/seed/nocloud"
+  mkdir -p "$seed_dir" /mnt/gomi-target/etc/cloud/cloud.cfg.d
+  for file in user-data meta-data vendor-data network-config; do
+    curl -fsS -o "$seed_dir/$file" "$seed_url/$file" || fail "failed to fetch NoCloud $file"
+  done
+  cat >/mnt/gomi-target/etc/cloud/cloud.cfg.d/99_gomi_nocloud.cfg <<'EOF'
+datasource_list: [ NoCloud, None ]
+datasource:
+  NoCloud:
+    seedfrom: /var/lib/cloud/seed/nocloud/
+ssh_deletekeys: false
+EOF
+  umount /mnt/gomi-target
+  post_timing runner.inject_seed "injected NoCloud seed"
+  post_event image_applied "disk image written"
+else
+  curtin_url="$(jq -r '.curtinConfigUrl // empty' "$response_file")"
+  [ -n "$curtin_url" ] || fail "inventory response missing curtinConfigUrl"
+  post_event progress "fetching curtin config"
+  curl -fsS -o "$curtin_cfg" "$curtin_url" || fail "curtin config fetch failed"
+  post_timing runner.fetch_curtin_config "fetched curtin config"
+  [ -s "$curtin_cfg" ] || fail "curtin config is empty"
+  post_event progress "running curtin install"
+  curtin -c "$curtin_cfg" install || fail "curtin install failed"
+  post_timing runner.curtin_install "ran curtin install"
+  post_event image_applied "curtin install completed"
+fi
+
+sync
+reboot -f
