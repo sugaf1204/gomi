@@ -42,6 +42,11 @@ type curtinInstall struct {
 	SaveInstallLog    string   `yaml:"save_install_log"`
 }
 
+type curtinAptMirrors struct {
+	UbuntuArchive  string `yaml:"ubuntu_archive,omitempty"`
+	UbuntuSecurity string `yaml:"ubuntu_security,omitempty"`
+}
+
 type curtinReportingHook struct {
 	Type     string `yaml:"type"`
 	Endpoint string `yaml:"endpoint"`
@@ -78,6 +83,7 @@ type curtinStorage struct {
 type curtinConfig struct {
 	Install              curtinInstall           `yaml:"install"`
 	Reporting            curtinReporting         `yaml:"reporting"`
+	AptMirrors           *curtinAptMirrors       `yaml:"apt_mirrors,omitempty"`
 	BlockMeta            curtinBlockMeta         `yaml:"block-meta"`
 	Sources              map[string]curtinSource `yaml:"sources"`
 	Storage              *curtinStorageConfig    `yaml:"storage,omitempty"`
@@ -764,6 +770,12 @@ func (h *Handler) buildCurtinInstallConfig(ctx context.Context, c echo.Context, 
 		},
 		Stages:       stages,
 		LateCommands: make(map[string][]string, len(lateCommands)),
+	}
+	if ubuntuMirror := strings.TrimRight(strings.TrimSpace(os.Getenv("GOMI_CURTIN_UBUNTU_MIRROR")), "/"); ubuntuMirror != "" && strings.EqualFold(strings.TrimSpace(img.OSFamily), "ubuntu") {
+		cfg.AptMirrors = &curtinAptMirrors{
+			UbuntuArchive:  ubuntuMirror,
+			UbuntuSecurity: ubuntuMirror,
+		}
 	}
 	if storageConfig != nil {
 		cfg.Storage = &storageConfig.Storage
