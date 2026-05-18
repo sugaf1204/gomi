@@ -40,11 +40,14 @@ post_form() {
 
 event_url=""
 post_event() {
-  local type="$1" message="$2" reason="${3:-}"
-  post_form "$event_url" \
+  local type="$1" message="$2" reason="${3:-}" log_tail="${4:-}"
+  local args=(
     --data-urlencode "type=$type" \
     --data-urlencode "message=$message" \
     --data-urlencode "reason=$reason"
+  )
+  [ -z "$log_tail" ] || args+=(--data-urlencode "logTail=$log_tail")
+  post_form "$event_url" "${args[@]}"
 }
 
 post_timing() {
@@ -58,8 +61,8 @@ post_timing() {
 }
 
 fail() {
-  local message="$1"
-  post_event failed "$message" "$message"
+  local message="$1" log_tail="${2:-}"
+  post_event failed "$message" "$message" "$log_tail"
   echo "ERROR: $message" >&2
   exit 1
 }
@@ -213,7 +216,9 @@ else
   post_timing runner.fetch_curtin_config "fetched curtin config"
   [ -s "$curtin_cfg" ] || fail "curtin config is empty"
   post_event progress "running curtin install"
-  curtin -c "$curtin_cfg" install || fail "curtin install failed"
+  if ! curtin -c "$curtin_cfg" install; then
+    fail "curtin install failed" "$(tail -n 120 /tmp/curtin-install.log 2>/dev/null || true)"
+  fi
   post_timing runner.curtin_install "ran curtin install"
   post_event image_applied "curtin install completed"
 fi

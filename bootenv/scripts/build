@@ -110,9 +110,10 @@ sudo chown "$(id -u):$(id -g)" "$out_abs/boot-kernel" "$out_abs/boot-initrd" "$o
 
 cat >"$out_abs/boot.ipxe" <<'EOF'
 #!ipxe
-set base http://gomi.local/files/linux
-kernel ${base}/boot-kernel initrd=boot-initrd ip=dhcp overlayroot=tmpfs:recurse=0 rw root=squash:${base}/rootfs.squashfs gomi.base=${base} ${extra_args} ---
-initrd --name boot-initrd ${base}/boot-initrd
+set base http://gomi.local/pxe
+set files ${base}/files/linux
+kernel ${files}/boot-kernel initrd=boot-initrd ip=dhcp overlayroot=tmpfs:recurse=0 rw root=squash:${files}/rootfs.squashfs gomi.base=${base} ${extra_args} ---
+initrd --name boot-initrd ${files}/boot-initrd
 boot
 EOF
 
