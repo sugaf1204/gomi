@@ -423,6 +423,7 @@ func injectHypervisorSetup(cloudConfig, pxeBaseURL, hypervisorName, registration
 		"curl",
 		"jq",
 		"zstd",
+		"xz-utils",
 	}
 	hvRuncmds := []any{
 		libvirtTCPAuthNoneCommand(),

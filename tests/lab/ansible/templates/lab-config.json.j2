@@ -11,6 +11,7 @@
   "os_image_source_url": {{ gomi_kvm_lab_os_image_source_url | to_json }},
   "gomi_vm": {{ gomi_kvm_lab_gomi_vm | to_json }},
   "os_images": {{ gomi_kvm_lab_os_images | to_json }},
+  "required_kernel_modules": {{ gomi_kvm_lab_required_kernel_modules | default([]) | to_json }},
   "target_defaults": {{ gomi_kvm_lab_target_defaults | to_json }},
   "target_nics": {{ gomi_kvm_lab_target_nics | to_json }}
 }

@@ -151,30 +151,6 @@ tasks:
     cmds:
       - cp packages/debian/build/gomi-linux-{{.ARCH}} packages/debian/build/gomi
 
-  build:deb-osimage:
-    desc: Build OS image helper binary for the Debian package
-    internal: true
-    vars:
-      ARCH:
-        sh: printf '%s' "${ARCH:-amd64}"
-    sources:
-      - go.mod
-      - go.sum
-      - cmd/gomi-osimage/**/*.go
-      - internal/oscatalog/**
-      - internal/osimage/**
-      - internal/osimagebuild/**
-    generates:
-      - packages/debian/build/gomi-osimage
-      - packages/debian/build/builds.yaml
-      - packages/debian/build/definitions
-    cmds:
-      - mkdir -p packages/debian/build
-      - CGO_ENABLED=0 GOOS=linux GOARCH="{{.ARCH}}" go build -trimpath -ldflags "-s -w" -o packages/debian/build/gomi-osimage ./cmd/gomi-osimage
-      - cp internal/osimagebuild/default-builds.yaml packages/debian/build/builds.yaml
-      - rm -rf packages/debian/build/definitions
-      - cp -R internal/osimagebuild/definitions packages/debian/build/definitions
-
   build:deb-hypervisor-agent:
     desc: Build hypervisor agent binaries for the Debian package
     internal: true
@@ -213,7 +189,6 @@ tasks:
     desc: Build local artifacts used by the Debian package build
     deps:
       - build:deb-stage-gomi
-      - build:deb-osimage
       - build:deb-hypervisor-agent
       - build:deb-wol-daemon
 
@@ -228,9 +203,6 @@ tasks:
       - build:deb-artifacts
     sources:
       - packages/debian/build/gomi
-      - packages/debian/build/gomi-osimage
-      - packages/debian/build/builds.yaml
-      - packages/debian/build/definitions
       - packages/debian/build/gomi-hypervisor-linux-amd64
       - packages/debian/build/gomi-hypervisor-linux-arm64
       - packages/debian/build/gomi-wol-daemon-linux-amd64
@@ -567,31 +539,11 @@ tasks:
 
         $ssh_cmd "$remote" "mkdir -p '$artifact_path' && cd '$remote_root/src' && act workflow_dispatch -W .github/workflows/bootenv-release.yml -j build --env ACT_SKIP_PUBLISH=true -P ubuntu-latest='$runner_image' --artifact-server-path '$artifact_path' $extra"
 
-  act:release:os-images:
-    desc: Run the OS image release workflow with act on the remote Linux host
-    deps:
-      - act:sync
-    cmds:
-      - |
-        set -eu
-        remote="${ACT_REMOTE_HOST:-}"
-        remote_root="${ACT_REMOTE_WORK:-/tmp/gomi-act}"
-        runner_image="${ACT_RUNNER_IMAGE:-catthehacker/ubuntu:full-latest}"
-        case "$remote_root" in *"'"*) echo "ERROR: ACT_REMOTE_WORK must not contain single quotes" >&2; exit 1 ;; esac
-        case "$runner_image" in *"'"*) echo "ERROR: ACT_RUNNER_IMAGE must not contain single quotes" >&2; exit 1 ;; esac
-        ssh_cmd="${ACT_SSH_CMD:-ssh}"
-        extra="${ACT_EXTRA_ARGS:---bind --container-options=--privileged}"
-        artifact_path="${ACT_ARTIFACT_PATH:-$remote_root/artifacts}"
-        case "$artifact_path" in *"'"*) echo "ERROR: ACT_ARTIFACT_PATH must not contain single quotes" >&2; exit 1 ;; esac
-
-        $ssh_cmd "$remote" "mkdir -p '$artifact_path' && cd '$remote_root/src' && act workflow_dispatch -W .github/workflows/os-image-release.yml --env ACT_SKIP_PUBLISH=true -P ubuntu-latest='$runner_image' --artifact-server-path '$artifact_path' $extra"
-
   act:release:all:
     desc: Run all release workflows with act on the remote Linux host
     cmds:
       - task: act:release:deb
       - task: act:release:bootenv
-      - task: act:release:os-images
 
   env:check:
     desc: Validate deploy environment variables
@@ -641,46 +593,6 @@ tasks:
       - task: check
       - task: deploy
       - task: deploy:health
-
-  upload-images:
-    desc: Install OS catalog entries through the GOMI API
-    cmds:
-      - ./tools/upload-os-images.sh "$GOMI_URL"
-
-  os-image:catalog:validate:
-    desc: Validate the OS image catalog
-    cmds:
-      - go run ./cmd/gomi-osimage catalog validate
-
-  os-image:matrix:
-    desc: Print the OS image build matrix
-    cmds:
-      - go run ./cmd/gomi-osimage catalog matrix
-
-  os-image:build:
-    desc: Build one target OS rootfs SquashFS image from catalog (requires distrobuilder and squashfs-tools on Linux)
-    vars:
-      NAME: '{{.NAME | default .IMAGE_NAME}}'
-    cmds:
-      - |
-        test -n "{{.NAME}}" || (echo "ERROR: pass NAME=<catalog-entry>" >&2; exit 1)
-      - go build -trimpath -o /tmp/gomi-osimage ./cmd/gomi-osimage
-      - sudo -E /tmp/gomi-osimage build --name "{{.NAME}}"
-
-  os-image:build-all:
-    desc: Build every rootfs SquashFS build config entry (requires distrobuilder and squashfs-tools on Linux)
-    cmds:
-      - |
-        set -euo pipefail
-        go build -trimpath -o /tmp/gomi-osimage ./cmd/gomi-osimage
-        go run ./cmd/gomi-osimage catalog matrix --names | while IFS= read -r name; do
-          sudo -E /tmp/gomi-osimage build --name "$name"
-        done
-
-  os-image:manifest:
-    desc: Write OS image release manifest and checksums
-    cmds:
-      - go run ./cmd/gomi-osimage manifest --dir {{.DIR | default "dist/os-images"}}
 
   bootenv:validate:
     desc: Validate the GOMI boot environment spec

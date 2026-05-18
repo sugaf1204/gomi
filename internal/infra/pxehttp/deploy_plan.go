@@ -42,11 +42,6 @@ type curtinInstall struct {
 	SaveInstallLog    string   `yaml:"save_install_log"`
 }
 
-type curtinAptMirrors struct {
-	UbuntuArchive  string `yaml:"ubuntu_archive,omitempty"`
-	UbuntuSecurity string `yaml:"ubuntu_security,omitempty"`
-}
-
 type curtinReportingHook struct {
 	Type     string `yaml:"type"`
 	Endpoint string `yaml:"endpoint"`
@@ -75,11 +70,6 @@ type curtinGrub struct {
 	InstallDevices []string `yaml:"install_devices"`
 }
 
-type curtinKernel struct {
-	Package         string `yaml:"package"`
-	FallbackPackage string `yaml:"fallback-package,omitempty"`
-}
-
 type curtinStorage struct {
 	Storage curtinStorageConfig `yaml:"storage"`
 	Grub    curtinGrub          `yaml:"grub"`
@@ -88,12 +78,10 @@ type curtinStorage struct {
 type curtinConfig struct {
 	Install              curtinInstall           `yaml:"install"`
 	Reporting            curtinReporting         `yaml:"reporting"`
-	AptMirrors           *curtinAptMirrors       `yaml:"apt_mirrors,omitempty"`
 	BlockMeta            curtinBlockMeta         `yaml:"block-meta"`
 	Sources              map[string]curtinSource `yaml:"sources"`
 	Storage              *curtinStorageConfig    `yaml:"storage,omitempty"`
 	Grub                 *curtinGrub             `yaml:"grub,omitempty"`
-	Kernel               *curtinKernel           `yaml:"kernel,omitempty"`
 	Stages               []string                `yaml:"stages"`
 	PartitioningCommands map[string][]string     `yaml:"partitioning_commands,omitempty"`
 	LateCommands         map[string][]string     `yaml:"late_commands"`
@@ -776,12 +764,6 @@ func (h *Handler) buildCurtinInstallConfig(ctx context.Context, c echo.Context, 
 		},
 		Stages:       stages,
 		LateCommands: make(map[string][]string, len(lateCommands)),
-	}
-	if ubuntuMirror := strings.TrimRight(strings.TrimSpace(os.Getenv("GOMI_CURTIN_UBUNTU_MIRROR")), "/"); ubuntuMirror != "" && strings.EqualFold(strings.TrimSpace(img.OSFamily), "ubuntu") {
-		cfg.AptMirrors = &curtinAptMirrors{
-			UbuntuArchive:  ubuntuMirror,
-			UbuntuSecurity: ubuntuMirror,
-		}
 	}
 	if storageConfig != nil {
 		cfg.Storage = &storageConfig.Storage

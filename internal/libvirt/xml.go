@@ -84,7 +84,7 @@ type xmlDevices struct {
 	Controllers []xmlController `xml:"controller,omitempty"`
 	Disks       []xmlDisk       `xml:"disk"`
 	Interfaces  []xmlInterface  `xml:"interface"`
-	Console     xmlConsole      `xml:"console"`
+	Console     *xmlConsole     `xml:"console,omitempty"`
 	Graphics    xmlGraphics     `xml:"graphics"`
 }
 
@@ -272,8 +272,7 @@ func GenerateDomainXML(cfg DomainConfig) (string, error) {
 		domain.Devices.Interfaces = append(domain.Devices.Interfaces, iface)
 	}
 
-	// Console and graphics.
-	domain.Devices.Console = xmlConsole{Type: "pty"}
+	// Graphics.
 	domain.Devices.Graphics = xmlGraphics{
 		Type:     "vnc",
 		Port:     "-1",

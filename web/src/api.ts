@@ -1,4 +1,4 @@
-import type { AuditEvent, BootEnvironmentStatus, CloudInitTemplate, DHCPLease, HardwareInfo, Hypervisor, Machine, Me, OSCatalogItem, OSImage, PowerConfig, SSHKey, Subnet, SystemInfo, VirtualMachine } from './types'
+import type { AuditEvent, BootEnvironmentStatus, CloudInitTemplate, DHCPLease, HardwareInfo, Hypervisor, Machine, Me, OSImage, PowerConfig, SSHKey, Subnet, SystemInfo, VirtualMachine } from './types'
 
 const API_BASE = import.meta.env.VITE_API_BASE ?? `${window.location.origin}/api/v1`
 
@@ -368,16 +368,6 @@ class ApiClient {
   // OS Image APIs
   listOSImages() {
     return this.request<{ items: OSImage[] }>('/os-images')
-  }
-
-  listOSCatalog() {
-    return this.request<{ items: OSCatalogItem[] }>('/os-catalog')
-  }
-
-  installOSCatalogEntry(name: string) {
-    return this.request<OSCatalogItem>(`/os-catalog/${encodeURIComponent(name)}/install`, {
-      method: 'POST'
-    })
   }
 
   listBootEnvironments() {

@@ -2,12 +2,20 @@ package vm
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
+	"hash"
+	"io"
 	"log"
 	"net"
+	gohttp "net/http"
+	"net/url"
 	"path/filepath"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/sugaf1204/gomi/internal/hypervisor"
 	"github.com/sugaf1204/gomi/internal/infra/netdetect"
@@ -17,6 +25,9 @@ import (
 )
 
 const hypervisorImageDir = "/var/lib/libvirt/images"
+const cloudImageDownloadTimeout = 30 * time.Minute
+
+var cloudImageBackingLocks sync.Map
 
 type Deployer struct {
 	Hypervisors *hypervisor.Service
@@ -27,6 +38,12 @@ type Deployer struct {
 }
 
 type primaryIPDetector func() (string, error)
+
+type cloudImageStorage interface {
+	VolumeExists(ctx context.Context, name string, format string) (bool, error)
+	CreateVolumeFromReader(ctx context.Context, name string, sizeBytes int64, format string, r io.Reader) error
+	DeleteVolume(ctx context.Context, name string) error
+}
 
 func (d *Deployer) Deploy(ctx context.Context, created *VirtualMachine, pxeNoCloudFn func(base string, installType InstallConfigType, mac string) string) error {
 	hv, err := d.Hypervisors.Get(ctx, created.HypervisorRef)
@@ -58,7 +75,7 @@ func (d *Deployer) Deploy(ctx context.Context, created *VirtualMachine, pxeNoClo
 
 	if installType == InstallConfigCurtin {
 		bootDev = "hd"
-		backingPath, backingFormat, backingErr := d.resolveCloudImageBacking(ctx, created.OSImageRef)
+		backingPath, backingFormat, backingErr := d.prepareCloudImageBacking(ctx, exec, created.OSImageRef)
 		if backingErr != nil {
 			log.Printf("deploy vm %s: resolve cloud image backing: %v", created.Name, backingErr)
 			d.updatePhaseOnError(ctx, created, "resolve-cloudimage", backingErr)
@@ -158,7 +175,7 @@ func (d *Deployer) Redeploy(ctx context.Context, v VirtualMachine, pxeNoCloudFn 
 
 	bootDev := "network"
 	if installType == InstallConfigCurtin {
-		backingPath, backingFormat, err := d.resolveCloudImageBacking(ctx, v.OSImageRef)
+		backingPath, backingFormat, err := d.prepareCloudImageBacking(ctx, exec, v.OSImageRef)
 		if err != nil {
 			return fmt.Errorf("resolve cloud image backing for %s: %w", domainName, err)
 		}
@@ -190,22 +207,53 @@ func (d *Deployer) Redeploy(ctx context.Context, v VirtualMachine, pxeNoCloudFn 
 }
 
 func (d *Deployer) resolveCloudImageBacking(ctx context.Context, osImageRef string) (string, string, error) {
+	_, backingPath, backingFormat, err := d.resolveCloudImageBackingImage(ctx, osImageRef)
+	return backingPath, backingFormat, err
+}
+
+func (d *Deployer) prepareCloudImageBacking(ctx context.Context, storage cloudImageStorage, osImageRef string) (string, string, error) {
+	img, backingPath, backingFormat, err := d.resolveCloudImageBackingImage(ctx, osImageRef)
+	if err != nil {
+		return "", "", err
+	}
+	if strings.TrimSpace(img.URL) == "" {
+		return backingPath, backingFormat, nil
+	}
+	volumeName := cloudImageURLVolumeBaseName(img, backingFormat)
+	backingPath = filepath.Join(hypervisorImageDir, cloudImageVolumeName(volumeName, backingFormat))
+	unlock := lockCloudImageBacking(volumeName, backingFormat)
+	defer unlock()
+
+	exists, err := storage.VolumeExists(ctx, volumeName, backingFormat)
+	if err != nil {
+		return "", "", fmt.Errorf("check cloud image backing %s: %w", img.Name, err)
+	}
+	if exists {
+		return backingPath, backingFormat, nil
+	}
+	if err := d.uploadCloudImageBacking(ctx, storage, img, volumeName, backingFormat); err != nil {
+		return "", "", err
+	}
+	return backingPath, backingFormat, nil
+}
+
+func (d *Deployer) resolveCloudImageBackingImage(ctx context.Context, osImageRef string) (osimage.OSImage, string, string, error) {
 	if d.OSImages == nil {
-		return "", "", errors.New("os image service is not configured")
+		return osimage.OSImage{}, "", "", errors.New("os image service is not configured")
 	}
 	ref := strings.TrimSpace(osImageRef)
 	if ref == "" {
-		return "", "", errors.New("osImageRef is required for cloudimage deployment")
+		return osimage.OSImage{}, "", "", errors.New("osImageRef is required for cloudimage deployment")
 	}
 	img, err := d.OSImages.Get(ctx, ref)
 	if err != nil {
 		if errors.Is(err, resource.ErrNotFound) {
-			return "", "", fmt.Errorf("referenced osImageRef not found: %s", ref)
+			return osimage.OSImage{}, "", "", fmt.Errorf("referenced osImageRef not found: %s", ref)
 		}
-		return "", "", err
+		return osimage.OSImage{}, "", "", err
 	}
 	if !img.Ready {
-		return "", "", fmt.Errorf("osImage %s is not ready", ref)
+		return osimage.OSImage{}, "", "", fmt.Errorf("osImage %s is not ready", ref)
 	}
 	backingFormat := strings.TrimSpace(string(img.Format))
 	if img.Manifest != nil && strings.TrimSpace(string(img.Manifest.Root.Format)) != "" {
@@ -214,11 +262,138 @@ func (d *Deployer) resolveCloudImageBacking(ctx context.Context, osImageRef stri
 	if backingFormat == "" {
 		backingFormat = "qcow2"
 	}
-	if img.Manifest == nil && strings.TrimSpace(img.LocalPath) == "" {
-		return "", "", fmt.Errorf("osImage %s has no localPath", ref)
+	if backingFormat != "qcow2" {
+		return osimage.OSImage{}, "", "", fmt.Errorf("cloudimage deployment requires qcow2 OS image, got %s", backingFormat)
 	}
-	backingPath := filepath.Join(hypervisorImageDir, img.Name+"."+backingFormat)
-	return backingPath, backingFormat, nil
+	if img.Manifest == nil && strings.TrimSpace(img.LocalPath) == "" && strings.TrimSpace(img.URL) == "" {
+		return osimage.OSImage{}, "", "", fmt.Errorf("osImage %s has no localPath or url", ref)
+	}
+	backingPath := filepath.Join(hypervisorImageDir, cloudImageVolumeName(cloudImageBackingVolumeBaseName(img, backingFormat), backingFormat))
+	return img, backingPath, backingFormat, nil
+}
+
+func lockCloudImageBacking(name string, format string) func() {
+	value, _ := cloudImageBackingLocks.LoadOrStore(cloudImageVolumeName(name, format), &sync.Mutex{})
+	mu := value.(*sync.Mutex)
+	mu.Lock()
+	return mu.Unlock
+}
+
+func cloudImageVolumeName(name string, format string) string {
+	if format == "" {
+		format = "qcow2"
+	}
+	suffix := "." + format
+	if strings.HasSuffix(name, suffix) {
+		return name
+	}
+	return name + suffix
+}
+
+func cloudImageBackingVolumeBaseName(img osimage.OSImage, format string) string {
+	name := strings.TrimSpace(img.Name)
+	if strings.TrimSpace(img.URL) == "" {
+		return name
+	}
+	return cloudImageURLVolumeBaseName(img, format)
+}
+
+func cloudImageURLVolumeBaseName(img osimage.OSImage, format string) string {
+	name := strings.TrimSpace(img.Name)
+	suffix := "." + format
+	base := strings.TrimSuffix(name, suffix)
+
+	h := sha256.New()
+	_, _ = io.WriteString(h, "url="+strings.TrimSpace(img.URL))
+	_, _ = io.WriteString(h, "\nchecksum="+normalizeSHA256(img.Checksum))
+	_, _ = fmt.Fprintf(h, "\nsize=%d", img.SizeBytes)
+	if !img.CreatedAt.IsZero() {
+		_, _ = io.WriteString(h, "\ncreated="+img.CreatedAt.UTC().Format(time.RFC3339Nano))
+	}
+	return fmt.Sprintf("%s-%s", base, hex.EncodeToString(h.Sum(nil))[:12])
+}
+
+func (d *Deployer) uploadCloudImageBacking(ctx context.Context, storage cloudImageStorage, img osimage.OSImage, volumeName string, backingFormat string) error {
+	rawURL := strings.TrimSpace(img.URL)
+	if rawURL == "" {
+		return fmt.Errorf("osImage %s has no url", img.Name)
+	}
+	parsed, err := url.Parse(rawURL)
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		return fmt.Errorf("invalid cloud image URL for %s", img.Name)
+	}
+	if parsed.Scheme != "http" && parsed.Scheme != "https" {
+		return fmt.Errorf("unsupported cloud image URL scheme for %s: %s", img.Name, parsed.Scheme)
+	}
+	downloadCtx, cancel := context.WithTimeout(ctx, cloudImageDownloadTimeout)
+	defer cancel()
+
+	req, err := gohttp.NewRequestWithContext(downloadCtx, gohttp.MethodGet, rawURL, nil)
+	if err != nil {
+		return err
+	}
+	resp, err := gohttp.DefaultClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("download cloud image %s: %w", img.Name, err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != gohttp.StatusOK {
+		_, _ = io.Copy(io.Discard, resp.Body)
+		return fmt.Errorf("download cloud image %s: status %d", img.Name, resp.StatusCode)
+	}
+	sizeBytes := img.SizeBytes
+	if sizeBytes <= 0 {
+		sizeBytes = resp.ContentLength
+	}
+	if sizeBytes <= 0 {
+		return fmt.Errorf("download cloud image %s: content length is required when sizeBytes is unset", img.Name)
+	}
+
+	reader := io.Reader(resp.Body)
+	var checksum *hashingReader
+	if strings.TrimSpace(img.Checksum) != "" {
+		checksum = newHashingReader(resp.Body)
+		reader = checksum
+	}
+	if err := storage.CreateVolumeFromReader(downloadCtx, volumeName, sizeBytes, backingFormat, reader); err != nil {
+		return fmt.Errorf("sync cloud image %s to hypervisor: %w", img.Name, err)
+	}
+	if checksum != nil {
+		if got, want := checksum.SumHex(), normalizeSHA256(img.Checksum); got != want {
+			if err := storage.DeleteVolume(ctx, volumeName); err != nil {
+				return fmt.Errorf("cloud image checksum mismatch for %s: expected %s got %s; cleanup failed: %w", img.Name, want, got, err)
+			}
+			return fmt.Errorf("cloud image checksum mismatch for %s: expected %s got %s", img.Name, want, got)
+		}
+	}
+	return nil
+}
+
+type hashingReader struct {
+	r io.Reader
+	h hash.Hash
+}
+
+func newHashingReader(r io.Reader) *hashingReader {
+	return &hashingReader{r: r, h: sha256.New()}
+}
+
+func (r *hashingReader) Read(p []byte) (int, error) {
+	n, err := r.r.Read(p)
+	if n > 0 {
+		_, _ = r.h.Write(p[:n])
+	}
+	return n, err
+}
+
+func (r *hashingReader) SumHex() string {
+	return hex.EncodeToString(r.h.Sum(nil))
+}
+
+func normalizeSHA256(value string) string {
+	value = strings.TrimSpace(value)
+	value = strings.TrimPrefix(value, "sha256:")
+	return strings.ToLower(strings.TrimSpace(value))
 }
 
 func (d *Deployer) resolvePXEBaseURL(hv hypervisor.Hypervisor, installType InstallConfigType) (string, error) {

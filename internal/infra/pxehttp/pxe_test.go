@@ -109,7 +109,7 @@ func TestPXEFileRecordsProvisionedTransferTiming(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(tmp, "images"), 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(tmp, "images", "root.raw"), []byte("root"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(tmp, "images", "rootfs.squashfs"), []byte("root"), 0o644); err != nil {
 		t.Fatalf("write file: %v", err)
 	}
 	backend := memory.New()
@@ -135,11 +135,11 @@ func TestPXEFileRecordsProvisionedTransferTiming(t *testing.T) {
 	}
 
 	e := echo.New()
-	req := httptest.NewRequest(http.MethodGet, "/pxe/files/images/root.raw?attempt_id=attempt-transfer&token=token-transfer", nil)
+	req := httptest.NewRequest(http.MethodGet, "/pxe/files/images/rootfs.squashfs?attempt_id=attempt-transfer&token=token-transfer", nil)
 	rec := httptest.NewRecorder()
 	c := e.NewContext(req, rec)
 	c.SetParamNames("*")
-	c.SetParamValues("images/root.raw")
+	c.SetParamValues("images/rootfs.squashfs")
 
 	h := &Handler{pxeFilesDir: tmp, machines: machineSvc}
 	if err := h.PXEFile(c); err != nil {
@@ -1520,207 +1520,6 @@ func TestPXEBootScript_DesktopMachineStillUsesArtifactCurtinPath(t *testing.T) {
 	}
 }
 
-func TestPXECurtinConfig_RejectsRawArtifact(t *testing.T) {
-	backend := memory.New()
-	machineSvc := machine.NewService(backend.Machines())
-	hwInfoSvc := hwinfo.NewService(backend.HWInfo())
-	osImageSvc := osimage.NewService(backend.OSImages())
-	now := time.Now().UTC()
-	artifactDir := t.TempDir()
-
-	img := osimage.OSImage{
-		Name:      "debian-13-amd64",
-		OSFamily:  "debian",
-		OSVersion: "13",
-		Arch:      "amd64",
-		Format:    osimage.FormatRAW,
-		Source:    osimage.SourceUpload,
-		Ready:     true,
-		LocalPath: artifactDir,
-		Manifest: &osimage.Manifest{
-			SchemaVersion: "gomi.osimage.v1",
-			BootModes:     []string{"bios", "uefi"},
-			Root: osimage.RootArtifact{
-				Format: osimage.FormatRAW,
-				Path:   "root.raw",
-				SHA256: "root-sha",
-				RootPartition: osimage.Partition{
-					Number:     1,
-					Filesystem: "ext4",
-				},
-				EFIPartition: &osimage.Partition{
-					Number:     15,
-					Filesystem: "vfat",
-				},
-				BootPartition: &osimage.Partition{
-					Number:     16,
-					Filesystem: "ext4",
-				},
-			},
-			TargetKernel: osimage.TargetKernel{Version: "6.12.0-13-amd64"},
-			Bundles: []osimage.Bundle{
-				{
-					ID:              "kernel-modules-6.12.0-13-amd64",
-					Type:            "kernel-modules",
-					KernelVersion:   "6.12.0-13-amd64",
-					Path:            "modules/6.12.0-13-amd64/kernel-modules.tar.zst",
-					SHA256:          "modules-sha",
-					ProvidesModules: []string{"e1000e", "igc", "r8169"},
-				},
-				{
-					ID:     "firmware-net-intel",
-					Type:   "firmware",
-					Path:   "firmware/linux-firmware-net-intel.tar.zst",
-					SHA256: "firmware-sha",
-				},
-			},
-		},
-		CreatedAt: now,
-		UpdatedAt: now,
-	}
-	if err := backend.OSImages().Upsert(context.Background(), img); err != nil {
-		t.Fatalf("upsert os image: %v", err)
-	}
-	target := machine.Machine{
-		Name:     "bm-plan",
-		Hostname: "bm-plan",
-		MAC:      "52:54:00:aa:bb:02",
-		Arch:     "amd64",
-		Firmware: machine.FirmwareUEFI,
-		OSPreset: machine.OSPreset{
-			Family:   machine.OSTypeDebian,
-			Version:  "13",
-			ImageRef: "debian-13-amd64",
-		},
-		Phase: machine.PhaseProvisioning,
-		Provision: &machine.ProvisionProgress{
-			Active:          true,
-			AttemptID:       "attempt-plan",
-			CompletionToken: "token-plan",
-		},
-		CreatedAt: now,
-		UpdatedAt: now,
-	}
-	if err := backend.Machines().Upsert(context.Background(), target); err != nil {
-		t.Fatalf("upsert machine: %v", err)
-	}
-	_, err := hwInfoSvc.Upsert(context.Background(), hwinfo.HardwareInfo{
-		Name:        "bm-plan-hwinfo",
-		MachineName: "bm-plan",
-		AttemptID:   "attempt-plan",
-		Disks: []hwinfo.DiskInfo{
-			{
-				Name:   "nvme0n1",
-				Path:   "/dev/nvme0n1",
-				ByID:   []string{"/dev/disk/by-id/nvme-GOMI_TEST"},
-				Type:   "disk",
-				SizeMB: 1024 * 64,
-			},
-		},
-	})
-	if err != nil {
-		t.Fatalf("upsert hwinfo: %v", err)
-	}
-
-	e := echo.New()
-	req := httptest.NewRequest(http.MethodGet, "/pxe/curtin-config?token=token-plan&attempt_id=attempt-plan", nil)
-	req.Host = "192.168.2.254:8080"
-	rec := httptest.NewRecorder()
-	c := e.NewContext(req, rec)
-
-	h := &Handler{machines: machineSvc, hwinfo: hwInfoSvc, osimages: osImageSvc}
-	if err := h.PXECurtinConfig(c); err != nil {
-		t.Fatalf("PXECurtinConfig: %v", err)
-	}
-	if rec.Code != http.StatusConflict {
-		t.Fatalf("unexpected status: %d body=%s", rec.Code, rec.Body.String())
-	}
-	body := rec.Body.String()
-	if !strings.Contains(body, "curtin deploy requires squashfs image") {
-		t.Fatalf("expected raw image to be rejected, got:\n%s", body)
-	}
-}
-
-func TestPXECurtinConfig_DirectCloudImage(t *testing.T) {
-	backend := memory.New()
-	machineSvc := machine.NewService(backend.Machines())
-	hwInfoSvc := hwinfo.NewService(backend.HWInfo())
-	osImageSvc := osimage.NewService(backend.OSImages())
-	now := time.Now().UTC()
-
-	img := osimage.OSImage{
-		Name:      "ubuntu-24.04-amd64",
-		OSFamily:  "ubuntu",
-		OSVersion: "24.04",
-		Arch:      "amd64",
-		Format:    osimage.FormatRAW,
-		Source:    osimage.SourceURL,
-		Ready:     true,
-		LocalPath: "/var/lib/gomi/data/images/ubuntu-24.04-amd64.raw",
-		CreatedAt: now,
-		UpdatedAt: now,
-	}
-	if err := backend.OSImages().Upsert(context.Background(), img); err != nil {
-		t.Fatalf("upsert os image: %v", err)
-	}
-	target := machine.Machine{
-		Name:     "bm-direct-plan",
-		Hostname: "bm-direct-plan",
-		MAC:      "52:54:00:aa:bb:12",
-		Arch:     "amd64",
-		Firmware: machine.FirmwareBIOS,
-		OSPreset: machine.OSPreset{
-			Family:   machine.OSTypeUbuntu,
-			Version:  "24.04",
-			ImageRef: "ubuntu-24.04-amd64",
-		},
-		Phase: machine.PhaseProvisioning,
-		Provision: &machine.ProvisionProgress{
-			Active:          true,
-			AttemptID:       "attempt-direct-plan",
-			CompletionToken: "token-direct-plan",
-		},
-		CreatedAt: now,
-		UpdatedAt: now,
-	}
-	if err := backend.Machines().Upsert(context.Background(), target); err != nil {
-		t.Fatalf("upsert machine: %v", err)
-	}
-	if _, err := hwInfoSvc.Upsert(context.Background(), hwinfo.HardwareInfo{
-		Name:        "bm-direct-plan-hwinfo",
-		MachineName: "bm-direct-plan",
-		AttemptID:   "attempt-direct-plan",
-		Disks: []hwinfo.DiskInfo{
-			{
-				Name:   "vda",
-				Path:   "/dev/vda",
-				Type:   "disk",
-				SizeMB: 32768,
-			},
-		},
-	}); err != nil {
-		t.Fatalf("upsert hwinfo: %v", err)
-	}
-
-	e := echo.New()
-	req := httptest.NewRequest(http.MethodGet, "/pxe/curtin-config?token=token-direct-plan&attempt_id=attempt-direct-plan", nil)
-	req.Host = "192.168.2.254:8080"
-	rec := httptest.NewRecorder()
-	c := e.NewContext(req, rec)
-
-	h := &Handler{machines: machineSvc, hwinfo: hwInfoSvc, osimages: osImageSvc}
-	if err := h.PXECurtinConfig(c); err != nil {
-		t.Fatalf("PXECurtinConfig: %v", err)
-	}
-	if rec.Code != http.StatusConflict {
-		t.Fatalf("unexpected status: %d body=%s", rec.Code, rec.Body.String())
-	}
-	body := rec.Body.String()
-	if !strings.Contains(body, "curtin deploy requires squashfs image") {
-		t.Fatalf("expected raw image to be rejected, got:\n%s", body)
-	}
-}
-
 func TestPXECurtinConfig_SquashFSImageUsesFSImageAndStorageConfig(t *testing.T) {
 	backend := memory.New()
 	machineSvc := machine.NewService(backend.Machines())
@@ -2418,7 +2217,7 @@ func TestPXEArtifact_OnlyServesManifestArtifactsAndRejectsSymlinkEscape(t *testi
 	outsideDir := t.TempDir()
 	now := time.Now().UTC()
 
-	if err := os.WriteFile(filepath.Join(artifactDir, "root.raw"), []byte("root"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(artifactDir, "rootfs.squashfs"), []byte("root"), 0o644); err != nil {
 		t.Fatalf("write root artifact: %v", err)
 	}
 	if err := os.WriteFile(filepath.Join(artifactDir, "debug.log"), []byte("debug"), 0o644); err != nil {
@@ -2441,7 +2240,7 @@ func TestPXEArtifact_OnlyServesManifestArtifactsAndRejectsSymlinkEscape(t *testi
 		OSFamily:  "debian",
 		OSVersion: "13",
 		Arch:      "amd64",
-		Format:    osimage.FormatRAW,
+		Format:    osimage.FormatSquashFS,
 		Source:    osimage.SourceUpload,
 		Ready:     true,
 		LocalPath: artifactDir,
@@ -2449,8 +2248,8 @@ func TestPXEArtifact_OnlyServesManifestArtifactsAndRejectsSymlinkEscape(t *testi
 			SchemaVersion: "gomi.osimage.v1",
 			BootModes:     []string{"bios", "uefi"},
 			Root: osimage.RootArtifact{
-				Format: osimage.FormatRAW,
-				Path:   "root.raw",
+				Format: osimage.FormatSquashFS,
+				Path:   "rootfs.squashfs",
 				SHA256: "root-sha",
 			},
 			TargetKernel: osimage.TargetKernel{Version: "6.12.0-13-amd64"},
@@ -2475,11 +2274,11 @@ func TestPXEArtifact_OnlyServesManifestArtifactsAndRejectsSymlinkEscape(t *testi
 
 	t.Run("serves manifest root", func(t *testing.T) {
 		e := echo.New()
-		req := httptest.NewRequest(http.MethodGet, "/pxe/artifacts/os-images/debian-13-amd64/root.raw", nil)
+		req := httptest.NewRequest(http.MethodGet, "/pxe/artifacts/os-images/debian-13-amd64/rootfs.squashfs", nil)
 		rec := httptest.NewRecorder()
 		c := e.NewContext(req, rec)
 		c.SetParamNames("name", "*")
-		c.SetParamValues("debian-13-amd64", "root.raw")
+		c.SetParamValues("debian-13-amd64", "rootfs.squashfs")
 
 		if err := h.PXEArtifact(c); err != nil {
 			t.Fatalf("PXEArtifact: %v", err)
@@ -3131,6 +2930,7 @@ func TestPXENocloudUserData_HypervisorRunsSetupAndRegisterScript(t *testing.T) {
 	for _, want := range []string{
 		"qemu-system",
 		"zstd",
+		"xz-utils",
 		`auth_tcp = "none"`,
 		"systemctl start libvirtd-tcp.socket",
 		"/api/v1/hypervisors/setup-and-register.sh",

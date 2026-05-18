@@ -3,7 +3,9 @@ package libvirt
 import (
 	"context"
 	"encoding/xml"
+	"errors"
 	"fmt"
+	"io"
 	"net"
 	"regexp"
 	"sort"
@@ -27,6 +29,10 @@ type Executor interface {
 	CreateVolume(ctx context.Context, name string, sizeGB int, format string) error
 	// CreateOverlayVolume creates a qcow2 volume backed by a base image (copy-on-write).
 	CreateOverlayVolume(ctx context.Context, name string, sizeGB int, backingPath string, backingFormat string) error
+	// VolumeExists reports whether a storage volume exists in the default pool.
+	VolumeExists(ctx context.Context, name string, format string) (bool, error)
+	// CreateVolumeFromReader creates a storage volume in the default pool and uploads content into it.
+	CreateVolumeFromReader(ctx context.Context, name string, sizeBytes int64, format string, r io.Reader) error
 	// DeleteVolume removes a storage volume from the default pool, if present.
 	DeleteVolume(ctx context.Context, name string) error
 	// StartDomain powers on a VM.
@@ -91,9 +97,8 @@ func (e *rpcExecutor) CreateVolume(_ context.Context, name string, sizeGB int, f
 		return fmt.Errorf("lookup storage pool 'default': %w", err)
 	}
 
-	ext := ".qcow2"
-	if format == "raw" {
-		ext = ".img"
+	if format != "qcow2" {
+		return fmt.Errorf("unsupported disk format: %s (must be qcow2)", format)
 	}
 	sizeBytes := int64(sizeGB) * 1024 * 1024 * 1024
 
@@ -103,7 +108,7 @@ func (e *rpcExecutor) CreateVolume(_ context.Context, name string, sizeGB int, f
   <target>
     <format type='%s'/>
   </target>
-</volume>`, name, ext, sizeBytes, format)
+</volume>`, name, ".qcow2", sizeBytes, format)
 
 	_, err = e.l.StorageVolCreateXML(pool, volXML, 0)
 	if err != nil {
@@ -142,6 +147,59 @@ func (e *rpcExecutor) CreateOverlayVolume(_ context.Context, name string, sizeGB
 	return nil
 }
 
+func (e *rpcExecutor) VolumeExists(_ context.Context, name string, format string) (bool, error) {
+	pool, err := e.l.StoragePoolLookupByName("default")
+	if err != nil {
+		return false, fmt.Errorf("lookup storage pool 'default': %w", err)
+	}
+	if format == "" {
+		format = "qcow2"
+	}
+	_, err = e.l.StorageVolLookupByName(pool, volumeFileName(name, format))
+	if err != nil {
+		if isNoStorageVolumeError(err) {
+			return false, nil
+		}
+		return false, fmt.Errorf("lookup storage volume %s: %w", volumeFileName(name, format), err)
+	}
+	return true, nil
+}
+
+func (e *rpcExecutor) CreateVolumeFromReader(ctx context.Context, name string, sizeBytes int64, format string, r io.Reader) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	pool, err := e.l.StoragePoolLookupByName("default")
+	if err != nil {
+		return fmt.Errorf("lookup storage pool 'default': %w", err)
+	}
+	if format != "qcow2" {
+		return fmt.Errorf("unsupported disk format: %s (must be qcow2)", format)
+	}
+	if sizeBytes <= 0 {
+		return fmt.Errorf("volume size must be positive")
+	}
+
+	volName := volumeFileName(name, format)
+	volXML := fmt.Sprintf(`<volume type='file'>
+  <name>%s</name>
+  <capacity unit='bytes'>%d</capacity>
+  <target>
+    <format type='%s'/>
+  </target>
+</volume>`, xmlEscape(volName), sizeBytes, xmlEscape(format))
+
+	vol, err := e.l.StorageVolCreateXML(pool, volXML, 0)
+	if err != nil {
+		return fmt.Errorf("create volume %s: %w", volName, err)
+	}
+	if err := e.l.StorageVolUpload(vol, r, 0, 0, 0); err != nil {
+		_ = e.l.StorageVolDelete(vol, 0)
+		return fmt.Errorf("upload volume %s: %w", volName, err)
+	}
+	return nil
+}
+
 func (e *rpcExecutor) DeleteVolume(_ context.Context, name string) error {
 	pool, err := e.l.StoragePoolLookupByName("default")
 	if err != nil {
@@ -159,6 +217,28 @@ func (e *rpcExecutor) DeleteVolume(_ context.Context, name string) error {
 		}
 	}
 	return nil
+}
+
+func volumeFileName(name string, format string) string {
+	if format == "" {
+		format = "qcow2"
+	}
+	suffix := "." + format
+	if strings.HasSuffix(name, suffix) {
+		return name
+	}
+	return name + suffix
+}
+
+func xmlEscape(s string) string {
+	var b strings.Builder
+	_ = xml.EscapeText(&b, []byte(s))
+	return b.String()
+}
+
+func isNoStorageVolumeError(err error) bool {
+	var libvirtErr golibvirt.Error
+	return errors.As(err, &libvirtErr) && libvirtErr.Code == uint32(golibvirt.ErrNoStorageVol)
 }
 
 func (e *rpcExecutor) DefineDomain(_ context.Context, cfg DomainConfig) error {

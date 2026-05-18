@@ -7,12 +7,10 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -568,7 +566,7 @@ func TestCreateURLOSImageDownloadsToServerStorage(t *testing.T) {
 	sum := sha256.Sum256(content)
 	checksum := hex.EncodeToString(sum[:])
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/images/debian.raw" {
+		if r.URL.Path != "/images/debian.qcow2" {
 			http.NotFound(w, r)
 			return
 		}
@@ -581,9 +579,9 @@ func TestCreateURLOSImageDownloadsToServerStorage(t *testing.T) {
 		"osFamily":  "debian",
 		"osVersion": "13",
 		"arch":      "amd64",
-		"format":    "raw",
+		"format":    "qcow2",
 		"source":    "url",
-		"url":       srv.URL + "/images/debian.raw",
+		"url":       srv.URL + "/images/debian.qcow2",
 		"checksum":  "sha256:" + checksum,
 	}, env.token)
 	requireStatus(t, rec, http.StatusCreated)
@@ -2296,119 +2294,6 @@ func TestRedeployMachine_PowerCycleUsesPreviousIPWhenRedeployClearsIP(t *testing
 	if ip, _ := body["ip"].(string); ip != "" {
 		t.Fatalf("expected redeployed machine IP to be cleared, got %q", ip)
 	}
-}
-
-func TestOSCatalogListsSupportedImages(t *testing.T) {
-	env := setupTestEnv(t)
-
-	rec := doRequest(env.echo, http.MethodGet, "/api/v1/os-catalog", nil, env.token)
-	requireStatus(t, rec, http.StatusOK)
-
-	body := parseBody(t, rec)
-	items, ok := body["items"].([]any)
-	if !ok {
-		t.Fatalf("expected items array, got %T", body["items"])
-	}
-	seen := map[string]string{}
-	for _, raw := range items {
-		item, ok := raw.(map[string]any)
-		if !ok {
-			t.Fatalf("expected catalog item object, got %T", raw)
-		}
-		entry, ok := item["entry"].(map[string]any)
-		if !ok {
-			t.Fatalf("expected entry object, got %T", item["entry"])
-		}
-		name, _ := entry["name"].(string)
-		bootEnv, _ := entry["bootEnvironment"].(string)
-		variant, _ := entry["variant"].(string)
-		expectedFormat := "raw"
-		expectedCompression := "zstd"
-		expectedSuffix := ".raw.zst"
-		if name == "debian-13-amd64-cloud" {
-			expectedFormat = "qcow2"
-			expectedCompression = ""
-			expectedSuffix = ".qcow2"
-		} else if variant == "baremetal" {
-			expectedFormat = "squashfs"
-			expectedCompression = ""
-			expectedSuffix = ".rootfs.squashfs"
-		}
-		if entry["format"] != expectedFormat {
-			t.Fatalf("expected %s catalog format %s, got %v", name, expectedFormat, entry["format"])
-		}
-		if entry["sourceFormat"] != expectedFormat {
-			t.Fatalf("expected %s catalog sourceFormat %s, got %v", name, expectedFormat, entry["sourceFormat"])
-		}
-		gotCompression, hasCompression := entry["sourceCompression"]
-		if expectedCompression == "" && !hasCompression {
-			gotCompression = ""
-		}
-		if gotCompression != expectedCompression {
-			t.Fatalf("expected %s catalog sourceCompression %q, got %v", name, expectedCompression, entry["sourceCompression"])
-		}
-		url, _ := entry["url"].(string)
-		if !strings.HasSuffix(url, expectedSuffix) {
-			t.Fatalf("expected %s catalog URL to reference %s artifact, got %q", name, expectedSuffix, url)
-		}
-		if name == "debian-13-amd64-cloud" && !strings.Contains(url, "cloud.debian.org") {
-			t.Fatalf("expected %s catalog URL to reference Debian official cloud image, got %q", name, url)
-		}
-		seen[name] = bootEnv
-	}
-
-	if seen["ubuntu-22.04-amd64-baremetal"] != "ubuntu-minimal-cloud-amd64" {
-		t.Fatalf("expected ubuntu-22.04-amd64-baremetal to use ubuntu-minimal-cloud-amd64 boot environment, got %q", seen["ubuntu-22.04-amd64-baremetal"])
-	}
-}
-
-func TestOSCatalogInstallExternalURLOnlyImage(t *testing.T) {
-	imageSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = w.Write([]byte("raw-image-content"))
-	}))
-	defer imageSrv.Close()
-
-	catalogPath := filepath.Join(t.TempDir(), "catalog.yaml")
-	if err := os.WriteFile(catalogPath, []byte(fmt.Sprintf(`
-entries:
-  - name: external-url-only
-    osFamily: custom
-    osVersion: "1"
-    arch: amd64
-    variant: baremetal
-    format: raw
-    sourceFormat: raw
-    url: %s/root.raw
-    bootEnvironment: ubuntu-minimal-cloud-amd64
-`, imageSrv.URL)), 0o644); err != nil {
-		t.Fatalf("write catalog: %v", err)
-	}
-	t.Setenv("GOMI_OS_CATALOG_FILE", catalogPath)
-	t.Setenv("GOMI_OS_CATALOG_REPLACE", "true")
-	env := setupTestEnv(t)
-
-	rec := doRequest(env.echo, http.MethodGet, "/api/v1/os-catalog", nil, env.token)
-	requireStatus(t, rec, http.StatusOK)
-	body := parseBody(t, rec)
-	items := body["items"].([]any)
-	if len(items) != 1 {
-		t.Fatalf("expected one external catalog item, got %d", len(items))
-	}
-
-	rec = doRequest(env.echo, http.MethodPost, "/api/v1/os-catalog/external-url-only/install", nil, env.token)
-	requireStatus(t, rec, http.StatusAccepted)
-
-	for i := 0; i < 20; i++ {
-		rec = doRequest(env.echo, http.MethodGet, "/api/v1/os-images/external-url-only", nil, env.token)
-		if rec.Code == http.StatusOK {
-			body = parseBody(t, rec)
-			if body["ready"] == true {
-				return
-			}
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-	t.Fatal("expected external URL-only image to become ready")
 }
 
 func TestBootEnvironmentsListStartsMissing(t *testing.T) {

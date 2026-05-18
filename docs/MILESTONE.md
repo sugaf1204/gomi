@@ -172,7 +172,7 @@ typed OS family branches.
 - Keep curtin YAML generation centralized in a small builder layer rather than
   scattering `sources`, `storage`, `stages`, `late_commands`, and shell snippets
   across deploy handlers.
-- Treat whole-disk raw artifacts, rootfs SquashFS artifacts, ISO installers, and
+- Treat rootfs SquashFS artifacts, qcow2 cloud images, ISO installers, and
   future filesystem artifacts as distinct deploy capabilities instead of
   inferring behavior from filenames or one Ubuntu example.
 - Isolate Ubuntu/Debian-specific cloud-init, netplan, bootloader, package, and

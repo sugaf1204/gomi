@@ -252,9 +252,6 @@ func (s *Server) ReinstallVM(c echo.Context) error {
 		}
 	}
 	applyReinstallSpec(&current, &req)
-	if req.AdvancedOptions == nil {
-		dropLegacyRawDiskFormat(&current)
-	}
 	ensureVMNetwork(&current)
 	resolveVMBridgeFromHypervisor(ctx, &current, s.hypervisors)
 
@@ -407,15 +404,6 @@ func normalizeSSHKeyRefs(refs []string) []string {
 		out = append(out, ref)
 	}
 	return out
-}
-
-func dropLegacyRawDiskFormat(current *vm.VirtualMachine) {
-	if current == nil || current.AdvancedOptions == nil {
-		return
-	}
-	if strings.EqualFold(strings.TrimSpace(current.AdvancedOptions.DiskFormat), "raw") {
-		current.AdvancedOptions.DiskFormat = ""
-	}
 }
 
 func applyInstallConfigInline(v *vm.VirtualMachine, inline string) {

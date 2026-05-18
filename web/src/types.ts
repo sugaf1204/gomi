@@ -274,7 +274,7 @@ export type OSImage = {
   osFamily: string
   osVersion: string
   arch: string
-  format: 'qcow2' | 'raw' | 'iso' | 'squashfs'
+  format: 'qcow2' | 'iso' | 'squashfs'
   variant?: 'cloud' | 'baremetal' | 'server' | 'desktop'
   source: 'upload' | 'url'
   url?: string
@@ -298,30 +298,6 @@ export type BootEnvironmentStatus = {
   initrdPath?: string
   rootfsPath?: string
   updatedAt?: string
-}
-
-export type OSCatalogEntry = {
-  name: string
-  osFamily: string
-  osVersion: string
-  arch: string
-  format: 'qcow2' | 'raw' | 'iso' | 'squashfs'
-  sourceFormat?: 'qcow2' | 'raw' | 'iso' | 'squashfs'
-  sourceCompression?: 'zstd'
-  variant?: 'cloud' | 'baremetal' | 'server' | 'desktop'
-  url: string
-  checksum?: string
-  description?: string
-  bootEnvironment: string
-}
-
-export type OSCatalogItem = {
-  entry: OSCatalogEntry
-  installed: boolean
-  installing: boolean
-  osImageReady: boolean
-  osImageError?: string
-  bootEnvironment: BootEnvironmentStatus
 }
 
 export type DHCPLease = {

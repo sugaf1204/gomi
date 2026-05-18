@@ -8,7 +8,7 @@ type DomainConfig struct {
 	VCPU         int
 	MemoryMB     int
 	DiskPath     string // path to the OS image on the hypervisor
-	DiskFormat   string // qcow2, raw
+	DiskFormat   string // qcow2
 	DiskSizeGB   int    // disk size hint (used when creating overlay)
 	Networks     []NetworkConfig
 	CloudInit    string         // path to cloud-init ISO on the hypervisor (optional)
@@ -83,8 +83,8 @@ func (c DomainConfig) Validate() error {
 	if c.DiskFormat == "" {
 		return fmt.Errorf("disk format is required")
 	}
-	if c.DiskFormat != "qcow2" && c.DiskFormat != "raw" {
-		return fmt.Errorf("unsupported disk format: %s (must be qcow2 or raw)", c.DiskFormat)
+	if c.DiskFormat != "qcow2" {
+		return fmt.Errorf("unsupported disk format: %s (must be qcow2)", c.DiskFormat)
 	}
 	switch c.CPUMode {
 	case "", "host-passthrough", "host-model", "maximum":

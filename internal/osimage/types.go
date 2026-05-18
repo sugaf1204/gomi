@@ -8,7 +8,6 @@ type ImageFormat string
 
 const (
 	FormatQCOW2    ImageFormat = "qcow2"
-	FormatRAW      ImageFormat = "raw"
 	FormatISO      ImageFormat = "iso"
 	FormatSquashFS ImageFormat = "squashfs"
 )

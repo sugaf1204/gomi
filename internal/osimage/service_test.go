@@ -180,9 +180,9 @@ func TestServiceCreateWithURLSource(t *testing.T) {
 		OSFamily:  "debian",
 		OSVersion: "13",
 		Arch:      "amd64",
-		Format:    osimage.FormatRAW,
+		Format:    osimage.FormatQCOW2,
 		Source:    osimage.SourceURL,
-		URL:       "https://cloud.debian.org/images/cloud/trixie/latest/debian-13-generic-amd64.raw",
+		URL:       "https://cloud.debian.org/images/cloud/trixie/latest/debian-13-genericcloud-amd64.qcow2",
 	}
 	created, err := svc.Create(ctx, img)
 	if err != nil {
@@ -191,8 +191,8 @@ func TestServiceCreateWithURLSource(t *testing.T) {
 	if created.Source != osimage.SourceURL {
 		t.Fatalf("expected source url, got %s", created.Source)
 	}
-	if created.Format != osimage.FormatRAW {
-		t.Fatalf("expected format raw, got %s", created.Format)
+	if created.Format != osimage.FormatQCOW2 {
+		t.Fatalf("expected format qcow2, got %s", created.Format)
 	}
 }
 
