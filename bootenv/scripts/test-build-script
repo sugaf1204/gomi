@@ -3,6 +3,7 @@ set -euo pipefail
 
 script="${1:-scripts/build}"
 mkosi_conf="${2:-mkosi.conf}"
+runner="${3:-scripts/gomi-deploy-runner}"
 
 fail() {
   echo "build script contract test failed: $*" >&2
@@ -42,6 +43,10 @@ done
 
 grep -q 'validate_initrd_modules' "$script" || fail "initrd module validation is missing"
 grep -q 'validate_squashfs_cleanup' "$script" || fail "squashfs cleanup validation is missing"
+
+grep -q 'repair_partition_table' "$runner" || fail "deploy runner does not repair partition table"
+grep -q 'parted -s -f "$disk" print' "$runner" || fail "deploy runner does not use parted fix mode"
+grep -q 'runner.repair_partition_table' "$runner" || fail "deploy runner does not report partition table repair timing"
 
 require_package() {
   local package="$1"
