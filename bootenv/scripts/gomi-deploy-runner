@@ -90,8 +90,13 @@ partition_device() {
 }
 
 repair_partition_table() {
-  local disk="$1"
-  sgdisk -e "$disk" >/dev/null || return 1
+  local disk="$1" pttype
+  pttype="$(blkid -p -o value -s PTTYPE "$disk" 2>/dev/null || true)"
+  case "$pttype" in
+    gpt) sgdisk -e "$disk" >/dev/null || return 1 ;;
+    dos) ;;
+    *) parted -s "$disk" print >/dev/null || return 1 ;;
+  esac
   partprobe "$disk" || return 1
   udevadm settle || true
 }

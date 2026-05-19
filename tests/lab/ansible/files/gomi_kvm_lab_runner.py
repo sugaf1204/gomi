@@ -23,7 +23,7 @@ import subprocess
 import sys
 import threading
 import time
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
 from urllib import error as urlerror
 from urllib import parse as urlparse
@@ -1013,6 +1013,16 @@ class LabRunner:
         filename = str(image.get("rootfs_path") or f"{image['image_ref']}.rootfs.squashfs").lstrip("/")
         return f"{base}/{filename}"
 
+    def disk_image_source_url(self, image: dict[str, Any]) -> str:
+        explicit = str(image.get("disk_image_url") or image.get("url") or "").strip()
+        if explicit:
+            return explicit
+        base = str(self.config.get("os_image_source_url") or "").strip().rstrip("/")
+        if not base:
+            raise LabError(f"os_image_source_url is required for {image['image_ref']}")
+        filename = str(image.get("source_path") or image.get("artifact_path") or f"{image['image_ref']}.qcow2").lstrip("/")
+        return f"{base}/{filename}"
+
     def download_rootfs_image(self, image: dict[str, Any]) -> str:
         image_ref = image["image_ref"]
         src = self.rootfs_source_url(image)
@@ -1034,15 +1044,16 @@ class LabRunner:
 
     def download_disk_image(self, image: dict[str, Any]) -> str:
         image_ref = image["image_ref"]
-        src = self.rootfs_source_url(image)
+        src = self.disk_image_source_url(image)
         artifact_dir = f"/var/lib/gomi/data/images/{image_ref}"
         artifact_name = str(image.get("artifact_path") or "root.qcow2").lstrip("/")
         local_path = f"{artifact_dir}/{artifact_name}"
+        local_dir = str(PurePosixPath(local_path).parent)
         self.vm_ssh(
             "bash -lc "
             + shlex.quote(
                 "set -euo pipefail; "
-                f"sudo mkdir -p {shlex.quote(artifact_dir)}; "
+                f"sudo mkdir -p {shlex.quote(local_dir)}; "
                 f"tmp={shlex.quote(local_path + '.download')}; "
                 f"sudo curl -fL --retry 5 -o \"$tmp\" {shlex.quote(src)}; "
                 f"sudo mv \"$tmp\" {shlex.quote(local_path)}; "
