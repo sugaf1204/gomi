@@ -1,3 +1,9 @@
+gomi (0.0.20) unstable; urgency=medium
+
+  * Repair target disk partition tables after qcow2 deployment.
+
+ -- sugaf1204 <sugaf1204@example.invalid>  Wed, 20 May 2026 00:35:00 +0900
+
 gomi (0.0.19) unstable; urgency=medium
 
   * Download bare-metal qcow2 images locally before qemu-img conversion.
