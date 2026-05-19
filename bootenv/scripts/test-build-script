@@ -45,8 +45,14 @@ grep -q 'validate_initrd_modules' "$script" || fail "initrd module validation is
 grep -q 'validate_squashfs_cleanup' "$script" || fail "squashfs cleanup validation is missing"
 
 grep -q 'repair_partition_table' "$runner" || fail "deploy runner does not repair partition table"
-grep -q "parted -s -f \"\\\$disk\" print" "$runner" || fail "deploy runner does not use parted fix mode"
+grep -q 'PTTYPE' "$runner" || fail "deploy runner does not detect partition table type"
+grep -q "sgdisk -e \"\\\$disk\"" "$runner" || fail "deploy runner does not use sgdisk GPT repair"
 grep -q 'runner.repair_partition_table' "$runner" || fail "deploy runner does not report partition table repair timing"
+grep -q 'resize_root_filesystem' "$runner" || fail "deploy runner does not resize root filesystem"
+grep -q "parted -s \"\\\$disk\" resizepart" "$runner" || fail "deploy runner does not grow target root partition"
+grep -q "resize2fs \"\\\$root_device\"" "$runner" || fail "deploy runner does not grow ext root filesystems"
+grep -q 'etc/growroot-disabled' "$runner" || fail "deploy runner does not disable target initramfs root growth after resize"
+grep -q 'runner.resize_root_filesystem' "$runner" || fail "deploy runner does not report root filesystem resize timing"
 
 require_package() {
   local package="$1"
@@ -56,3 +62,4 @@ require_package() {
 
 require_package rsync
 require_package sudo
+require_package gdisk

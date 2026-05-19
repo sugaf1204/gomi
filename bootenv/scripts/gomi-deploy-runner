@@ -90,10 +90,34 @@ partition_device() {
 }
 
 repair_partition_table() {
-  local disk="$1"
-  parted -s -f "$disk" print >/dev/null || return 1
+  local disk="$1" pttype
+  pttype="$(blkid -p -o value -s PTTYPE "$disk" 2>/dev/null || true)"
+  case "$pttype" in
+    gpt) sgdisk -e "$disk" >/dev/null || return 1 ;;
+    dos) ;;
+    *) parted -s "$disk" print >/dev/null || return 1 ;;
+  esac
   partprobe "$disk" || return 1
   udevadm settle || true
+}
+
+resize_root_filesystem() {
+  local disk="$1" part="$2" root_device="$3" fstype rc
+  parted -s "$disk" resizepart "$part" 100% || return 2
+  partprobe "$disk" || return 1
+  udevadm settle || true
+  fstype="$(blkid -o value -s TYPE "$root_device" 2>/dev/null || true)"
+  case "$fstype" in
+    ext2|ext3|ext4) ;;
+    *) return 2 ;;
+  esac
+  if e2fsck -f -y "$root_device"; then
+    :
+  else
+    rc="$?"
+    [ "$rc" -le 3 ] || return 1
+  fi
+  resize2fs "$root_device" || return 1
 }
 
 disk_links() {
@@ -188,11 +212,23 @@ if [ "$deploy_mode" = "disk-image" ]; then
   post_timing runner.repair_partition_table "checked target partition table"
   root_device="$(partition_device "$target_disk" "$root_part")" || fail "failed to resolve target root partition"
   [ -b "$root_device" ] || fail "target root partition is not a block device: $root_device"
+  root_resize_done=false
+  if resize_root_filesystem "$target_disk" "$root_part" "$root_device"; then
+    root_resize_done=true
+    post_timing runner.resize_root_filesystem "expanded target root filesystem"
+  else
+    rc="$?"
+    [ "$rc" -eq 2 ] || fail "root filesystem resize failed"
+    post_timing runner.resize_root_filesystem "skipped unsupported target root filesystem" "skipped"
+  fi
   mkdir -p /mnt/gomi-target
   mount "$root_device" /mnt/gomi-target || fail "failed to mount target root partition"
   target_mount="/mnt/gomi-target"
   seed_dir="/mnt/gomi-target/var/lib/cloud/seed/nocloud"
   mkdir -p "$seed_dir" /mnt/gomi-target/etc/cloud/cloud.cfg.d
+  if [ "$root_resize_done" = true ]; then
+    touch /mnt/gomi-target/etc/growroot-disabled || fail "failed to disable target initramfs root growth"
+  fi
   for file in user-data meta-data vendor-data network-config; do
     curl -fsS -o "$seed_dir/$file" "$seed_url/$file" || fail "failed to fetch NoCloud $file"
   done
