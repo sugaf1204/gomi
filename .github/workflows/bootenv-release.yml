@@ -36,11 +36,16 @@ jobs:
       - name: Install image build tools
         run: |
           sudo apt-get update
-          sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y mkosi squashfs-tools shellcheck systemd-boot
+          sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y mkosi squashfs-tools shellcheck systemd-boot initramfs-tools-core
       - name: Test
         run: make test
       - name: Build boot environment
         run: make build OUT=dist/ubuntu-minimal-cloud-amd64 VERSION="${GITHUB_REF_NAME:-manual}"
+      - name: Report boot environment sizes
+        run: |
+          set -euo pipefail
+          cd dist/ubuntu-minimal-cloud-amd64
+          stat -c '%n %s bytes' boot-kernel boot-initrd rootfs.squashfs
 
       - name: Upload boot environment artifact
         if: startsWith(github.ref, 'refs/tags/')
