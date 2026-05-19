@@ -98,7 +98,7 @@ repair_partition_table() {
 
 resize_root_filesystem() {
   local disk="$1" part="$2" root_device="$3" fstype rc
-  parted -s -f "$disk" resizepart "$part" 100% || return 1
+  parted -s -f "$disk" resizepart "$part" 100% || return 2
   partprobe "$disk" || return 1
   udevadm settle || true
   fstype="$(blkid -o value -s TYPE "$root_device" 2>/dev/null || true)"
@@ -110,7 +110,7 @@ resize_root_filesystem() {
     :
   else
     rc="$?"
-    [ "$rc" -le 1 ] || return 1
+    [ "$rc" -le 3 ] || return 1
   fi
   resize2fs "$root_device" || return 1
 }
