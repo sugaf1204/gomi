@@ -1,3 +1,9 @@
+gomi (0.0.18) unstable; urgency=medium
+
+  * Reduce bootenv rootfs SquashFS contents.
+
+ -- sugaf1204 <sugaf1204@example.invalid>  Tue, 19 May 2026 12:51:07 +0900
+
 gomi (0.0.17) unstable; urgency=medium
 
   * Add bare-metal qcow2 deployment support and shell-based bootenv build.
