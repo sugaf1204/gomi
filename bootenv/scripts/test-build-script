@@ -1,0 +1,53 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+script="${1:-scripts/build}"
+mkosi_conf="${2:-mkosi.conf}"
+
+fail() {
+  echo "build script contract test failed: $*" >&2
+  exit 1
+}
+
+grep -q 'MODULES=most' "$script" || fail "MODULES=most is not configured"
+grep -q 'etc/initramfs-tools/hooks/gomi-deploy-modules' "$script" || fail "initramfs hook is not generated"
+
+for dir in \
+  drivers/net \
+  drivers/net/usb \
+  net/openvswitch \
+  drivers/ata \
+  drivers/scsi \
+  drivers/block \
+  drivers/nvme \
+  drivers/md \
+  drivers/char/ipmi \
+  drivers/infiniband \
+  drivers/nvdimm \
+  drivers/dax \
+  net/vmw_vsock \
+  net/9p
+do
+  grep -q "$dir" "$script" || fail "initramfs hook does not include $dir"
+done
+
+for module in bcache zfs virtiofs 9p squashfs overlay; do
+  grep -q "$module" "$script" || fail "initramfs hook does not include $module"
+done
+
+grep -q 'cleanup_rootfs_before_pack' "$script" || fail "rootfs cleanup function is missing"
+for rel in boot usr/lib/modules usr/lib/firmware var/cache/apt var/lib/apt/lists tmp var/tmp; do
+  grep -q "$rel" "$script" || fail "rootfs cleanup does not mention /$rel"
+done
+
+grep -q 'validate_initrd_modules' "$script" || fail "initrd module validation is missing"
+grep -q 'validate_squashfs_cleanup' "$script" || fail "squashfs cleanup validation is missing"
+
+require_package() {
+  local package="$1"
+  sed -n 's/^Packages=//p' "$mkosi_conf" | tr ',' '\n' | grep -qx "$package" ||
+    fail "mkosi package list does not include $package"
+}
+
+require_package rsync
+require_package sudo

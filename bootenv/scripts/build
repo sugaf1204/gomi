@@ -9,15 +9,17 @@ case "$out" in
   /*) out_abs="$out" ;;
   *) out_abs="$root/$out" ;;
 esac
+mkosi_bin="${MKOSI_BIN:-mkosi}"
 
-for cmd in mkosi mksquashfs sha256sum stat find sort; do
+for cmd in awk grep lsinitramfs mktemp mksquashfs nproc sed sha256sum stat find sort unsquashfs; do
   command -v "$cmd" >/dev/null || { echo "missing command: $cmd" >&2; exit 1; }
 done
+command -v "$mkosi_bin" >/dev/null || { echo "missing command: $mkosi_bin" >&2; exit 1; }
 
 sudo rm -rf "$work" "$out_abs"
 mkdir -p "$work" "$out_abs"
 
-sudo mkosi --directory "$root" --output-dir "$work" --force build
+sudo "$mkosi_bin" --directory "$root" --output-dir "$work" --force build
 rootfs="$work/rootfs"
 test -d "$rootfs" || { echo "mkosi did not create $rootfs" >&2; exit 1; }
 
@@ -46,7 +48,8 @@ EOF
     "$rootfs/etc/initramfs-tools/scripts/local-top" \
     "$rootfs/etc/initramfs-tools/scripts/local-bottom" \
     "$rootfs/etc/initramfs-tools/scripts/init-bottom" \
-    "$rootfs/etc/initramfs-tools/conf.d"
+    "$rootfs/etc/initramfs-tools/conf.d" \
+    "$rootfs/etc/initramfs-tools/hooks"
 
   for stage in init-top local-top local-bottom init-bottom; do
     sudo tee "$rootfs/etc/initramfs-tools/scripts/$stage/gomi-timing" >/dev/null <<'SCRIPT'
@@ -68,7 +71,54 @@ SCRIPT
     sudo chmod 0755 "$rootfs/etc/initramfs-tools/scripts/$stage/gomi-timing"
   done
 
-  echo "MODULES=netboot" | sudo tee "$rootfs/etc/initramfs-tools/conf.d/gomi-netboot" >/dev/null
+  sudo tee "$rootfs/etc/initramfs-tools/hooks/gomi-deploy-modules" >/dev/null <<'SCRIPT'
+#!/bin/sh
+set -e
+
+PREREQ=""
+prereqs() { echo "$PREREQ"; }
+case "$1" in
+  prereqs) prereqs; exit 0 ;;
+esac
+
+. /usr/share/initramfs-tools/hook-functions
+
+add_module_dir() {
+  copy_modules_dir "kernel/$1"
+}
+
+add_module_if_available() {
+  if modinfo -k "$version" "$1" >/dev/null 2>&1; then
+    manual_add_modules "$1"
+  fi
+}
+
+for dir in \
+  drivers/net \
+  drivers/net/usb \
+  net/openvswitch \
+  drivers/ata \
+  drivers/scsi \
+  drivers/block \
+  drivers/nvme \
+  drivers/md \
+  drivers/char/ipmi \
+  drivers/infiniband \
+  drivers/nvdimm \
+  drivers/dax \
+  net/vmw_vsock \
+  net/9p
+do
+  add_module_dir "$dir"
+done
+
+for module in bcache zfs virtiofs 9p squashfs overlay; do
+  add_module_if_available "$module"
+done
+SCRIPT
+  sudo chmod 0755 "$rootfs/etc/initramfs-tools/hooks/gomi-deploy-modules"
+
+  echo "MODULES=most" | sudo tee "$rootfs/etc/initramfs-tools/conf.d/gomi-netboot" >/dev/null
   sudo install -d -m 0755 "$rootfs/etc/gomi"
   sudo tee "$rootfs/etc/gomi/agent.env" >/dev/null <<'EOF'
 GOMI_METADATA_URL=http://gomi.local/metadata
@@ -95,6 +145,108 @@ generate_initramfs() {
   done
 }
 
+cleanup_rootfs_before_pack() {
+  local path
+  for path in \
+    "$rootfs/boot" \
+    "$rootfs/usr/lib/modules" \
+    "$rootfs/usr/lib/firmware"; do
+    sudo rm -rf "$path"
+  done
+
+  for path in \
+    "$rootfs/var/cache/apt" \
+    "$rootfs/var/lib/apt/lists" \
+    "$rootfs/tmp" \
+    "$rootfs/var/tmp"; do
+    [ -d "$path" ] || continue
+    sudo find "$path" -mindepth 1 -maxdepth 1 -exec rm -rf {} +
+  done
+}
+
+validate_clean_rootfs() {
+  local rel
+  for rel in boot usr/lib/modules usr/lib/firmware; do
+    [ ! -e "$rootfs/$rel" ] || { echo "rootfs still contains /$rel" >&2; exit 1; }
+  done
+}
+
+assert_boot_driver() {
+  local label="$1" module="$2" initrd_list="$3" builtin_list="$4"
+  if grep -Eq "/${module}[.]ko([.]|$)" "$initrd_list"; then
+    return
+  fi
+  if [ -f "$builtin_list" ] && grep -Eq "/${module}[.]ko$" "$builtin_list"; then
+    return
+  fi
+  echo "boot-initrd is missing $label module ($module)" >&2
+  exit 1
+}
+
+validate_initrd_modules() {
+  local builtin_list initrd_list kver
+  initrd_list="$(mktemp)"
+  kver="$(basename "$initrd" | sed 's/^initrd[.]img-//')"
+  builtin_list="$rootfs/lib/modules/$kver/modules.builtin"
+  lsinitramfs "$out_abs/boot-initrd" > "$initrd_list"
+
+  assert_boot_driver r8169 r8169 "$initrd_list" "$builtin_list"
+  assert_boot_driver igc igc "$initrd_list" "$builtin_list"
+  assert_boot_driver e1000e e1000e "$initrd_list" "$builtin_list"
+  assert_boot_driver igb igb "$initrd_list" "$builtin_list"
+  assert_boot_driver ixgbe ixgbe "$initrd_list" "$builtin_list"
+  assert_boot_driver i40e i40e "$initrd_list" "$builtin_list"
+  assert_boot_driver ice ice "$initrd_list" "$builtin_list"
+  assert_boot_driver tg3 tg3 "$initrd_list" "$builtin_list"
+  assert_boot_driver bnxt_en bnxt_en "$initrd_list" "$builtin_list"
+  assert_boot_driver mlx5_core mlx5_core "$initrd_list" "$builtin_list"
+  assert_boot_driver virtio_net virtio_net "$initrd_list" "$builtin_list"
+  assert_boot_driver nvme nvme "$initrd_list" "$builtin_list"
+  assert_boot_driver ahci ahci "$initrd_list" "$builtin_list"
+  assert_boot_driver sd_mod sd_mod "$initrd_list" "$builtin_list"
+  assert_boot_driver virtio_blk virtio_blk "$initrd_list" "$builtin_list"
+  assert_boot_driver virtio_scsi virtio_scsi "$initrd_list" "$builtin_list"
+  assert_boot_driver squashfs squashfs "$initrd_list" "$builtin_list"
+  assert_boot_driver overlayfs overlay "$initrd_list" "$builtin_list"
+  rm -f "$initrd_list"
+}
+
+validate_squashfs_cleanup() {
+  local list rel
+  list="$(mktemp)"
+  unsquashfs -ll "$out_abs/rootfs.squashfs" > "$list"
+
+  for rel in boot usr/lib/modules usr/lib/firmware; do
+    if awk '{print $NF}' "$list" | grep -Eq "^squashfs-root/$rel(/|$)"; then
+      echo "rootfs.squashfs still contains /$rel" >&2
+      exit 1
+    fi
+  done
+  rm -f "$list"
+}
+
+artifact_size() {
+  stat -c %s "$1"
+}
+
+format_mib() {
+  awk -v bytes="$1" 'BEGIN { printf "%.2f MiB", bytes / 1024 / 1024 }'
+}
+
+report_artifact_sizes() {
+  local kernel_size initrd_size rootfs_size total_size
+  kernel_size="$(artifact_size "$out_abs/boot-kernel")"
+  initrd_size="$(artifact_size "$out_abs/boot-initrd")"
+  rootfs_size="$(artifact_size "$out_abs/rootfs.squashfs")"
+  total_size="$((kernel_size + initrd_size + rootfs_size))"
+
+  echo "bootenv size report:"
+  echo "  boot-kernel: $(format_mib "$kernel_size")"
+  echo "  boot-initrd: $(format_mib "$initrd_size")"
+  echo "  rootfs.squashfs: $(format_mib "$rootfs_size") (target: < 200.00 MiB)"
+  echo "  total: $(format_mib "$total_size") (target: < 300.00 MiB)"
+}
+
 install_into_rootfs
 with_chroot_mounts generate_initramfs
 
@@ -105,8 +257,13 @@ test -n "$initrd" || { echo "rootfs has no initrd in /boot" >&2; exit 1; }
 
 sudo cp "$kernel" "$out_abs/boot-kernel"
 sudo cp "$initrd" "$out_abs/boot-initrd"
+validate_initrd_modules
+cleanup_rootfs_before_pack
+validate_clean_rootfs
 sudo mksquashfs "$rootfs" "$out_abs/rootfs.squashfs" -noappend -comp zstd -b 1M -processors "$(nproc)" -all-root
+validate_squashfs_cleanup
 sudo chown "$(id -u):$(id -g)" "$out_abs/boot-kernel" "$out_abs/boot-initrd" "$out_abs/rootfs.squashfs"
+report_artifact_sizes
 
 cat >"$out_abs/boot.ipxe" <<'EOF'
 #!ipxe
