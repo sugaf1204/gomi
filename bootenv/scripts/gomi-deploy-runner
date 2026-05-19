@@ -6,12 +6,13 @@ inventory_file="$tmpdir/gomi-inventory.tsv"
 response_file="$tmpdir/gomi-inventory-response.json"
 curtin_cfg="$tmpdir/gomi-curtin.yaml"
 target_mount=""
+disk_image_tmp=""
 
 log() { printf '%s %s\n' "$(date -u +%FT%TZ)" "$*" >&2; }
 
 cleanup_target_mount() {
-  [ -n "$target_mount" ] || return 0
-  umount "$target_mount" 2>/dev/null || true
+  [ -z "$target_mount" ] || umount "$target_mount" 2>/dev/null || true
+  [ -z "$disk_image_tmp" ] || rm -f "$disk_image_tmp" 2>/dev/null || true
 }
 trap cleanup_target_mount EXIT
 
@@ -161,7 +162,11 @@ if [ "$deploy_mode" = "disk-image" ]; then
   [ -n "$image_url" ] || fail "disk image URL is required"
   [ -b "$target_disk" ] || fail "target disk is not a block device: $target_disk"
   [ "$root_part" -gt 0 ] || fail "root partition number is required"
-  image_input="$image_url"
+  disk_image_tmp="$(mktemp "$tmpdir/gomi-disk-image.XXXXXX.qcow2")" || fail "failed to create qcow2 temporary file"
+  post_event progress "downloading qcow2 image"
+  curl -fL -o "$disk_image_tmp" "$image_url" || fail "qcow2 download failed"
+  post_timing runner.download_disk_image "downloaded qcow2 image"
+  image_input="$disk_image_tmp"
   if ! image_info="$(qemu-img info --output=json "$image_input")"; then
     fail "qcow2 metadata read failed"
   fi
