@@ -939,7 +939,28 @@ class LabRunner:
         self.ensure_boot_environment()
         for image in self.config.get("os_images", self.config.get("ubuntu_images", [])):
             image_ref = image["image_ref"]
+            image_format = str(image.get("image_format") or "squashfs").strip().lower()
             log(f"preparing OS image {image_ref}")
+            if image_format == "qcow2":
+                local_path = self.download_disk_image(image)
+                root_path = str(image.get("artifact_path") or "root.qcow2").lstrip("/")
+                self.ensure_os_image_registered(
+                    image,
+                    local_path,
+                    "qcow2",
+                    manifest={
+                        "root": {
+                            "format": "qcow2",
+                            "path": root_path,
+                            "rootPartition": {
+                                "number": int(image.get("root_partition_number") or 1),
+                            },
+                        },
+                    },
+                )
+                continue
+            if image_format != "squashfs":
+                raise LabError(f"unsupported lab OS image format: {image_format}")
             local_path = self.download_rootfs_image(image)
             self.ensure_os_image_registered(
                 image,
@@ -997,6 +1018,26 @@ class LabRunner:
         src = self.rootfs_source_url(image)
         artifact_dir = f"/var/lib/gomi/data/images/{image_ref}"
         local_path = f"{artifact_dir}/rootfs.squashfs"
+        self.vm_ssh(
+            "bash -lc "
+            + shlex.quote(
+                "set -euo pipefail; "
+                f"sudo mkdir -p {shlex.quote(artifact_dir)}; "
+                f"tmp={shlex.quote(local_path + '.download')}; "
+                f"sudo curl -fL --retry 5 -o \"$tmp\" {shlex.quote(src)}; "
+                f"sudo mv \"$tmp\" {shlex.quote(local_path)}; "
+                f"sudo chown -R gomi:gomi {shlex.quote(artifact_dir)} || true"
+            ),
+            capture=False,
+        )
+        return artifact_dir
+
+    def download_disk_image(self, image: dict[str, Any]) -> str:
+        image_ref = image["image_ref"]
+        src = self.rootfs_source_url(image)
+        artifact_dir = f"/var/lib/gomi/data/images/{image_ref}"
+        artifact_name = str(image.get("artifact_path") or "root.qcow2").lstrip("/")
+        local_path = f"{artifact_dir}/{artifact_name}"
         self.vm_ssh(
             "bash -lc "
             + shlex.quote(
