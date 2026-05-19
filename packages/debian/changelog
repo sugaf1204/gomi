@@ -1,3 +1,9 @@
+gomi (0.0.21) unstable; urgency=medium
+
+  * Expand qcow2 root filesystems before first target boot.
+
+ -- sugaf1204 <sugaf1204@example.invalid>  Wed, 20 May 2026 01:46:00 +0900
+
 gomi (0.0.20) unstable; urgency=medium
 
   * Repair target disk partition tables after qcow2 deployment.

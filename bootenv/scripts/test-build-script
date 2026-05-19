@@ -47,6 +47,11 @@ grep -q 'validate_squashfs_cleanup' "$script" || fail "squashfs cleanup validati
 grep -q 'repair_partition_table' "$runner" || fail "deploy runner does not repair partition table"
 grep -q "parted -s -f \"\\\$disk\" print" "$runner" || fail "deploy runner does not use parted fix mode"
 grep -q 'runner.repair_partition_table' "$runner" || fail "deploy runner does not report partition table repair timing"
+grep -q 'resize_root_filesystem' "$runner" || fail "deploy runner does not resize root filesystem"
+grep -q "parted -s -f \"\\\$disk\" resizepart" "$runner" || fail "deploy runner does not grow target root partition"
+grep -q 'resize2fs "$root_device"' "$runner" || fail "deploy runner does not grow ext root filesystems"
+grep -q 'etc/growroot-disabled' "$runner" || fail "deploy runner does not disable target initramfs root growth after resize"
+grep -q 'runner.resize_root_filesystem' "$runner" || fail "deploy runner does not report root filesystem resize timing"
 
 require_package() {
   local package="$1"
