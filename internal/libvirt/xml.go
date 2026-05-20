@@ -217,13 +217,17 @@ func GenerateDomainXML(cfg DomainConfig) (string, error) {
 	// SCSI controller (when disk bus is scsi).
 	diskBus := "virtio"
 	diskTarget := "vda"
-	if cfg.DiskBus == "scsi" {
+	switch cfg.DiskBus {
+	case "scsi":
 		diskBus = "scsi"
 		diskTarget = "sda"
 		domain.Devices.Controllers = append(domain.Devices.Controllers, xmlController{
 			Type:  "scsi",
 			Model: "virtio-scsi",
 		})
+	case "sata":
+		diskBus = "sata"
+		diskTarget = "sda"
 	}
 
 	// Primary disk (OS image).
@@ -242,12 +246,16 @@ func GenerateDomainXML(cfg DomainConfig) (string, error) {
 
 	// Cloud-init ISO (if provided).
 	if cfg.CloudInit != "" {
+		cloudInitTarget := "sda"
+		if diskTarget == "sda" {
+			cloudInitTarget = "sdb"
+		}
 		ciDisk := xmlDisk{
 			Type:   "file",
 			Device: "cdrom",
 			Driver: xmlDriver{Name: "qemu", Type: "raw"},
 			Source: xmlDiskSource{File: cfg.CloudInit},
-			Target: xmlDiskTarget{Dev: "sda", Bus: "sata"},
+			Target: xmlDiskTarget{Dev: cloudInitTarget, Bus: "sata"},
 		}
 		domain.Devices.Disks = append(domain.Devices.Disks, ciDisk)
 	}

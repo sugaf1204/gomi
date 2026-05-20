@@ -627,6 +627,27 @@ func TestBuildDomainConfig_IgnoresUnsupportedLegacyDiskFormat(t *testing.T) {
 	}
 }
 
+func TestApplyInstallStorageOverrides_CloudImageUsesSATADisk(t *testing.T) {
+	v := VirtualMachine{
+		Name: "vm-debian",
+		Resources: ResourceSpec{
+			CPUCores: 1,
+			MemoryMB: 1024,
+			DiskGB:   10,
+		},
+		InstallCfg: &InstallConfig{Type: InstallConfigCurtin},
+	}
+	cfg := BuildDomainConfig(v, "vm-debian", "hd", "", nil)
+
+	applyInstallStorageOverrides(&cfg, InstallConfigCurtin)
+	if cfg.DiskFormat != "qcow2" {
+		t.Fatalf("expected cloudimage disk format qcow2, got %q", cfg.DiskFormat)
+	}
+	if cfg.DiskBus != "sata" {
+		t.Fatalf("expected cloudimage disk bus sata, got %q", cfg.DiskBus)
+	}
+}
+
 func TestResolvePXEBaseURL_UsesConfiguredBaseURL(t *testing.T) {
 	d := &Deployer{PXEBaseURL: " http://pxe.example:8080/pxe/ "}
 
