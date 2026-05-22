@@ -113,6 +113,31 @@ func TestGenerateDomainXML_SCSIDisk(t *testing.T) {
 	}
 }
 
+func TestGenerateDomainXML_SATADisk(t *testing.T) {
+	cfg := DomainConfig{
+		Name:       "sata-vm",
+		VCPU:       2,
+		MemoryMB:   2048,
+		DiskPath:   "/var/lib/libvirt/images/sata.qcow2",
+		DiskFormat: "qcow2",
+		DiskBus:    "sata",
+		CloudInit:  "/var/lib/libvirt/images/sata-seed.iso",
+	}
+	xmlStr, err := GenerateDomainXML(cfg)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(xmlStr, `bus="sata"`) {
+		t.Error("expected sata disk bus")
+	}
+	if !strings.Contains(xmlStr, `dev="sda"`) {
+		t.Error("expected sda disk target for sata root disk")
+	}
+	if !strings.Contains(xmlStr, `dev="sdb"`) {
+		t.Error("expected cloud-init cdrom to avoid sata root disk target")
+	}
+}
+
 func TestGenerateDomainXML_Multiqueue(t *testing.T) {
 	cfg := DomainConfig{
 		Name:       "mq-vm",

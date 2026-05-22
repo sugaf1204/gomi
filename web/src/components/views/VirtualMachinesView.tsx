@@ -262,6 +262,7 @@ export function VirtualMachinesView({
   const [reinstallAdvancedOpen, setReinstallAdvancedOpen] = useState(false)
 
   const osImageByName = useMemo(() => new Map(osImages.map((img) => [img.name, img])), [osImages])
+  const vmOSImages = useMemo(() => osImages.filter((img) => img.format === 'qcow2' && (!img.variant || img.variant === 'cloud')), [osImages])
   const checkedNames = useMemo(
     () => virtualMachines.filter((vm) => checkedVMs.has(vm.name)).map((vm) => vm.name),
     [checkedVMs, virtualMachines]
@@ -373,7 +374,11 @@ export function VirtualMachinesView({
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault()
     if (!form.osImageRef) {
-      notifyError('OS Image is required for PXE deployment')
+      notifyError('qcow2 OS Image is required for VM deployment')
+      return
+    }
+    if (!vmOSImages.some((img) => img.name === form.osImageRef)) {
+      notifyError('VM deployment requires a qcow2 OS Image')
       return
     }
 
@@ -543,6 +548,10 @@ export function VirtualMachinesView({
       notifyError('OS Image is required for redeploy')
       return
     }
+    if (!vmOSImages.some((img) => img.name === reinstallForm.osImageRef)) {
+      notifyError('VM deployment requires a qcow2 OS Image')
+      return
+    }
 
     const cloudInitRefs = await resolveCloudInitRefs(reinstallForm, 'Auto-generated from Redeploy Virtual Machine dialog')
     const vmNetwork = (reinstallForm.bridge || reinstallForm.staticIP || reinstallForm.subnetRef)
@@ -675,6 +684,8 @@ export function VirtualMachinesView({
     setAdvancedExpanded: (value: boolean | ((current: boolean) => boolean)) => void,
     radioNamePrefix: string
   ) {
+    const selectedOSImage = formState.osImageRef ? osImageByName.get(formState.osImageRef) : undefined
+    const hasUnsupportedSelectedOSImage = Boolean(selectedOSImage && (selectedOSImage.format !== 'qcow2' || (selectedOSImage.variant && selectedOSImage.variant !== 'cloud')))
     return (
       <>
         <label className="text-[0.84rem]">
@@ -708,7 +719,12 @@ export function VirtualMachinesView({
           OS Image
           <select required value={formState.osImageRef} onChange={(e) => updateForm((current) => ({ ...current, osImageRef: e.target.value }))}>
             <option value="">Select...</option>
-            {osImages.map((img) => (
+            {hasUnsupportedSelectedOSImage && selectedOSImage && (
+              <option value={selectedOSImage.name} disabled>
+                {selectedOSImage.name} ({selectedOSImage.osFamily} {selectedOSImage.osVersion}{selectedOSImage.variant ? ` ${selectedOSImage.variant}` : ''}, unsupported for VM)
+              </option>
+            )}
+            {vmOSImages.map((img) => (
               <option key={img.name} value={img.name}>{img.name} ({img.osFamily} {img.osVersion}{img.variant ? ` ${img.variant}` : ''})</option>
             ))}
           </select>

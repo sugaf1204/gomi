@@ -16,6 +16,7 @@ import (
 	"github.com/sugaf1204/gomi/internal/infra/httputil"
 	"github.com/sugaf1204/gomi/internal/infra/pxehttp"
 	"github.com/sugaf1204/gomi/internal/libvirt"
+	"github.com/sugaf1204/gomi/internal/osimage"
 	"github.com/sugaf1204/gomi/internal/resource"
 	"github.com/sugaf1204/gomi/internal/vm"
 )
@@ -436,6 +437,12 @@ func (s *Server) applyInstallConfigByOSImage(ctx context.Context, v *vm.VirtualM
 		}
 		return err
 	}
+	if format := effectiveVMCloudImageFormat(img); format != osimage.FormatQCOW2 {
+		return fmt.Errorf("cloudimage deployment requires qcow2 OS image, got %s", format)
+	}
+	if img.Variant != "" && img.Variant != osimage.VariantCloud {
+		return fmt.Errorf("cloudimage deployment requires cloud OS image variant, got %s", img.Variant)
+	}
 	cfgType, err := inferInstallConfigType(img.OSFamily)
 	if err != nil {
 		return err
@@ -451,6 +458,16 @@ func (s *Server) applyInstallConfigByOSImage(ctx context.Context, v *vm.VirtualM
 		v.InstallCfg.Inline = inline
 	}
 	return nil
+}
+
+func effectiveVMCloudImageFormat(img osimage.OSImage) osimage.ImageFormat {
+	if img.Manifest != nil && img.Manifest.Root.Format != "" {
+		return img.Manifest.Root.Format
+	}
+	if img.Format != "" {
+		return img.Format
+	}
+	return osimage.FormatQCOW2
 }
 
 func preferredCloudInitRef(v vm.VirtualMachine) string {

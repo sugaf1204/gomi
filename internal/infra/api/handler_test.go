@@ -358,6 +358,7 @@ func TestVirtualMachineCRUD(t *testing.T) {
 		"osVersion": "22.04",
 		"arch":      "amd64",
 		"format":    "qcow2",
+		"variant":   "cloud",
 		"source":    "upload",
 	}
 	rec = doRequest(env.echo, http.MethodPost, "/api/v1/os-images", imgBody, env.token)
@@ -390,6 +391,71 @@ func TestVirtualMachineCRUD(t *testing.T) {
 	}
 	if token, _ := provisioning["completionToken"].(string); strings.TrimSpace(token) == "" {
 		t.Fatalf("expected provisioning.completionToken to be set, got %v", provisioning["completionToken"])
+	}
+
+	squashfsBody := map[string]any{
+		"name":      "ubuntu-22.04-baremetal",
+		"osFamily":  "ubuntu",
+		"osVersion": "22.04",
+		"arch":      "amd64",
+		"format":    "squashfs",
+		"source":    "upload",
+	}
+	rec = doRequest(env.echo, http.MethodPost, "/api/v1/os-images", squashfsBody, env.token)
+	requireStatus(t, rec, http.StatusCreated)
+
+	squashfsVMBody := map[string]any{
+		"name":          "vm-squashfs",
+		"hypervisorRef": "hv-for-vm",
+		"resources": map[string]any{
+			"cpuCores": 1,
+			"memoryMB": 1024,
+			"diskGB":   10,
+		},
+		"osImageRef": "ubuntu-22.04-baremetal",
+	}
+	rec = doRequest(env.echo, http.MethodPost, "/api/v1/virtual-machines", squashfsVMBody, env.token)
+	requireStatus(t, rec, http.StatusBadRequest)
+	if !strings.Contains(rec.Body.String(), "cloudimage deployment requires qcow2 OS image, got squashfs") {
+		t.Fatalf("expected qcow2-only validation error, got: %s", rec.Body.String())
+	}
+
+	bareMetalQCOW2Body := map[string]any{
+		"name":      "ubuntu-22.04-baremetal-qcow2",
+		"osFamily":  "ubuntu",
+		"osVersion": "22.04",
+		"arch":      "amd64",
+		"format":    "qcow2",
+		"variant":   "baremetal",
+		"source":    "upload",
+		"manifest": map[string]any{
+			"root": map[string]any{
+				"format": "qcow2",
+				"path":   "root.qcow2",
+				"rootPartition": map[string]any{
+					"number":     1,
+					"filesystem": "ext4",
+				},
+			},
+		},
+	}
+	rec = doRequest(env.echo, http.MethodPost, "/api/v1/os-images", bareMetalQCOW2Body, env.token)
+	requireStatus(t, rec, http.StatusCreated)
+
+	bareMetalQCOW2VMBody := map[string]any{
+		"name":          "vm-baremetal-qcow2",
+		"hypervisorRef": "hv-for-vm",
+		"resources": map[string]any{
+			"cpuCores": 1,
+			"memoryMB": 1024,
+			"diskGB":   10,
+		},
+		"osImageRef": "ubuntu-22.04-baremetal-qcow2",
+	}
+	rec = doRequest(env.echo, http.MethodPost, "/api/v1/virtual-machines", bareMetalQCOW2VMBody, env.token)
+	requireStatus(t, rec, http.StatusBadRequest)
+	if !strings.Contains(rec.Body.String(), "cloudimage deployment requires cloud OS image variant, got baremetal") {
+		t.Fatalf("expected cloud-variant validation error, got: %s", rec.Body.String())
 	}
 
 	// POST - Create VM referencing non-existent hypervisor

@@ -557,6 +557,7 @@ func applyInstallStorageOverrides(cfg *libvirt.DomainConfig, installType Install
 	}
 	if installType == InstallConfigCurtin {
 		cfg.DiskFormat = "qcow2"
+		cfg.DiskBus = "sata"
 	}
 }
 
