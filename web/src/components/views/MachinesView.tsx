@@ -177,6 +177,21 @@ function currentMachineCloudInitRef(machine: Machine | null) {
   return ''
 }
 
+function currentMachineCloudInitRefs(machine?: Machine) {
+  const refs = machine?.cloudInitRefs?.map((ref) => ref.trim()).filter(Boolean) ?? []
+  const primaryRef = machine ? currentMachineCloudInitRef(machine).trim() : ''
+  if (primaryRef && !refs.includes(primaryRef)) {
+    return [primaryRef, ...refs]
+  }
+  return refs
+}
+
+function mergeSelectedCloudInitRef(selectedRef: string, currentRefs: string[]) {
+  const trimmedRef = selectedRef.trim()
+  if (!trimmedRef) return currentRefs
+  return [trimmedRef, ...currentRefs.filter((ref) => ref !== trimmedRef)]
+}
+
 function createMachineFormFromMachine(machine: Machine, subnets: Subnet[]): MachineFormState {
   const currentSubnet = subnets.find((subnet) => subnet.name === machine.subnetRef) ?? defaultSubnet(subnets)
   const currentCloudInitRef = currentMachineCloudInitRef(machine)
@@ -317,28 +332,29 @@ export function MachinesView({
     return templateName
   }
 
-  async function resolveCloudInitRefs(mode: CloudInitInputMode, existingRef: string, templateName: string, userData: string) {
+  async function resolveCloudInitRefs(mode: CloudInitInputMode, existingRef: string, templateName: string, userData: string, currentRefs: string[] = []) {
     const trimmedExistingRef = existingRef.trim()
     const trimmedTemplateName = templateName.trim()
     const trimmedUserData = userData.trim()
 
     if (mode === 'none') return [] as string[]
     if (mode === 'existing') {
-      return trimmedExistingRef ? [trimmedExistingRef] : []
+      return mergeSelectedCloudInitRef(trimmedExistingRef, currentRefs)
     }
     if (!trimmedTemplateName || !trimmedUserData) {
       throw new Error('Cloud-Init inline creation requires both template name and user-data')
     }
     const createdName = await createInlineCloudInitTemplate(trimmedTemplateName, trimmedUserData)
-    return [createdName]
+    return mergeSelectedCloudInitRef(createdName, currentRefs)
   }
 
-  async function buildMachineSpecPayload(formState: MachineFormState, currentLoginUser?: Machine['loginUser']) {
+  async function buildMachineSpecPayload(formState: MachineFormState, currentMachine?: Machine) {
     const cloudInitRefs = await resolveCloudInitRefs(
       formState.cloudInitMode,
       formState.cloudInitExistingRef,
       formState.cloudInitTemplateName,
-      formState.cloudInitUserData
+      formState.cloudInitUserData,
+      currentMachineCloudInitRefs(currentMachine)
     )
 
     const machineNetwork = formState.domain
@@ -365,7 +381,7 @@ export function MachinesView({
       role: formState.isHypervisor ? ('hypervisor' as const) : ('' as const),
       bridgeName: formState.isHypervisor ? (formState.bridgeName || 'br0') : '',
       sshKeyRefs: formState.sshKeyRefs,
-      loginUser: buildMachineLoginUserPayload(formState, currentLoginUser)
+      loginUser: buildMachineLoginUserPayload(formState, currentMachine?.loginUser)
     }
   }
 
@@ -403,7 +419,7 @@ export function MachinesView({
         onMachineUpsert(created)
         onSelectMachine(created.name)
       } else {
-        const payload = await buildMachineSpecPayload(form, selectedMachine?.loginUser)
+        const payload = await buildMachineSpecPayload(form, selectedMachine ?? undefined)
         const updated = await api.redeploy(currentDialog.machineName, {
           ...payload
         })
@@ -708,7 +724,7 @@ export function MachinesView({
 
       try {
         const currentMachine = machines.find((machine) => machine.name === target)
-        const payload = await buildMachineSpecPayload(formState, currentMachine?.loginUser)
+        const payload = await buildMachineSpecPayload(formState, currentMachine)
         const updated = await api.redeploy(target, payload)
         onMachineUpsert(updated)
         setBatchRedeployConfirm((current) => ({

@@ -175,6 +175,21 @@ function primaryCloudInitRef(vm: VirtualMachine): string {
   return vm.cloudInitRefs?.[0] ?? vm.cloudInitRef ?? ''
 }
 
+function currentVMCloudInitRefs(vm?: VirtualMachine) {
+  const refs = vm?.cloudInitRefs?.map((ref) => ref.trim()).filter(Boolean) ?? []
+  const legacyRef = vm?.cloudInitRef?.trim() ?? ''
+  const primaryRef = vm ? primaryCloudInitRef(vm).trim() : ''
+  const ordered = primaryRef ? [primaryRef, ...refs] : refs
+  if (legacyRef) ordered.push(legacyRef)
+  return Array.from(new Set(ordered.filter(Boolean)))
+}
+
+function mergeSelectedCloudInitRef(selectedRef: string, currentRefs: string[]) {
+  const trimmedRef = selectedRef.trim()
+  if (!trimmedRef) return currentRefs
+  return [trimmedRef, ...currentRefs.filter((ref) => ref !== trimmedRef)]
+}
+
 function toReinstallForm(vm: VirtualMachine): VMReinstallForm {
   const nic = vm.network?.[0]
   const cloudInitRef = primaryCloudInitRef(vm)
@@ -375,11 +390,11 @@ export function VirtualMachinesView({
     return created.name
   }
 
-  async function resolveCloudInitRefs(formState: VMConfigForm, description: string) {
+  async function resolveCloudInitRefs(formState: VMConfigForm, description: string, currentRefs: string[] = []) {
     if (formState.cloudInitMode === 'none') return [] as string[]
     if (formState.cloudInitMode === 'existing') {
       const ref = formState.cloudInitExistingRef.trim()
-      return ref ? [ref] : []
+      return mergeSelectedCloudInitRef(ref, currentRefs)
     }
     const templateName = formState.cloudInitTemplateName.trim()
     const userData = formState.cloudInitUserData.trim()
@@ -391,7 +406,7 @@ export function VirtualMachinesView({
       userData,
       description
     )
-    return [createdName]
+    return mergeSelectedCloudInitRef(createdName, currentRefs)
   }
 
   async function handleCreate(e: React.FormEvent) {
@@ -547,7 +562,24 @@ export function VirtualMachinesView({
     setReinstallOpen(true)
   }
 
-  async function buildVMRedeployPayload(formState: VMConfigForm, description: string, currentLoginUser?: VirtualMachine['loginUser']) {
+  function buildVMNetworkPayload(formState: VMConfigForm, currentVM?: VirtualMachine): VirtualMachine['network'] | undefined {
+    const primaryNetwork = {
+      ...(currentVM?.network?.[0] ?? {}),
+      name: currentVM?.network?.[0]?.name || 'default',
+      bridge: formState.bridge || undefined,
+      network: formState.subnetRef || undefined,
+      ipAddress: formState.ipAssignment === 'static' && formState.staticIP ? formState.staticIP : undefined
+    }
+    if (currentVM?.network && currentVM.network.length > 0) {
+      return [primaryNetwork, ...currentVM.network.slice(1)]
+    }
+    if (formState.bridge || formState.staticIP || formState.subnetRef) {
+      return [primaryNetwork]
+    }
+    return undefined
+  }
+
+  async function buildVMRedeployPayload(formState: VMConfigForm, description: string, currentVM?: VirtualMachine) {
     if (!formState.osImageRef) {
       throw new Error('OS Image is required for redeploy')
     }
@@ -555,12 +587,10 @@ export function VirtualMachinesView({
       throw new Error('Static IP is required when static assignment is selected')
     }
 
-    const cloudInitRefs = await resolveCloudInitRefs(formState, description)
-    const vmNetwork = (formState.bridge || formState.staticIP || formState.subnetRef)
-      ? [{ name: 'default', bridge: formState.bridge || undefined, network: formState.subnetRef || undefined, ipAddress: formState.ipAssignment === 'static' && formState.staticIP ? formState.staticIP : undefined }]
-      : undefined
+    const cloudInitRefs = await resolveCloudInitRefs(formState, description, currentVMCloudInitRefs(currentVM))
+    const vmNetwork = buildVMNetworkPayload(formState, currentVM)
     const advancedOptions = buildAdvancedOptions(formState) ?? {}
-    const loginUser = buildVMLoginUserPayload(formState, currentLoginUser)
+    const loginUser = buildVMLoginUserPayload(formState, currentVM?.loginUser)
     const redeployPayload: Parameters<typeof api.vmRedeploy>[1] = {
       hypervisorRef: formState.hypervisorRef || '',
       resources: {
@@ -587,7 +617,7 @@ export function VirtualMachinesView({
 
     setReinstalling(true)
     try {
-      const redeployPayload = await buildVMRedeployPayload(reinstallForm, 'Auto-generated from Redeploy Virtual Machine dialog', selectedVM.loginUser)
+      const redeployPayload = await buildVMRedeployPayload(reinstallForm, 'Auto-generated from Redeploy Virtual Machine dialog', selectedVM)
       const updated = await api.vmRedeploy(selectedVM.name, redeployPayload)
       onVirtualMachineUpsert(updated)
       setReinstallOpen(false)
@@ -713,7 +743,7 @@ export function VirtualMachinesView({
 
       try {
         const currentVM = virtualMachines.find((vm) => vm.name === target)
-        const redeployPayload = await buildVMRedeployPayload(formState, 'Auto-generated from Bulk Redeploy Virtual Machine dialog', currentVM?.loginUser)
+        const redeployPayload = await buildVMRedeployPayload(formState, 'Auto-generated from Bulk Redeploy Virtual Machine dialog', currentVM)
         const updated = await api.vmRedeploy(target, redeployPayload)
         onVirtualMachineUpsert(updated)
         setBulkRedeployConfirm((current) => ({
