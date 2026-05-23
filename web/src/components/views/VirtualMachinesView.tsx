@@ -240,6 +240,20 @@ function buildAdvancedOptions(form: Pick<VMConfigForm, 'cpuMode' | 'diskDriver' 
   }
 }
 
+function buildVMLoginUserPayload(
+  formState: Pick<VMConfigForm, 'loginUserUsername' | 'loginUserPassword'>,
+  currentLoginUser?: VirtualMachine['loginUser']
+): VirtualMachine['loginUser'] | undefined {
+  const username = formState.loginUserUsername.trim()
+  const password = formState.loginUserPassword.trim()
+  if (!username) return undefined
+  if (currentLoginUser?.username === username && !password) return undefined
+  return {
+    username,
+    ...(password ? { password } : {})
+  }
+}
+
 export function VirtualMachinesView({
   virtualMachines,
   hypervisors,
@@ -533,7 +547,7 @@ export function VirtualMachinesView({
     setReinstallOpen(true)
   }
 
-  async function buildVMRedeployPayload(formState: VMConfigForm, description: string) {
+  async function buildVMRedeployPayload(formState: VMConfigForm, description: string, currentLoginUser?: VirtualMachine['loginUser']) {
     if (!formState.osImageRef) {
       throw new Error('OS Image is required for redeploy')
     }
@@ -546,6 +560,7 @@ export function VirtualMachinesView({
       ? [{ name: 'default', bridge: formState.bridge || undefined, network: formState.subnetRef || undefined, ipAddress: formState.ipAssignment === 'static' && formState.staticIP ? formState.staticIP : undefined }]
       : undefined
     const advancedOptions = buildAdvancedOptions(formState) ?? {}
+    const loginUser = buildVMLoginUserPayload(formState, currentLoginUser)
     const redeployPayload: Parameters<typeof api.vmRedeploy>[1] = {
       hypervisorRef: formState.hypervisorRef || '',
       resources: {
@@ -562,14 +577,7 @@ export function VirtualMachinesView({
       ipAssignment: formState.ipAssignment,
       ...(formState.ipAssignment === 'static' && formState.staticIP ? { ip: formState.staticIP } : { ip: '' }),
       sshKeyRefs: formState.sshKeyRefs,
-      ...(formState.loginUserUsername.trim()
-        ? {
-            loginUser: {
-              username: formState.loginUserUsername.trim(),
-              ...(formState.loginUserPassword.trim() ? { password: formState.loginUserPassword.trim() } : {})
-            }
-          }
-        : {})
+      ...(loginUser ? { loginUser } : {})
     }
     return redeployPayload
   }
@@ -579,7 +587,7 @@ export function VirtualMachinesView({
 
     setReinstalling(true)
     try {
-      const redeployPayload = await buildVMRedeployPayload(reinstallForm, 'Auto-generated from Redeploy Virtual Machine dialog')
+      const redeployPayload = await buildVMRedeployPayload(reinstallForm, 'Auto-generated from Redeploy Virtual Machine dialog', selectedVM.loginUser)
       const updated = await api.vmRedeploy(selectedVM.name, redeployPayload)
       onVirtualMachineUpsert(updated)
       setReinstallOpen(false)
@@ -704,7 +712,8 @@ export function VirtualMachinesView({
       }))
 
       try {
-        const redeployPayload = await buildVMRedeployPayload(formState, 'Auto-generated from Bulk Redeploy Virtual Machine dialog')
+        const currentVM = virtualMachines.find((vm) => vm.name === target)
+        const redeployPayload = await buildVMRedeployPayload(formState, 'Auto-generated from Bulk Redeploy Virtual Machine dialog', currentVM?.loginUser)
         const updated = await api.vmRedeploy(target, redeployPayload)
         onVirtualMachineUpsert(updated)
         setBulkRedeployConfirm((current) => ({

@@ -236,6 +236,20 @@ function buildPowerConfig(form: MachineFormState): PowerConfig {
   }
 }
 
+function buildMachineLoginUserPayload(
+  formState: Pick<MachineFormState, 'loginUserUsername' | 'loginUserPassword'>,
+  currentLoginUser?: Machine['loginUser']
+): Machine['loginUser'] | undefined {
+  const username = formState.loginUserUsername.trim()
+  const password = formState.loginUserPassword.trim()
+  if (!username) return undefined
+  if (currentLoginUser?.username === username && !password) return undefined
+  return {
+    username,
+    ...(password ? { password } : {})
+  }
+}
+
 const initialMachineDialogState: MachineDialogState = {
   open: false,
   mode: 'create',
@@ -319,7 +333,7 @@ export function MachinesView({
     return [createdName]
   }
 
-  async function buildMachineSpecPayload(formState: MachineFormState) {
+  async function buildMachineSpecPayload(formState: MachineFormState, currentLoginUser?: Machine['loginUser']) {
     const cloudInitRefs = await resolveCloudInitRefs(
       formState.cloudInitMode,
       formState.cloudInitExistingRef,
@@ -351,12 +365,7 @@ export function MachinesView({
       role: formState.isHypervisor ? ('hypervisor' as const) : ('' as const),
       bridgeName: formState.isHypervisor ? (formState.bridgeName || 'br0') : '',
       sshKeyRefs: formState.sshKeyRefs,
-      loginUser: formState.loginUserUsername.trim()
-        ? {
-            username: formState.loginUserUsername.trim(),
-            password: formState.loginUserPassword.trim() || undefined
-          }
-        : undefined
+      loginUser: buildMachineLoginUserPayload(formState, currentLoginUser)
     }
   }
 
@@ -385,8 +394,8 @@ export function MachinesView({
 
     setMachineDialog((current) => ({ ...current, running: true }))
     try {
-      const payload = await buildMachineSpecPayload(form)
       if (currentDialog.mode === 'create') {
+        const payload = await buildMachineSpecPayload(form)
         const created = await api.createMachine({
           name: form.hostname,
           ...payload
@@ -394,6 +403,7 @@ export function MachinesView({
         onMachineUpsert(created)
         onSelectMachine(created.name)
       } else {
+        const payload = await buildMachineSpecPayload(form, selectedMachine?.loginUser)
         const updated = await api.redeploy(currentDialog.machineName, {
           ...payload
         })
@@ -697,7 +707,8 @@ export function MachinesView({
       }))
 
       try {
-        const payload = await buildMachineSpecPayload(formState)
+        const currentMachine = machines.find((machine) => machine.name === target)
+        const payload = await buildMachineSpecPayload(formState, currentMachine?.loginUser)
         const updated = await api.redeploy(target, payload)
         onMachineUpsert(updated)
         setBatchRedeployConfirm((current) => ({
