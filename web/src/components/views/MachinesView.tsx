@@ -19,6 +19,7 @@ type CloudInitInputMode = 'none' | 'existing' | 'create'
 export type MachinesViewProps = {
   machineFilter: string
   onMachineFilterChange: (value: string) => void
+  machines: Machine[]
   filteredMachines: Machine[]
   dataLoading: boolean
   selectedMachineName: string
@@ -254,6 +255,7 @@ const initialBatchRedeployConfirmState: BatchRedeployConfirmState = {
 export function MachinesView({
   machineFilter,
   onMachineFilterChange,
+  machines,
   filteredMachines,
   dataLoading,
   selectedMachineName,
@@ -478,7 +480,7 @@ export function MachinesView({
     const forms: Record<string, MachineFormState> = {}
     const status: BatchRedeployConfirmState['status'] = {}
     for (const target of sortedTargets) {
-      const machine = filteredMachines.find((item) => item.name === target)
+      const machine = machines.find((item) => item.name === target)
       if (!machine) continue
       forms[target] = createMachineFormFromMachine(machine, subnets)
       status[target] = { state: 'pending' }
@@ -639,10 +641,18 @@ export function MachinesView({
   }
 
   function machineFormReady(formState: MachineFormState) {
+    const powerReady =
+      formState.powerType === 'ipmi'
+        ? Boolean(formState.ipmiHost.trim() && formState.ipmiUsername.trim() && formState.ipmiPassword.trim())
+        : formState.powerType === 'webhook'
+          ? Boolean(formState.webhookOnURL.trim() && formState.webhookOffURL.trim())
+          : true
+
     return Boolean(
       formState.hostname.trim()
       && formState.mac.trim()
       && formState.imageRef
+      && powerReady
       && (!formState.subnetRef || formState.ipAssignment !== 'static' || formState.staticIP.trim())
       && (formState.cloudInitMode !== 'create' || (formState.cloudInitTemplateName.trim() && formState.cloudInitUserData.trim()))
     )
@@ -1083,13 +1093,13 @@ export function MachinesView({
                           <p className="m-0 mt-[0.2rem] text-[#9b2d2d] font-medium">Required fields are missing for this target.</p>
                         )}
                       </div>
-                      <div className="grid gap-[0.55rem]">
+                      <fieldset disabled={batchRedeployConfirm.running} className="grid gap-[0.55rem] border-0 p-0 m-0 min-w-0 disabled:opacity-80">
                         {renderMachineSpecFields(
                           activeForm,
                           (updater) => updateBatchRedeployForm(activeTarget, updater),
                           `machine-bulk-${activeTarget}`
                         )}
-                      </div>
+                      </fieldset>
                     </>
                   )}
                 </div>

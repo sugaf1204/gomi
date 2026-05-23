@@ -649,8 +649,18 @@ export function VirtualMachinesView({
   }
 
   function vmRedeployFormReady(formState: VMConfigForm) {
+    const cpuCores = Number(formState.cpuCores)
+    const memoryMB = Number(formState.memoryMB)
+    const diskGB = Number(formState.diskGB)
+
     return Boolean(
       formState.osImageRef
+      && Number.isFinite(cpuCores)
+      && cpuCores >= 1
+      && Number.isFinite(memoryMB)
+      && memoryMB >= 256
+      && Number.isFinite(diskGB)
+      && diskGB >= 1
       && (formState.ipAssignment !== 'static' || formState.staticIP.trim())
       && (formState.cloudInitMode !== 'create' || (formState.cloudInitTemplateName.trim() && formState.cloudInitUserData.trim()))
     )
@@ -1204,7 +1214,7 @@ export function VirtualMachinesView({
                           <p className="m-0 mt-[0.2rem] text-[#9b2d2d] font-medium">Required fields are missing for this target.</p>
                         )}
                       </div>
-                      <div className="grid gap-[0.55rem]">
+                      <fieldset disabled={bulkRedeployConfirm.running} className="grid gap-[0.55rem] border-0 p-0 m-0 min-w-0 disabled:opacity-80">
                         {renderVMSpecFields(
                           activeForm,
                           (updater) => updateBulkRedeployForm(activeTarget, updater),
@@ -1212,7 +1222,7 @@ export function VirtualMachinesView({
                           (value) => setBulkRedeployAdvancedOpen(activeTarget, value),
                           `vm-bulk-${activeTarget}`
                         )}
-                      </div>
+                      </fieldset>
                     </>
                   )}
                 </div>
