@@ -48,6 +48,7 @@ type VMConfigForm = {
   sshKeyRefs: string[]
   loginUserUsername: string
   loginUserPassword: string
+  loginUserPasswordTouched: boolean
 }
 
 type VMForm = VMConfigForm & {
@@ -119,7 +120,8 @@ const initialVMConfigForm: VMConfigForm = {
   bridge: '',
   sshKeyRefs: [],
   loginUserUsername: '',
-  loginUserPassword: ''
+  loginUserPassword: '',
+  loginUserPasswordTouched: false
 }
 
 const initialForm: VMForm = {
@@ -216,7 +218,8 @@ function toReinstallForm(vm: VirtualMachine): VMReinstallForm {
     bridge: nic?.bridge || '',
     sshKeyRefs: vm.sshKeyRefs ?? [],
     loginUserUsername: vm.loginUser?.username || '',
-    loginUserPassword: ''
+    loginUserPassword: '',
+    loginUserPasswordTouched: false
   }
 }
 
@@ -256,13 +259,13 @@ function buildAdvancedOptions(form: Pick<VMConfigForm, 'cpuMode' | 'diskDriver' 
 }
 
 function buildVMLoginUserPayload(
-  formState: Pick<VMConfigForm, 'loginUserUsername' | 'loginUserPassword'>,
+  formState: Pick<VMConfigForm, 'loginUserUsername' | 'loginUserPassword' | 'loginUserPasswordTouched'>,
   currentLoginUser?: VirtualMachine['loginUser']
 ): VirtualMachine['loginUser'] | undefined {
   const username = formState.loginUserUsername.trim()
   const password = formState.loginUserPassword.trim()
   if (!username) return undefined
-  if (currentLoginUser?.username === username && !password) return undefined
+  if (currentLoginUser?.username === username && !password && !formState.loginUserPasswordTouched) return undefined
   return {
     username,
     ...(password ? { password } : {})

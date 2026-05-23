@@ -7,6 +7,7 @@ type SSHAccessValue = {
   sshKeyRefs: string[]
   loginUserUsername: string
   loginUserPassword: string
+  loginUserPasswordTouched: boolean
 }
 
 type SSHKeyForm = {
@@ -182,7 +183,11 @@ export function SSHAccessFieldset({ sshKeys, value, onChange, onRefresh }: SSHAc
               type="password"
               placeholder="leave blank for key-only"
               value={value.loginUserPassword}
-              onChange={(e) => onChange((current) => ({ ...current, loginUserPassword: e.target.value }))}
+              onChange={(e) => onChange((current) => ({
+                ...current,
+                loginUserPassword: e.target.value,
+                loginUserPasswordTouched: true
+              }))}
               disabled={!value.loginUserUsername.trim()}
             />
           </label>

@@ -117,6 +117,7 @@ type MachineFormState = {
   sshKeyRefs: string[]
   loginUserUsername: string
   loginUserPassword: string
+  loginUserPasswordTouched: boolean
 }
 
 type MachineDialogMode = 'create' | 'redeploy'
@@ -166,7 +167,8 @@ function createInitialMachineForm(subnets: Subnet[]): MachineFormState {
     bridgeName: 'br0',
     sshKeyRefs: [],
     loginUserUsername: '',
-    loginUserPassword: ''
+    loginUserPassword: '',
+    loginUserPasswordTouched: false
   }
 }
 
@@ -225,7 +227,8 @@ function createMachineFormFromMachine(machine: Machine, subnets: Subnet[]): Mach
     bridgeName: machine.bridgeName || 'br0',
     sshKeyRefs: machine.sshKeyRefs ?? [],
     loginUserUsername: machine.loginUser?.username || '',
-    loginUserPassword: ''
+    loginUserPassword: '',
+    loginUserPasswordTouched: false
   }
 }
 
@@ -252,13 +255,13 @@ function buildPowerConfig(form: MachineFormState): PowerConfig {
 }
 
 function buildMachineLoginUserPayload(
-  formState: Pick<MachineFormState, 'loginUserUsername' | 'loginUserPassword'>,
+  formState: Pick<MachineFormState, 'loginUserUsername' | 'loginUserPassword' | 'loginUserPasswordTouched'>,
   currentLoginUser?: Machine['loginUser']
 ): Machine['loginUser'] | undefined {
   const username = formState.loginUserUsername.trim()
   const password = formState.loginUserPassword.trim()
   if (!username) return undefined
-  if (currentLoginUser?.username === username && !password) return undefined
+  if (currentLoginUser?.username === username && !password && !formState.loginUserPasswordTouched) return undefined
   return {
     username,
     ...(password ? { password } : {})
