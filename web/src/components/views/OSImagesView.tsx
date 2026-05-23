@@ -17,7 +17,7 @@ type OSImageForm = {
   osFamily: string
   osVersion: string
   arch: string
-  format: 'qcow2' | 'iso' | 'squashfs'
+  format: 'qcow2'
   source: 'upload' | 'url'
   url: string
   checksum: string
@@ -153,11 +153,7 @@ export function OSImagesView({ osImages, onRefresh }: OSImagesViewProps) {
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-[0.45rem]">
                 <label className="text-[0.84rem]">
                   Format
-                  <select value={imageForm.format} onChange={(e) => setImageForm((f) => ({ ...f, format: e.target.value as 'qcow2' | 'iso' | 'squashfs' }))}>
-                    <option value="qcow2">qcow2</option>
-                    <option value="iso">iso</option>
-                    <option value="squashfs">squashfs</option>
-                  </select>
+                  <input value="qcow2" disabled readOnly />
                 </label>
                 <label className="text-[0.84rem]">
                   Source
@@ -181,7 +177,7 @@ export function OSImagesView({ osImages, onRefresh }: OSImagesViewProps) {
                   <input
                     type="file"
                     required
-                    accept=".qcow2,.img,.iso,.squashfs"
+                    accept=".qcow2,.img"
                     onChange={(e) => setImageForm((f) => ({ ...f, file: e.target.files?.[0] ?? null }))}
                     className="block mt-[0.3rem] text-[0.84rem]"
                   />

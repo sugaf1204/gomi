@@ -215,15 +215,19 @@ func (h *Handler) PXEInventory(c echo.Context) error {
 		if err != nil {
 			return c.JSON(gohttp.StatusNotFound, jsonError(fmt.Sprintf("os image %q not found: %v", target.OSPreset.ImageRef, err)))
 		}
-		if img.Variant == osimage.VariantBareMetal && rootImageFormat(img) == osimage.FormatQCOW2 {
-			deploy, err := h.buildDiskImageDeployResponse(base, token, attemptID, target, img, &info)
-			if err != nil {
-				return c.JSON(gohttp.StatusConflict, jsonErrorErr(err))
-			}
-			response.DeployMode = "disk-image"
-			response.CurtinConfigURL = ""
-			response.DiskImageDeploy = deploy
+		if rootImageFormat(img) != osimage.FormatQCOW2 {
+			return c.JSON(gohttp.StatusConflict, jsonError(fmt.Sprintf("bare-metal deploy requires qcow2 OS image, got %s", rootImageFormat(img))))
 		}
+		if !osimage.SupportsDeploymentTarget(img, osimage.DeploymentTargetBareMetal) {
+			return c.JSON(gohttp.StatusConflict, jsonError(fmt.Sprintf("os image %q does not support bare-metal deployment", target.OSPreset.ImageRef)))
+		}
+		deploy, err := h.buildDiskImageDeployResponse(base, token, attemptID, target, img, &info)
+		if err != nil {
+			return c.JSON(gohttp.StatusConflict, jsonErrorErr(err))
+		}
+		response.DeployMode = "disk-image"
+		response.CurtinConfigURL = ""
+		response.DiskImageDeploy = deploy
 	}
 	return c.JSON(gohttp.StatusOK, response)
 }
@@ -807,6 +811,9 @@ func (h *Handler) buildDiskImageDeployResponse(base, token, attemptID string, m 
 	if rootImageFormat(img) != osimage.FormatQCOW2 {
 		return nil, fmt.Errorf("disk image deploy requires qcow2 image, got format %q", rootImageFormat(img))
 	}
+	if !osimage.SupportsDeploymentTarget(img, osimage.DeploymentTargetBareMetal) {
+		return nil, fmt.Errorf("os image %q does not support bare-metal deployment", img.Name)
+	}
 	if img.Manifest == nil || strings.TrimSpace(img.Manifest.Root.Path) == "" {
 		return nil, fmt.Errorf("bare-metal qcow2 deploy requires manifest.root.path")
 	}
@@ -835,10 +842,7 @@ func (h *Handler) buildDiskImageDeployResponse(base, token, attemptID string, m 
 }
 
 func rootImageFormat(img osimage.OSImage) osimage.ImageFormat {
-	if img.Manifest != nil && img.Manifest.Root.Format != "" {
-		return img.Manifest.Root.Format
-	}
-	return img.Format
+	return osimage.EffectiveImageFormat(img)
 }
 
 func installCapabilityForOSFamily(osFamily string) osInstallCapability {

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import clsx from 'clsx'
 import { api } from '../../api'
 import { formatDate, phaseClass } from '../../lib/formatters'
+import { supportsDeploymentTarget } from '../../lib/osImages'
 import { usePersistentStringState } from '../../hooks/usePersistentStringState'
 import { VMConsolePanel } from './VMConsolePanel'
 import type { CloudInitTemplate, Hypervisor, OSImage, SSHKey, Subnet, VirtualMachine } from '../../types'
@@ -262,7 +263,7 @@ export function VirtualMachinesView({
   const [reinstallAdvancedOpen, setReinstallAdvancedOpen] = useState(false)
 
   const osImageByName = useMemo(() => new Map(osImages.map((img) => [img.name, img])), [osImages])
-  const vmOSImages = useMemo(() => osImages.filter((img) => img.format === 'qcow2' && (!img.variant || img.variant === 'cloud')), [osImages])
+  const vmOSImages = useMemo(() => osImages.filter((img) => supportsDeploymentTarget(img, 'vm')), [osImages])
   const checkedNames = useMemo(
     () => virtualMachines.filter((vm) => checkedVMs.has(vm.name)).map((vm) => vm.name),
     [checkedVMs, virtualMachines]
@@ -378,7 +379,7 @@ export function VirtualMachinesView({
       return
     }
     if (!vmOSImages.some((img) => img.name === form.osImageRef)) {
-      notifyError('VM deployment requires a qcow2 OS Image')
+      notifyError('VM deployment requires a vm-capable qcow2 OS Image')
       return
     }
 
@@ -549,7 +550,7 @@ export function VirtualMachinesView({
       return
     }
     if (!vmOSImages.some((img) => img.name === reinstallForm.osImageRef)) {
-      notifyError('VM deployment requires a qcow2 OS Image')
+      notifyError('VM deployment requires a vm-capable qcow2 OS Image')
       return
     }
 
@@ -685,7 +686,7 @@ export function VirtualMachinesView({
     radioNamePrefix: string
   ) {
     const selectedOSImage = formState.osImageRef ? osImageByName.get(formState.osImageRef) : undefined
-    const hasUnsupportedSelectedOSImage = Boolean(selectedOSImage && (selectedOSImage.format !== 'qcow2' || (selectedOSImage.variant && selectedOSImage.variant !== 'cloud')))
+    const hasUnsupportedSelectedOSImage = Boolean(selectedOSImage && !supportsDeploymentTarget(selectedOSImage, 'vm'))
     return (
       <>
         <label className="text-[0.84rem]">

@@ -101,3 +101,33 @@ func TestValidateOSImage_BareMetalQCOW2UsesManifestRootFormat(t *testing.T) {
 		t.Fatalf("expected manifest qcow2 format to validate, got %v", err)
 	}
 }
+
+func TestValidateOSImage_BareMetalCapabilityRequiresRootPartition(t *testing.T) {
+	img := validImage()
+	img.Manifest = &Manifest{
+		Capabilities: Capabilities{DeployTargets: []DeploymentTarget{DeploymentTargetBareMetal}},
+		Root:         RootArtifact{Format: FormatQCOW2, Path: "root.qcow2"},
+	}
+	if err := ValidateOSImage(img); err == nil || !strings.Contains(err.Error(), "rootPartition.number") {
+		t.Fatalf("expected bare-metal capability root partition error, got %v", err)
+	}
+	img.Manifest.Root.RootPartition.Number = 1
+	if err := ValidateOSImage(img); err != nil {
+		t.Fatalf("expected bare-metal capability image to validate, got %v", err)
+	}
+}
+
+func TestSupportsDeploymentTarget_ManifestCapabilitiesOverrideVariant(t *testing.T) {
+	img := validImage()
+	img.Variant = VariantBareMetal
+	img.Manifest = &Manifest{
+		Capabilities: Capabilities{DeployTargets: []DeploymentTarget{DeploymentTargetVM}},
+		Root:         RootArtifact{Format: FormatQCOW2, Path: "root.qcow2"},
+	}
+	if !SupportsDeploymentTarget(img, DeploymentTargetVM) {
+		t.Fatal("expected explicit vm capability to be supported")
+	}
+	if SupportsDeploymentTarget(img, DeploymentTargetBareMetal) {
+		t.Fatal("expected explicit capabilities to override baremetal variant")
+	}
+}

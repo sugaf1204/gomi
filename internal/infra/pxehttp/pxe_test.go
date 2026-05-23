@@ -2225,10 +2225,10 @@ func TestPXEInventory_QCOW2ImageReturnsDiskImageDeployPlan(t *testing.T) {
 		Arch:      "amd64",
 		Format:    osimage.FormatQCOW2,
 		Source:    osimage.SourceURL,
-		Variant:   osimage.VariantBareMetal,
 		Ready:     true,
 		LocalPath: "/var/lib/gomi/data/images/debian-13-amd64-qcow2",
 		Manifest: &osimage.Manifest{
+			Capabilities: osimage.Capabilities{DeployTargets: []osimage.DeploymentTarget{osimage.DeploymentTargetBareMetal}},
 			Root: osimage.RootArtifact{
 				Format: osimage.FormatQCOW2,
 				Path:   "root.qcow2",
@@ -2326,7 +2326,7 @@ func TestPXEInventory_QCOW2ImageReturnsDiskImageDeployPlan(t *testing.T) {
 	}
 }
 
-func TestPXEInventory_NonBareMetalQCOW2ImageKeepsCurtinDeployPlan(t *testing.T) {
+func TestPXEInventory_NonBareMetalQCOW2ImageRejectsBareMetalDeploy(t *testing.T) {
 	backend := memory.New()
 	machineSvc := machine.NewService(backend.Machines())
 	hwInfoSvc := hwinfo.NewService(backend.HWInfo())
@@ -2387,21 +2387,11 @@ func TestPXEInventory_NonBareMetalQCOW2ImageKeepsCurtinDeployPlan(t *testing.T) 
 	if err := h.PXEInventory(c); err != nil {
 		t.Fatalf("PXEInventory: %v", err)
 	}
-	if rec.Code != http.StatusOK {
+	if rec.Code != http.StatusConflict {
 		t.Fatalf("unexpected status: %d body=%s", rec.Code, rec.Body.String())
 	}
-	var response map[string]any
-	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
-		t.Fatalf("decode inventory response: %v", err)
-	}
-	if response["deployMode"] != "curtin" {
-		t.Fatalf("deployMode = %v, want curtin; body=%s", response["deployMode"], rec.Body.String())
-	}
-	if response["curtinConfigUrl"] == "" || response["eventsUrl"] == "" {
-		t.Fatalf("unexpected curtin response: %s", rec.Body.String())
-	}
-	if _, ok := response["diskImageDeploy"]; ok {
-		t.Fatalf("curtin response must not include diskImageDeploy: %s", rec.Body.String())
+	if !strings.Contains(rec.Body.String(), "does not support bare-metal deployment") {
+		t.Fatalf("expected bare-metal capability error, got: %s", rec.Body.String())
 	}
 }
 
@@ -2510,8 +2500,7 @@ func TestPXEArtifact_OnlyServesManifestArtifactsAndRejectsSymlinkEscape(t *testi
 		Ready:     true,
 		LocalPath: artifactDir,
 		Manifest: &osimage.Manifest{
-			SchemaVersion: "gomi.osimage.v1",
-			BootModes:     []string{"bios", "uefi"},
+			BootModes: []string{"bios", "uefi"},
 			Root: osimage.RootArtifact{
 				Format: osimage.FormatSquashFS,
 				Path:   "rootfs.squashfs",
@@ -3545,7 +3534,6 @@ func TestPXENocloudUserData_CompletedRootFSDisablesResizeBeforeImageApplied(t *t
 		Source:    osimage.SourceUpload,
 		Ready:     true,
 		Manifest: &osimage.Manifest{
-			SchemaVersion: "gomi.osimage.v1",
 			Root: osimage.RootArtifact{
 				Format: osimage.FormatSquashFS,
 				Path:   "rootfs.squashfs",
@@ -3612,6 +3600,14 @@ func TestPXENocloudUserData_QCOW2MachineDoesNotDisableResizeBeforeImageApplied(t
 		Format:    osimage.FormatQCOW2,
 		Source:    osimage.SourceUpload,
 		Ready:     true,
+		Manifest: &osimage.Manifest{
+			Capabilities: osimage.Capabilities{DeployTargets: []osimage.DeploymentTarget{osimage.DeploymentTargetBareMetal}},
+			Root: osimage.RootArtifact{
+				Format:        osimage.FormatQCOW2,
+				Path:          "root.qcow2",
+				RootPartition: osimage.Partition{Number: 1, Filesystem: "ext4"},
+			},
+		},
 		CreatedAt: now,
 		UpdatedAt: now,
 	}); err != nil {
@@ -3655,6 +3651,11 @@ func TestPXENocloudUserData_QCOW2MachineDoesNotDisableResizeBeforeImageApplied(t
 	}
 	if body := rec.Body.String(); strings.Contains(body, "resize_rootfs: false") {
 		t.Fatalf("non-rootfs deploy must not disable resize_rootfs, got:\n%s", body)
+	} else if strings.Contains(body, "99-gomi-network.yaml") ||
+		strings.Contains(body, "netplan apply") ||
+		strings.Contains(body, "NetworkManager/system-connections") ||
+		strings.Contains(body, ".nmconnection") {
+		t.Fatalf("qcow2 disk-image deploy must not inject OS-specific network files, got:\n%s", body)
 	}
 }
 

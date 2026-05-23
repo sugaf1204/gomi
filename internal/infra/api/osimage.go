@@ -78,15 +78,7 @@ func (s *Server) UploadOSImage(c echo.Context) error {
 
 	ext := filepath.Ext(file.Filename)
 	if ext == "" {
-		// Fall back to format-based extension
-		switch img.Format {
-		case osimage.FormatISO:
-			ext = ".iso"
-		case osimage.FormatSquashFS:
-			ext = ".squashfs"
-		default:
-			ext = ".qcow2"
-		}
+		ext = ".qcow2"
 	}
 
 	localPath, payloadPath, err := s.imageWritePaths(img, ext)
@@ -264,17 +256,10 @@ func (s *Server) publishOSImageFile(localPath string) error {
 func imageExtension(img osimage.OSImage, rawPath string) string {
 	ext := strings.ToLower(filepath.Ext(rawPath))
 	switch ext {
-	case ".qcow2", ".img", ".iso", ".squashfs":
+	case ".qcow2", ".img":
 		return ext
 	}
-	switch img.Format {
-	case osimage.FormatISO:
-		return ".iso"
-	case osimage.FormatSquashFS:
-		return ".squashfs"
-	default:
-		return ".qcow2"
-	}
+	return ".qcow2"
 }
 
 func writeImageFileWithChecksum(path string, r io.Reader, expected string) error {

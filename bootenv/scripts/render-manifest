@@ -15,7 +15,6 @@ artifact_json() {
 
 cat >"$dir/manifest.json" <<JSON
 {
-  "schemaVersion": "gomi.bootenv/v1",
   "name": "ubuntu-minimal-cloud-amd64",
   "version": "$version",
   "distribution": "ubuntu",

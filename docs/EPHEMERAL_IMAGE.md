@@ -8,15 +8,15 @@ artifacts. OS images are registered separately as prebuilt artifacts:
 ```sh
 curl -H "Authorization: Bearer $GOMI_TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"name":"debian-13","osFamily":"debian","osVersion":"13","arch":"amd64","format":"squashfs","source":"url","url":"https://images.example/rootfs.squashfs"}' \
+  -d '{"name":"debian-13","osFamily":"debian","osVersion":"13","arch":"amd64","format":"qcow2","source":"url","url":"https://images.example/debian-13-amd64.qcow2"}' \
   http://gomi.example/api/v1/os-images
 ```
 
-GOMI does not build target OS images. Target rootfs images are produced outside
-this repository, for example by the mkosi-based `os-image` pipeline, then
-registered with the OS image API as `squashfs` or `qcow2`. Bare-metal `qcow2`
-images are whole-disk images and require manifest partition metadata so the
-deploy runtime can inject NoCloud seed data after writing the disk.
+GOMI does not build target OS images. Target OS images are produced outside this
+repository, for example by the mkosi-based `os-images` pipeline, then registered
+with the OS image API as `qcow2`. Bare-metal `qcow2` images are whole-disk
+images and require manifest partition metadata so the deploy runtime can inject
+NoCloud seed data after writing the disk.
 
 For boot environments, GOMI fetches `manifest.json`, verifies the declared
 SHA256/size for each artifact, and publishes:
@@ -105,7 +105,7 @@ GOMI owns only consumption:
 - input: registered prebuilt `squashfs` or `qcow2` OS images;
 - bootenv source: `GOMI_BOOTENV_SOURCE_URL`, either a local directory or HTTP(S)
   base;
-- verification: manifest schema/name plus SHA256/size for kernel/initrd/rootfs;
+- verification: manifest name plus SHA256/size for kernel/initrd/rootfs;
 - output: versioned artifact directory plus stable PXE compatibility links.
 
 This makes the GOMI use case just one consumer instead of hard-coding GOMI or
