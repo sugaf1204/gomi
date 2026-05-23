@@ -48,6 +48,7 @@ type VMConfigForm = {
   sshKeyRefs: string[]
   loginUserUsername: string
   loginUserPassword: string
+  loginUserPasswordTouched: boolean
 }
 
 type VMForm = VMConfigForm & {
@@ -95,8 +96,14 @@ type VMDeleteConfirmState = {
 type VMBulkRedeployConfirmState = {
   open: boolean
   targets: string[]
+  activeTarget: string
+  forms: Record<string, VMReinstallForm>
+  advancedOpen: Record<string, boolean>
+  status: Record<string, { state: VMBulkRedeployTargetStatus; error?: string }>
   running: boolean
 }
+
+type VMBulkRedeployTargetStatus = 'pending' | 'running' | 'succeeded' | 'failed'
 
 type VMMigrateConfirmState = {
   open: boolean
@@ -131,7 +138,8 @@ const initialVMConfigForm: VMConfigForm = {
   bridge: '',
   sshKeyRefs: [],
   loginUserUsername: '',
-  loginUserPassword: ''
+  loginUserPassword: '',
+  loginUserPasswordTouched: false
 }
 
 const initialForm: VMForm = {
@@ -175,6 +183,10 @@ const initialDeleteConfirm: VMDeleteConfirmState = {
 const initialBulkRedeployConfirm: VMBulkRedeployConfirmState = {
   open: false,
   targets: [],
+  activeTarget: '',
+  forms: {},
+  advancedOpen: {},
+  status: {},
   running: false
 }
 
@@ -221,6 +233,21 @@ function primaryCloudInitRef(vm: VirtualMachine): string {
   return vm.cloudInitRefs?.[0] ?? vm.cloudInitRef ?? ''
 }
 
+function currentVMCloudInitRefs(vm?: VirtualMachine) {
+  const refs = vm?.cloudInitRefs?.map((ref) => ref.trim()).filter(Boolean) ?? []
+  const legacyRef = vm?.cloudInitRef?.trim() ?? ''
+  const primaryRef = vm ? primaryCloudInitRef(vm).trim() : ''
+  const ordered = primaryRef ? [primaryRef, ...refs] : refs
+  if (legacyRef) ordered.push(legacyRef)
+  return Array.from(new Set(ordered.filter(Boolean)))
+}
+
+function mergeSelectedCloudInitRef(selectedRef: string, currentRefs: string[]) {
+  const trimmedRef = selectedRef.trim()
+  if (!trimmedRef) return currentRefs
+  return [trimmedRef, ...currentRefs.filter((ref) => ref !== trimmedRef)]
+}
+
 function toReinstallForm(vm: VirtualMachine): VMReinstallForm {
   const nic = vm.network?.[0]
   const cloudInitRef = primaryCloudInitRef(vm)
@@ -247,7 +274,8 @@ function toReinstallForm(vm: VirtualMachine): VMReinstallForm {
     bridge: nic?.bridge || '',
     sshKeyRefs: vm.sshKeyRefs ?? [],
     loginUserUsername: vm.loginUser?.username || '',
-    loginUserPassword: ''
+    loginUserPassword: '',
+    loginUserPasswordTouched: false
   }
 }
 
@@ -283,6 +311,20 @@ function buildAdvancedOptions(form: Pick<VMConfigForm, 'cpuMode' | 'diskDriver' 
     ...(ioThreads > 0 ? { ioThreads } : {}),
     ...(netMultiqueue > 0 ? { netMultiqueue } : {}),
     ...(cpuPinning ? { cpuPinning } : {})
+  }
+}
+
+function buildVMLoginUserPayload(
+  formState: Pick<VMConfigForm, 'loginUserUsername' | 'loginUserPassword' | 'loginUserPasswordTouched'>,
+  currentLoginUser?: VirtualMachine['loginUser']
+): VirtualMachine['loginUser'] | undefined {
+  const username = formState.loginUserUsername.trim()
+  const password = formState.loginUserPassword.trim()
+  if (!username) return undefined
+  if (currentLoginUser?.username === username && !password && !formState.loginUserPasswordTouched) return undefined
+  return {
+    username,
+    ...(password ? { password } : {})
   }
 }
 
@@ -441,11 +483,11 @@ export function VirtualMachinesView({
     return created.name
   }
 
-  async function resolveCloudInitRefs(formState: VMConfigForm, description: string) {
+  async function resolveCloudInitRefs(formState: VMConfigForm, description: string, currentRefs: string[] = []) {
     if (formState.cloudInitMode === 'none') return [] as string[]
     if (formState.cloudInitMode === 'existing') {
       const ref = formState.cloudInitExistingRef.trim()
-      return ref ? [ref] : []
+      return mergeSelectedCloudInitRef(ref, currentRefs)
     }
     const templateName = formState.cloudInitTemplateName.trim()
     const userData = formState.cloudInitUserData.trim()
@@ -457,7 +499,7 @@ export function VirtualMachinesView({
       userData,
       description
     )
-    return [createdName]
+    return mergeSelectedCloudInitRef(createdName, currentRefs)
   }
 
   async function handleCreate(e: React.FormEvent) {
@@ -638,20 +680,6 @@ export function VirtualMachinesView({
     }
   }
 
-  async function handleBulkRedeployConfirm() {
-    if (bulkRedeployConfirm.targets.length === 0) return
-    const targets = [...bulkRedeployConfirm.targets]
-    setBulkRedeployConfirm(initialBulkRedeployConfirm)
-    try {
-      for (const target of targets) {
-        await api.vmRedeploy(target)
-      }
-      void onRefresh()
-    } catch (err) {
-      notifyError(err instanceof Error ? err.message : 'Failed to redeploy VM')
-    }
-  }
-
   function openPowerConfirm(action: VMPowerAction, targets: string[]) {
     setPowerConfirm({
       open: true,
@@ -686,50 +714,66 @@ export function VirtualMachinesView({
     setReinstallOpen(true)
   }
 
-  async function handleRedeploy() {
-    if (!selectedVM) return
-    if (!reinstallForm.osImageRef) {
-      notifyError('OS Image is required for redeploy')
-      return
+  function buildVMNetworkPayload(formState: VMConfigForm, currentVM?: VirtualMachine): VirtualMachine['network'] | undefined {
+    const primaryNetwork = {
+      ...(currentVM?.network?.[0] ?? {}),
+      name: currentVM?.network?.[0]?.name || 'default',
+      bridge: formState.bridge || undefined,
+      network: formState.subnetRef || undefined,
+      ipAddress: formState.ipAssignment === 'static' && formState.staticIP ? formState.staticIP : undefined
+    }
+    if (currentVM?.network && currentVM.network.length > 0) {
+      return [primaryNetwork, ...currentVM.network.slice(1)]
+    }
+    if (formState.bridge || formState.staticIP || formState.subnetRef) {
+      return [primaryNetwork]
+    }
+    return undefined
+  }
+
+  async function buildVMRedeployPayload(formState: VMConfigForm, description: string, currentVM?: VirtualMachine) {
+    if (!formState.osImageRef) {
+      throw new Error('OS Image is required for redeploy')
+    }
+    if (formState.ipAssignment === 'static' && !formState.staticIP.trim()) {
+      throw new Error('Static IP is required when static assignment is selected')
     }
     if (!vmOSImages.some((img) => img.name === reinstallForm.osImageRef)) {
       notifyError('VM deployment requires a qcow2 OS Image')
       return
     }
 
-    const cloudInitRefs = await resolveCloudInitRefs(reinstallForm, 'Auto-generated from Redeploy Virtual Machine dialog')
-    const vmNetwork = (reinstallForm.bridge || reinstallForm.staticIP || reinstallForm.subnetRef)
-      ? [{ name: 'default', bridge: reinstallForm.bridge || undefined, network: reinstallForm.subnetRef || undefined, ipAddress: reinstallForm.ipAssignment === 'static' && reinstallForm.staticIP ? reinstallForm.staticIP : undefined }]
-      : undefined
-    const advancedOptions = buildAdvancedOptions(reinstallForm) ?? {}
+    const cloudInitRefs = await resolveCloudInitRefs(formState, description, currentVMCloudInitRefs(currentVM))
+    const vmNetwork = buildVMNetworkPayload(formState, currentVM)
+    const advancedOptions = buildAdvancedOptions(formState) ?? {}
+    const loginUser = buildVMLoginUserPayload(formState, currentVM?.loginUser)
     const redeployPayload: Parameters<typeof api.vmRedeploy>[1] = {
-      hypervisorRef: reinstallForm.hypervisorRef || '',
+      hypervisorRef: formState.hypervisorRef || '',
       resources: {
-        cpuCores: Number(reinstallForm.cpuCores) || 2,
-        memoryMB: Number(reinstallForm.memoryMB) || 2048,
-        diskGB: Number(reinstallForm.diskGB) || 20
+        cpuCores: Number(formState.cpuCores) || 2,
+        memoryMB: Number(formState.memoryMB) || 2048,
+        diskGB: Number(formState.diskGB) || 20
       },
-      osImageRef: reinstallForm.osImageRef,
+      osImageRef: formState.osImageRef,
       cloudInitRefs,
       ...(vmNetwork ? { network: vmNetwork } : {}),
-      ...(reinstallForm.subnetRef ? { subnetRef: reinstallForm.subnetRef } : { subnetRef: '' }),
-      domain: reinstallForm.domain.trim() || undefined,
+      ...(formState.subnetRef ? { subnetRef: formState.subnetRef } : { subnetRef: '' }),
+      domain: formState.domain.trim() || undefined,
       advancedOptions,
-      ipAssignment: reinstallForm.ipAssignment,
-      ...(reinstallForm.ipAssignment === 'static' && reinstallForm.staticIP ? { ip: reinstallForm.staticIP } : { ip: '' }),
-      sshKeyRefs: reinstallForm.sshKeyRefs,
-      ...(reinstallForm.loginUserUsername.trim()
-        ? {
-            loginUser: {
-              username: reinstallForm.loginUserUsername.trim(),
-              ...(reinstallForm.loginUserPassword.trim() ? { password: reinstallForm.loginUserPassword.trim() } : {})
-            }
-          }
-        : {})
+      ipAssignment: formState.ipAssignment,
+      ...(formState.ipAssignment === 'static' && formState.staticIP ? { ip: formState.staticIP } : { ip: '' }),
+      sshKeyRefs: formState.sshKeyRefs,
+      ...(loginUser ? { loginUser } : {})
     }
+    return redeployPayload
+  }
+
+  async function handleRedeploy() {
+    if (!selectedVM) return
 
     setReinstalling(true)
     try {
+      const redeployPayload = await buildVMRedeployPayload(reinstallForm, 'Auto-generated from Redeploy Virtual Machine dialog', selectedVM)
       const updated = await api.vmRedeploy(selectedVM.name, redeployPayload)
       onVirtualMachineUpsert(updated)
       setReinstallOpen(false)
@@ -739,6 +783,160 @@ export function VirtualMachinesView({
     } finally {
       setReinstalling(false)
     }
+  }
+
+  function openBulkRedeployDialog(targets: string[]) {
+    const sortedTargets = [...targets].sort()
+    if (sortedTargets.length === 0) return
+    const forms: Record<string, VMReinstallForm> = {}
+    const advancedState: Record<string, boolean> = {}
+    const status: VMBulkRedeployConfirmState['status'] = {}
+    for (const target of sortedTargets) {
+      const vm = virtualMachines.find((item) => item.name === target)
+      if (!vm) continue
+      forms[target] = toReinstallForm(vm)
+      advancedState[target] = Boolean(vm.advancedOptions)
+      status[target] = { state: 'pending' }
+    }
+    const availableTargets = sortedTargets.filter((target) => forms[target])
+    if (availableTargets.length === 0) return
+    setBulkRedeployConfirm({
+      open: true,
+      targets: availableTargets,
+      activeTarget: availableTargets[0],
+      forms,
+      advancedOpen: advancedState,
+      status,
+      running: false
+    })
+  }
+
+  function updateBulkRedeployForm(target: string, updater: (current: VMConfigForm) => VMConfigForm) {
+    setBulkRedeployConfirm((current) => {
+      const currentForm = current.forms[target]
+      if (!currentForm) return current
+      return {
+        ...current,
+        forms: {
+          ...current.forms,
+          [target]: updater(currentForm)
+        },
+        status: {
+          ...current.status,
+          [target]: { state: 'pending' }
+        }
+      }
+    })
+  }
+
+  function setBulkRedeployAdvancedOpen(target: string, value: boolean | ((current: boolean) => boolean)) {
+    setBulkRedeployConfirm((current) => {
+      const currentValue = current.advancedOpen[target] ?? false
+      return {
+        ...current,
+        advancedOpen: {
+          ...current.advancedOpen,
+          [target]: typeof value === 'function' ? value(currentValue) : value
+        }
+      }
+    })
+  }
+
+  function vmRedeployFormReady(formState: VMConfigForm) {
+    const cpuCores = Number(formState.cpuCores)
+    const memoryMB = Number(formState.memoryMB)
+    const diskGB = Number(formState.diskGB)
+
+    return Boolean(
+      formState.osImageRef
+      && Number.isFinite(cpuCores)
+      && cpuCores >= 1
+      && Number.isFinite(memoryMB)
+      && memoryMB > 0
+      && Number.isFinite(diskGB)
+      && diskGB >= 1
+      && (formState.ipAssignment !== 'static' || formState.staticIP.trim())
+      && (formState.cloudInitMode !== 'create' || (formState.cloudInitTemplateName.trim() && formState.cloudInitUserData.trim()))
+    )
+  }
+
+  async function handleBulkRedeployConfirm() {
+    if (bulkRedeployConfirm.targets.length === 0) return
+
+    const targets = [...bulkRedeployConfirm.targets]
+    const forms = bulkRedeployConfirm.forms
+    const failures: string[] = []
+
+    setBulkRedeployConfirm((current) => ({
+      ...current,
+      running: true,
+      status: Object.fromEntries(targets.map((target) => [target, { state: 'pending' as const }]))
+    }))
+
+    for (const target of targets) {
+      const formState = forms[target]
+      if (!formState || !vmRedeployFormReady(formState)) {
+        failures.push(target)
+        setBulkRedeployConfirm((current) => ({
+          ...current,
+          activeTarget: target,
+          status: {
+            ...current.status,
+            [target]: { state: 'failed', error: 'Required redeploy fields are missing' }
+          }
+        }))
+        continue
+      }
+
+      setBulkRedeployConfirm((current) => ({
+        ...current,
+        activeTarget: target,
+        status: {
+          ...current.status,
+          [target]: { state: 'running' }
+        }
+      }))
+
+      try {
+        const currentVM = virtualMachines.find((vm) => vm.name === target)
+        const redeployPayload = await buildVMRedeployPayload(formState, 'Auto-generated from Bulk Redeploy Virtual Machine dialog', currentVM)
+        const updated = await api.vmRedeploy(target, redeployPayload)
+        onVirtualMachineUpsert(updated)
+        setBulkRedeployConfirm((current) => ({
+          ...current,
+          status: {
+            ...current.status,
+            [target]: { state: 'succeeded' }
+          }
+        }))
+      } catch (err) {
+        failures.push(target)
+        setBulkRedeployConfirm((current) => ({
+          ...current,
+          status: {
+            ...current.status,
+            [target]: { state: 'failed', error: err instanceof Error ? err.message : 'Redeploy failed' }
+          }
+        }))
+      }
+    }
+
+    void onRefresh()
+
+    if (failures.length > 0) {
+      setCheckedVMs(new Set(failures))
+      setBulkRedeployConfirm((current) => ({
+        ...current,
+        targets: failures,
+        activeTarget: failures[0],
+        running: false
+      }))
+      notifyError(`Failed to redeploy VM: ${failures.join(', ')}`)
+      return
+    }
+
+    setCheckedVMs(new Set())
+    setBulkRedeployConfirm(initialBulkRedeployConfirm)
   }
 
   async function handleMigrateConfirm() {
@@ -776,7 +974,7 @@ export function VirtualMachinesView({
         break
       case 'redeploy':
         if (checkedNames.length > 0) {
-          setBulkRedeployConfirm({ open: true, targets, running: false })
+          openBulkRedeployDialog(targets)
         } else if (selectedVM) {
           openReinstallDialog(selectedVM)
         }
@@ -1355,38 +1553,98 @@ export function VirtualMachinesView({
         </ModalOverlay>
       )}
 
-      {bulkRedeployConfirm.open && (
-        <ModalOverlay onBackdropClick={() => {
-          if (!bulkRedeployConfirm.running) {
-            setBulkRedeployConfirm(initialBulkRedeployConfirm)
-          }
-        }}>
-          <div className="w-[min(520px,100%)] bg-white border border-line-strong shadow-[0_20px_45px_rgba(52,43,34,0.2)] p-[1.1rem] grid gap-[0.65rem]">
-            <h3 className="text-[1.2rem]">Confirm Bulk Redeploy</h3>
-            <p className="m-0 text-ink-soft text-[0.84rem]">
-              The following VMs will be redeployed with their current specs ({bulkRedeployConfirm.targets.length}):
-            </p>
-            <div className="max-h-[180px] overflow-auto border border-line p-[0.55rem] bg-[#f9f7f4]">
-              <ul className="m-0 pl-[1.1rem]">
-                {bulkRedeployConfirm.targets.map((target) => (
-                  <li key={target}><code>{target}</code></li>
-                ))}
-              </ul>
+      {bulkRedeployConfirm.open && (() => {
+        const activeTarget = bulkRedeployConfirm.activeTarget || bulkRedeployConfirm.targets[0]
+        const activeForm = bulkRedeployConfirm.forms[activeTarget]
+        const invalidTargets = bulkRedeployConfirm.targets.filter((target) => !vmRedeployFormReady(bulkRedeployConfirm.forms[target]))
+        return (
+          <ModalOverlay onBackdropClick={() => {
+            if (!bulkRedeployConfirm.running) {
+              setBulkRedeployConfirm(initialBulkRedeployConfirm)
+            }
+          }}>
+            <div className="w-[min(1040px,100%)] bg-white border border-line-strong shadow-[0_20px_45px_rgba(52,43,34,0.2)] p-[1.1rem] grid gap-[0.8rem] max-h-[90vh] overflow-auto">
+              <div className="flex justify-between items-center gap-[0.8rem]">
+                <div>
+                  <h3 className="text-[1.2rem]">Bulk Redeploy Virtual Machines</h3>
+                  <p className="m-0 text-ink-soft text-[0.84rem]">Edit each VM before running redeploy sequentially.</p>
+                </div>
+                <button
+                  aria-label="Close"
+                  className="border-0 bg-transparent shadow-none p-0 w-[1.8rem] h-[1.8rem] flex items-center justify-center text-[1.4rem] leading-none text-ink-soft hover:text-ink hover:shadow-none!"
+                  disabled={bulkRedeployConfirm.running}
+                  onClick={() => setBulkRedeployConfirm(initialBulkRedeployConfirm)}
+                >×</button>
+              </div>
+              <div className="grid grid-cols-[250px_minmax(0,1fr)] gap-[0.85rem] max-md:grid-cols-1">
+                <div className="border border-line bg-[#f9f7f4] p-[0.55rem] max-h-[68vh] overflow-auto">
+                  <p className="m-0 mb-[0.45rem] text-ink-soft text-[0.78rem]">Targets ({bulkRedeployConfirm.targets.length})</p>
+                  <div className="grid gap-[0.35rem]">
+                    {bulkRedeployConfirm.targets.map((target) => {
+                      const status = bulkRedeployConfirm.status[target]?.state ?? 'pending'
+                      return (
+                        <button
+                          key={target}
+                          type="button"
+                          className={clsx(
+                            'w-full text-left border border-line shadow-none px-[0.55rem] py-[0.48rem] bg-white hover:bg-[#f3efe8]',
+                            activeTarget === target && 'border-brand bg-[rgba(43,122,120,0.08)]'
+                          )}
+                          onClick={() => setBulkRedeployConfirm((current) => ({ ...current, activeTarget: target }))}
+                        >
+                          <span className="block font-medium break-anywhere">{target}</span>
+                          <span className={clsx(
+                            'mt-[0.18rem] inline-flex text-[0.68rem] font-medium px-[0.35rem] py-[0.05rem] rounded-sm border',
+                            status === 'succeeded' && 'bg-[#e9f6ec] text-[#25633a] border-[#b8dec3]',
+                            status === 'failed' && 'bg-[#fff0ee] text-[#9b2d2d] border-[#ecc1ba]',
+                            status === 'running' && 'bg-[#eef5ff] text-[#265f9b] border-[#bfd5ee]',
+                            status === 'pending' && 'bg-[#f3f0ea] text-ink-soft border-[#e0dbd2]'
+                          )}>{status}</span>
+                          {bulkRedeployConfirm.status[target]?.error && (
+                            <span className="block mt-[0.2rem] text-[#9b2d2d] text-[0.72rem] leading-tight">{bulkRedeployConfirm.status[target]?.error}</span>
+                          )}
+                        </button>
+                      )
+                    })}
+                  </div>
+                </div>
+                <div className="min-w-0 grid gap-[0.55rem]">
+                  {activeForm && (
+                    <>
+                      <div className="bg-[#f9f7f4] border border-line p-[0.6rem] text-[0.84rem]">
+                        <p className="m-0 text-ink-soft">Editing <strong className="text-ink">{activeTarget}</strong></p>
+                        {invalidTargets.includes(activeTarget) && (
+                          <p className="m-0 mt-[0.2rem] text-[#9b2d2d] font-medium">Required fields are missing for this target.</p>
+                        )}
+                      </div>
+                      <fieldset disabled={bulkRedeployConfirm.running} className="grid gap-[0.55rem] border-0 p-0 m-0 min-w-0 disabled:opacity-80">
+                        {renderVMSpecFields(
+                          activeForm,
+                          (updater) => updateBulkRedeployForm(activeTarget, updater),
+                          bulkRedeployConfirm.advancedOpen[activeTarget] ?? false,
+                          (value) => setBulkRedeployAdvancedOpen(activeTarget, value),
+                          `vm-bulk-${activeTarget}`
+                        )}
+                      </fieldset>
+                    </>
+                  )}
+                </div>
+              </div>
+              <div className="flex justify-end gap-[0.45rem] pt-[0.2rem]">
+                <button type="button" onClick={() => setBulkRedeployConfirm(initialBulkRedeployConfirm)} disabled={bulkRedeployConfirm.running}>Cancel</button>
+                <button
+                  type="button"
+                  disabled={bulkRedeployConfirm.running || invalidTargets.length > 0}
+                  className="bg-brand border-brand-strong text-white"
+                  onClick={() => void handleBulkRedeployConfirm()}
+                >
+                  {bulkRedeployConfirm.running ? 'Redeploying...' : `Redeploy all (${bulkRedeployConfirm.targets.length})`}
+                </button>
+              </div>
             </div>
-            <div className="flex justify-end gap-[0.45rem] pt-[0.2rem]">
-              <button type="button" onClick={() => setBulkRedeployConfirm(initialBulkRedeployConfirm)} disabled={bulkRedeployConfirm.running}>Cancel</button>
-              <button
-                type="button"
-                disabled={bulkRedeployConfirm.running}
-                className="bg-brand border-brand-strong text-white"
-                onClick={() => void handleBulkRedeployConfirm()}
-              >
-                {bulkRedeployConfirm.running ? 'Redeploying...' : `Redeploy (${bulkRedeployConfirm.targets.length})`}
-              </button>
-            </div>
-          </div>
-        </ModalOverlay>
-      )}
+          </ModalOverlay>
+        )
+      })()}
 
       {powerConfirm.open && (
         <ModalOverlay onBackdropClick={() => {

@@ -19,6 +19,7 @@ type CloudInitInputMode = 'none' | 'existing' | 'create'
 export type MachinesViewProps = {
   machineFilter: string
   onMachineFilterChange: (value: string) => void
+  machines: Machine[]
   filteredMachines: Machine[]
   dataLoading: boolean
   selectedMachineName: string
@@ -74,6 +75,17 @@ const initialBatchDeleteConfirmState: BatchDeleteConfirmState = {
   running: false
 }
 
+type BatchRedeployTargetStatus = 'pending' | 'running' | 'succeeded' | 'failed'
+
+type BatchRedeployConfirmState = {
+  open: boolean
+  targets: string[]
+  activeTarget: string
+  forms: Record<string, MachineFormState>
+  status: Record<string, { state: BatchRedeployTargetStatus; error?: string }>
+  running: boolean
+}
+
 type MachineFormState = {
   hostname: string
   mac: string
@@ -105,6 +117,7 @@ type MachineFormState = {
   sshKeyRefs: string[]
   loginUserUsername: string
   loginUserPassword: string
+  loginUserPasswordTouched: boolean
 }
 
 type MachineQuickDeployPreset = {
@@ -147,6 +160,8 @@ type MachineDialogState = {
   running: boolean
 }
 
+type UpdateMachineForm = (updater: (current: MachineFormState) => MachineFormState) => void
+
 const MACHINE_QUICK_DEPLOY_STORAGE_KEY = 'gomi.machines.quick-deploy-preset'
 
 function defaultSubnet(subnets: Subnet[]) {
@@ -185,7 +200,8 @@ function createInitialMachineForm(subnets: Subnet[]): MachineFormState {
     bridgeName: 'br0',
     sshKeyRefs: [],
     loginUserUsername: '',
-    loginUserPassword: ''
+    loginUserPassword: '',
+    loginUserPasswordTouched: false
   }
 }
 
@@ -252,6 +268,21 @@ function currentMachineCloudInitRef(machine: Machine | null) {
   return ''
 }
 
+function currentMachineCloudInitRefs(machine?: Machine) {
+  const refs = machine?.cloudInitRefs?.map((ref) => ref.trim()).filter(Boolean) ?? []
+  const primaryRef = machine ? currentMachineCloudInitRef(machine).trim() : ''
+  if (primaryRef && !refs.includes(primaryRef)) {
+    return [primaryRef, ...refs]
+  }
+  return refs
+}
+
+function mergeSelectedCloudInitRef(selectedRef: string, currentRefs: string[]) {
+  const trimmedRef = selectedRef.trim()
+  if (!trimmedRef) return currentRefs
+  return [trimmedRef, ...currentRefs.filter((ref) => ref !== trimmedRef)]
+}
+
 function createMachineFormFromMachine(machine: Machine, subnets: Subnet[]): MachineFormState {
   const currentSubnet = subnets.find((subnet) => subnet.name === machine.subnetRef) ?? defaultSubnet(subnets)
   const currentCloudInitRef = currentMachineCloudInitRef(machine)
@@ -285,7 +316,8 @@ function createMachineFormFromMachine(machine: Machine, subnets: Subnet[]): Mach
     bridgeName: machine.bridgeName || 'br0',
     sshKeyRefs: machine.sshKeyRefs ?? [],
     loginUserUsername: machine.loginUser?.username || '',
-    loginUserPassword: ''
+    loginUserPassword: '',
+    loginUserPasswordTouched: false
   }
 }
 
@@ -311,6 +343,20 @@ function buildPowerConfig(form: MachineFormState): PowerConfig {
   }
 }
 
+function buildMachineLoginUserPayload(
+  formState: Pick<MachineFormState, 'loginUserUsername' | 'loginUserPassword' | 'loginUserPasswordTouched'>,
+  currentLoginUser?: Machine['loginUser']
+): Machine['loginUser'] | undefined {
+  const username = formState.loginUserUsername.trim()
+  const password = formState.loginUserPassword.trim()
+  if (!username) return undefined
+  if (currentLoginUser?.username === username && !password && !formState.loginUserPasswordTouched) return undefined
+  return {
+    username,
+    ...(password ? { password } : {})
+  }
+}
+
 const initialMachineDialogState: MachineDialogState = {
   open: false,
   mode: 'create',
@@ -318,9 +364,19 @@ const initialMachineDialogState: MachineDialogState = {
   running: false
 }
 
+const initialBatchRedeployConfirmState: BatchRedeployConfirmState = {
+  open: false,
+  targets: [],
+  activeTarget: '',
+  forms: {},
+  status: {},
+  running: false
+}
+
 export function MachinesView({
   machineFilter,
   onMachineFilterChange,
+  machines,
   filteredMachines,
   dataLoading,
   selectedMachineName,
@@ -351,6 +407,7 @@ export function MachinesView({
   const [batchRunning, setBatchRunning] = useState(false)
   const [batchPowerConfirm, setBatchPowerConfirm] = useState<BatchPowerConfirmState>(initialBatchPowerConfirmState)
   const [batchDeleteConfirm, setBatchDeleteConfirm] = useState<BatchDeleteConfirmState>(initialBatchDeleteConfirmState)
+  const [batchRedeployConfirm, setBatchRedeployConfirm] = useState<BatchRedeployConfirmState>(initialBatchRedeployConfirmState)
   const [actionsMenuOpen, setActionsMenuOpen] = useState(false)
   const actionsMenuRef = useRef<HTMLDivElement | null>(null)
   const [form, setForm] = useState<MachineFormState>(() => createInitialMachineForm(subnets))
@@ -409,7 +466,8 @@ export function MachinesView({
       bridgeName: preset.bridgeName,
       sshKeyRefs: preset.sshKeyRefs,
       loginUserUsername: preset.loginUserUsername,
-      loginUserPassword: preset.loginUserPassword
+      loginUserPassword: preset.loginUserPassword,
+      loginUserPasswordTouched: false
     }
   }
 
@@ -421,28 +479,29 @@ export function MachinesView({
     return templateName
   }
 
-  async function resolveCloudInitRefs(mode: CloudInitInputMode, existingRef: string, templateName: string, userData: string) {
+  async function resolveCloudInitRefs(mode: CloudInitInputMode, existingRef: string, templateName: string, userData: string, currentRefs: string[] = []) {
     const trimmedExistingRef = existingRef.trim()
     const trimmedTemplateName = templateName.trim()
     const trimmedUserData = userData.trim()
 
     if (mode === 'none') return [] as string[]
     if (mode === 'existing') {
-      return trimmedExistingRef ? [trimmedExistingRef] : []
+      return mergeSelectedCloudInitRef(trimmedExistingRef, currentRefs)
     }
     if (!trimmedTemplateName || !trimmedUserData) {
       throw new Error('Cloud-Init inline creation requires both template name and user-data')
     }
     const createdName = await createInlineCloudInitTemplate(trimmedTemplateName, trimmedUserData)
-    return [createdName]
+    return mergeSelectedCloudInitRef(createdName, currentRefs)
   }
 
-  async function buildMachineSpecPayload(formState: MachineFormState) {
+  async function buildMachineSpecPayload(formState: MachineFormState, currentMachine?: Machine) {
     const cloudInitRefs = await resolveCloudInitRefs(
       formState.cloudInitMode,
       formState.cloudInitExistingRef,
       formState.cloudInitTemplateName,
-      formState.cloudInitUserData
+      formState.cloudInitUserData,
+      currentMachineCloudInitRefs(currentMachine)
     )
 
     const machineNetwork = formState.domain
@@ -469,12 +528,7 @@ export function MachinesView({
       role: formState.isHypervisor ? ('hypervisor' as const) : ('' as const),
       bridgeName: formState.isHypervisor ? (formState.bridgeName || 'br0') : '',
       sshKeyRefs: formState.sshKeyRefs,
-      loginUser: formState.loginUserUsername.trim()
-        ? {
-            username: formState.loginUserUsername.trim(),
-            password: formState.loginUserPassword.trim() || undefined
-          }
-        : undefined
+      loginUser: buildMachineLoginUserPayload(formState, currentMachine?.loginUser)
     }
   }
 
@@ -503,8 +557,8 @@ export function MachinesView({
 
     setMachineDialog((current) => ({ ...current, running: true }))
     try {
-      const payload = await buildMachineSpecPayload(form)
       if (currentDialog.mode === 'create') {
+        const payload = await buildMachineSpecPayload(form)
         const created = await api.createMachine({
           name: form.hostname,
           ...payload
@@ -512,6 +566,7 @@ export function MachinesView({
         onMachineUpsert(created)
         onSelectMachine(created.name)
       } else {
+        const payload = await buildMachineSpecPayload(form, selectedMachine ?? undefined)
         const updated = await api.redeploy(currentDialog.machineName, {
           ...payload
         })
@@ -573,7 +628,7 @@ export function MachinesView({
   }, [quickDeployPreset])
 
   useEffect(() => {
-    if (!machineDialog.open && !quickDeploySettingsOpen && !batchPowerConfirm.open && !batchDeleteConfirm.open) return
+    if (!machineDialog.open && !quickDeploySettingsOpen && !batchPowerConfirm.open && !batchDeleteConfirm.open && !batchRedeployConfirm.open) return
     function onKeyDown(e: KeyboardEvent) {
       if (e.key === 'Escape') {
         if (!quickDeploying) {
@@ -585,6 +640,9 @@ export function MachinesView({
         if (!batchDeleteConfirm.running) {
           setBatchDeleteConfirm(initialBatchDeleteConfirmState)
         }
+        if (!batchRedeployConfirm.running) {
+          setBatchRedeployConfirm(initialBatchRedeployConfirmState)
+        }
         if (!machineDialog.running) {
           closeMachineDialog()
         }
@@ -592,7 +650,7 @@ export function MachinesView({
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [machineDialog.open, machineDialog.running, quickDeploySettingsOpen, quickDeploying, batchPowerConfirm.open, batchPowerConfirm.running, batchDeleteConfirm.open, batchDeleteConfirm.running])
+  }, [machineDialog.open, machineDialog.running, quickDeploySettingsOpen, quickDeploying, batchPowerConfirm.open, batchPowerConfirm.running, batchDeleteConfirm.open, batchDeleteConfirm.running, batchRedeployConfirm.open, batchRedeployConfirm.running])
 
   useEffect(() => {
     if (!machineDialog.open || form.subnetRef || subnets.length === 0) return
@@ -637,6 +695,29 @@ export function MachinesView({
     })
   }
 
+  function openBatchRedeployDialog(targets: string[]) {
+    const sortedTargets = [...targets].sort()
+    if (sortedTargets.length === 0) return
+    const forms: Record<string, MachineFormState> = {}
+    const status: BatchRedeployConfirmState['status'] = {}
+    for (const target of sortedTargets) {
+      const machine = machines.find((item) => item.name === target)
+      if (!machine) continue
+      forms[target] = createMachineFormFromMachine(machine, subnets)
+      status[target] = { state: 'pending' }
+    }
+    const availableTargets = sortedTargets.filter((target) => forms[target])
+    if (availableTargets.length === 0) return
+    setBatchRedeployConfirm({
+      open: true,
+      targets: availableTargets,
+      activeTarget: availableTargets[0],
+      forms,
+      status,
+      running: false
+    })
+  }
+
   function runPrimaryAction(action: MachinePrimaryAction) {
     const targets = selectedMachines.size > 0
       ? Array.from(selectedMachines)
@@ -651,7 +732,11 @@ export function MachinesView({
         openPowerConfirm('power-off', targets)
         break
       case 'redeploy':
-        openRedeployDialog()
+        if (selectedMachines.size > 0) {
+          openBatchRedeployDialog(targets)
+        } else {
+          openRedeployDialog()
+        }
         break
       case 'delete':
         if (selectedMachines.size > 0) {
@@ -758,6 +843,123 @@ export function MachinesView({
     }
   }
 
+  function updateBatchRedeployForm(target: string, updater: (current: MachineFormState) => MachineFormState) {
+    setBatchRedeployConfirm((current) => {
+      const currentForm = current.forms[target]
+      if (!currentForm) return current
+      return {
+        ...current,
+        forms: {
+          ...current.forms,
+          [target]: updater(currentForm)
+        },
+        status: {
+          ...current.status,
+          [target]: { state: 'pending' }
+        }
+      }
+    })
+  }
+
+  function machineFormReady(formState: MachineFormState) {
+    const powerReady =
+      formState.powerType === 'ipmi'
+        ? Boolean(formState.ipmiHost.trim() && formState.ipmiUsername.trim())
+        : formState.powerType === 'webhook'
+          ? Boolean(formState.webhookOnURL.trim() && formState.webhookOffURL.trim())
+          : true
+
+    return Boolean(
+      formState.hostname.trim()
+      && formState.mac.trim()
+      && formState.imageRef
+      && powerReady
+      && (!formState.subnetRef || formState.ipAssignment !== 'static' || formState.staticIP.trim())
+      && (formState.cloudInitMode !== 'create' || (formState.cloudInitTemplateName.trim() && formState.cloudInitUserData.trim()))
+    )
+  }
+
+  async function submitBatchRedeployConfirm() {
+    if (batchRedeployConfirm.targets.length === 0) return
+
+    const targets = [...batchRedeployConfirm.targets]
+    const forms = batchRedeployConfirm.forms
+    const failures: string[] = []
+
+    setBatchRunning(true)
+    setBatchRedeployConfirm((current) => ({
+      ...current,
+      running: true,
+      status: Object.fromEntries(targets.map((target) => [target, { state: 'pending' as const }]))
+    }))
+
+    for (const target of targets) {
+      const formState = forms[target]
+      if (!formState || !machineFormReady(formState)) {
+        failures.push(target)
+        setBatchRedeployConfirm((current) => ({
+          ...current,
+          activeTarget: target,
+          status: {
+            ...current.status,
+            [target]: { state: 'failed', error: 'Required redeploy fields are missing' }
+          }
+        }))
+        continue
+      }
+
+      setBatchRedeployConfirm((current) => ({
+        ...current,
+        activeTarget: target,
+        status: {
+          ...current.status,
+          [target]: { state: 'running' }
+        }
+      }))
+
+      try {
+        const currentMachine = machines.find((machine) => machine.name === target)
+        const payload = await buildMachineSpecPayload(formState, currentMachine)
+        const updated = await api.redeploy(target, payload)
+        onMachineUpsert(updated)
+        setBatchRedeployConfirm((current) => ({
+          ...current,
+          status: {
+            ...current.status,
+            [target]: { state: 'succeeded' }
+          }
+        }))
+      } catch (err) {
+        failures.push(target)
+        setBatchRedeployConfirm((current) => ({
+          ...current,
+          status: {
+            ...current.status,
+            [target]: { state: 'failed', error: err instanceof Error ? err.message : 'Redeploy failed' }
+          }
+        }))
+      }
+    }
+
+    setBatchRunning(false)
+    void onRefresh()
+
+    if (failures.length > 0) {
+      setSelectedMachines(new Set(failures))
+      setBatchRedeployConfirm((current) => ({
+        ...current,
+        targets: failures,
+        activeTarget: failures[0],
+        running: false
+      }))
+      notifyError(`Failed to redeploy: ${failures.join(', ')}`)
+      return
+    }
+
+    setSelectedMachines(new Set())
+    setBatchRedeployConfirm(initialBatchRedeployConfirmState)
+  }
+
   function toggleMachineSelect(name: string) {
     setSelectedMachines((prev) => {
       const next = new Set(prev)
@@ -784,108 +986,108 @@ export function MachinesView({
     })
   }
 
-  function renderMachineSpecFields(radioName: string) {
+  function renderMachineSpecFields(formState: MachineFormState, updateForm: UpdateMachineForm, radioName: string) {
     return (
       <>
         <label className="text-[0.84rem]">
           Hostname
-          <input required value={form.hostname} onChange={(e) => setForm((current) => ({ ...current, hostname: e.target.value }))} placeholder="e.g. node1" />
+          <input required value={formState.hostname} onChange={(e) => updateForm((current) => ({ ...current, hostname: e.target.value }))} placeholder="e.g. node1" />
         </label>
         <label className="text-[0.84rem]">
           MAC Address
           <input
             required
-            value={form.mac}
-            onChange={(e) => setForm((current) => ({ ...current, mac: e.target.value }))}
+            value={formState.mac}
+            onChange={(e) => updateForm((current) => ({ ...current, mac: e.target.value }))}
             placeholder="aa:bb:cc:dd:ee:ff"
           />
         </label>
         <label className="text-[0.84rem]">
           Power Control Type
-          <select required value={form.powerType} onChange={(e) => setForm((current) => ({ ...current, powerType: e.target.value as PowerType }))}>
+          <select required value={formState.powerType} onChange={(e) => updateForm((current) => ({ ...current, powerType: e.target.value as PowerType }))}>
             <option value="manual">Manual</option>
             <option value="ipmi">IPMI</option>
             <option value="webhook">Webhook</option>
             <option value="wol">Wake-on-LAN</option>
           </select>
         </label>
-        {form.powerType === 'ipmi' && (
+        {formState.powerType === 'ipmi' && (
           <div className="grid gap-[0.45rem] pl-[0.4rem] border-l-2 border-brand/30">
             <label className="text-[0.84rem]">
               BMC Host
-              <input required value={form.ipmiHost} onChange={(e) => setForm((current) => ({ ...current, ipmiHost: e.target.value }))} placeholder="10.0.0.1" />
+              <input required value={formState.ipmiHost} onChange={(e) => updateForm((current) => ({ ...current, ipmiHost: e.target.value }))} placeholder="10.0.0.1" />
             </label>
             <div className="grid grid-cols-2 gap-[0.55rem]">
               <label className="text-[0.84rem]">
                 Username
-                <input required value={form.ipmiUsername} onChange={(e) => setForm((current) => ({ ...current, ipmiUsername: e.target.value }))} placeholder="admin" />
+                <input required value={formState.ipmiUsername} onChange={(e) => updateForm((current) => ({ ...current, ipmiUsername: e.target.value }))} placeholder="admin" />
               </label>
               <label className="text-[0.84rem]">
                 Password
-                <input type="password" required value={form.ipmiPassword} onChange={(e) => setForm((current) => ({ ...current, ipmiPassword: e.target.value }))} />
+                <input type="password" required value={formState.ipmiPassword} onChange={(e) => updateForm((current) => ({ ...current, ipmiPassword: e.target.value }))} />
               </label>
             </div>
           </div>
         )}
-        {form.powerType === 'webhook' && (
+        {formState.powerType === 'webhook' && (
           <div className="grid gap-[0.45rem] pl-[0.4rem] border-l-2 border-brand/30">
             <label className="text-[0.84rem]">
               Power On URL
-              <input required value={form.webhookOnURL} onChange={(e) => setForm((current) => ({ ...current, webhookOnURL: e.target.value }))} placeholder="https://..." />
+              <input required value={formState.webhookOnURL} onChange={(e) => updateForm((current) => ({ ...current, webhookOnURL: e.target.value }))} placeholder="https://..." />
             </label>
             <label className="text-[0.84rem]">
               Power Off URL
-              <input required value={form.webhookOffURL} onChange={(e) => setForm((current) => ({ ...current, webhookOffURL: e.target.value }))} placeholder="https://..." />
+              <input required value={formState.webhookOffURL} onChange={(e) => updateForm((current) => ({ ...current, webhookOffURL: e.target.value }))} placeholder="https://..." />
             </label>
             <label className="text-[0.84rem]">
               Status URL <span className="text-ink-soft">(optional)</span>
-              <input value={form.webhookStatusURL} onChange={(e) => setForm((current) => ({ ...current, webhookStatusURL: e.target.value }))} placeholder="https://..." />
+              <input value={formState.webhookStatusURL} onChange={(e) => updateForm((current) => ({ ...current, webhookStatusURL: e.target.value }))} placeholder="https://..." />
             </label>
             <label className="text-[0.84rem]">
               Boot Order URL <span className="text-ink-soft">(optional, BIOS deploy)</span>
-              <input value={form.webhookBootOrderURL} onChange={(e) => setForm((current) => ({ ...current, webhookBootOrderURL: e.target.value }))} placeholder="https://..." />
+              <input value={formState.webhookBootOrderURL} onChange={(e) => updateForm((current) => ({ ...current, webhookBootOrderURL: e.target.value }))} placeholder="https://..." />
             </label>
           </div>
         )}
-        {form.powerType === 'wol' && (
+        {formState.powerType === 'wol' && (
           <div className="grid gap-[0.45rem] pl-[0.4rem] border-l-2 border-brand/30">
             <label className="text-[0.84rem]">
               Wake MAC <span className="text-ink-soft">(defaults to machine MAC)</span>
-              <input value={form.wolMAC} onChange={(e) => setForm((current) => ({ ...current, wolMAC: e.target.value }))} placeholder={form.mac || 'aa:bb:cc:dd:ee:ff'} />
+              <input value={formState.wolMAC} onChange={(e) => updateForm((current) => ({ ...current, wolMAC: e.target.value }))} placeholder={formState.mac || 'aa:bb:cc:dd:ee:ff'} />
             </label>
           </div>
         )}
         <div className="grid grid-cols-2 gap-[0.55rem]">
           <label className="text-[0.84rem]">
             Arch
-            <select value={form.arch} onChange={(e) => setForm((current) => ({ ...current, arch: e.target.value }))}>
+            <select value={formState.arch} onChange={(e) => updateForm((current) => ({ ...current, arch: e.target.value }))}>
               <option value="amd64">amd64</option>
               <option value="arm64">arm64</option>
             </select>
           </label>
           <label className="text-[0.84rem]">
             Firmware
-            <select value={form.firmware} onChange={(e) => setForm((current) => ({ ...current, firmware: e.target.value as 'uefi' | 'bios' }))}>
+            <select value={formState.firmware} onChange={(e) => updateForm((current) => ({ ...current, firmware: e.target.value as 'uefi' | 'bios' }))}>
               <option value="uefi">UEFI</option>
               <option value="bios">BIOS</option>
             </select>
           </label>
         </div>
         <label className="text-[0.84rem] flex items-center gap-2 cursor-pointer select-none">
-          <input type="checkbox" checked={form.isHypervisor} onChange={(e) => setForm((current) => ({ ...current, isHypervisor: e.target.checked }))} />
+          <input type="checkbox" checked={formState.isHypervisor} onChange={(e) => updateForm((current) => ({ ...current, isHypervisor: e.target.checked }))} />
           Register as Hypervisor
         </label>
-        {form.isHypervisor && (
+        {formState.isHypervisor && (
           <label className="text-[0.84rem]">
             Bridge Name
-            <input type="text" value={form.bridgeName} onChange={(e) => setForm((current) => ({ ...current, bridgeName: e.target.value }))} placeholder="br0" />
+            <input type="text" value={formState.bridgeName} onChange={(e) => updateForm((current) => ({ ...current, bridgeName: e.target.value }))} placeholder="br0" />
           </label>
         )}
         <label className="text-[0.84rem]">
           OS Image
-          <select value={form.imageRef} onChange={(e) => {
+          <select value={formState.imageRef} onChange={(e) => {
             const selected = osImages.find((img) => img.name === e.target.value)
-            setForm((current) => ({ ...current, imageRef: e.target.value, osFamily: selected?.osFamily || '', osVersion: selected?.osVersion || '' }))
+            updateForm((current) => ({ ...current, imageRef: e.target.value, osFamily: selected?.osFamily || '', osVersion: selected?.osVersion || '' }))
           }}>
             <option value="">None</option>
             {osImages.map((img) => (
@@ -895,25 +1097,25 @@ export function MachinesView({
         </label>
         <label className="text-[0.84rem]">
           Target Disk <span className="text-ink-soft">(optional)</span>
-          <input value={form.targetDisk} onChange={(e) => setForm((current) => ({ ...current, targetDisk: e.target.value }))} placeholder="/dev/disk/by-id/..." />
+          <input value={formState.targetDisk} onChange={(e) => updateForm((current) => ({ ...current, targetDisk: e.target.value }))} placeholder="/dev/disk/by-id/..." />
         </label>
         <label className="text-[0.84rem]">
           Cloud-Init <span className="text-ink-soft">(optional)</span>
           <select
-            value={form.cloudInitMode}
-            onChange={(e) => setForm((current) => ({ ...current, cloudInitMode: e.target.value as CloudInitInputMode }))}
+            value={formState.cloudInitMode}
+            onChange={(e) => updateForm((current) => ({ ...current, cloudInitMode: e.target.value as CloudInitInputMode }))}
           >
             <option value="none">None</option>
             <option value="existing">Use existing template</option>
             <option value="create">Create template inline</option>
           </select>
         </label>
-        {form.cloudInitMode === 'existing' && (
+        {formState.cloudInitMode === 'existing' && (
           <label className="text-[0.84rem]">
             Existing Cloud-Init Template
             <select
-              value={form.cloudInitExistingRef}
-              onChange={(e) => setForm((current) => ({ ...current, cloudInitExistingRef: e.target.value }))}
+              value={formState.cloudInitExistingRef}
+              onChange={(e) => updateForm((current) => ({ ...current, cloudInitExistingRef: e.target.value }))}
             >
               <option value="">None</option>
               {cloudInits.map((ci) => (
@@ -922,17 +1124,17 @@ export function MachinesView({
             </select>
           </label>
         )}
-        {form.cloudInitMode === 'existing' && cloudInits.length === 0 && (
+        {formState.cloudInitMode === 'existing' && cloudInits.length === 0 && (
           <p className="m-0 text-[0.78rem] text-ink-soft">No Cloud-Init templates available. Switch mode to create one inline.</p>
         )}
-        {form.cloudInitMode === 'create' && (
+        {formState.cloudInitMode === 'create' && (
           <>
             <label className="text-[0.84rem]">
               Cloud-Init Template Name
               <input
                 required
-                value={form.cloudInitTemplateName}
-                onChange={(e) => setForm((current) => ({ ...current, cloudInitTemplateName: e.target.value }))}
+                value={formState.cloudInitTemplateName}
+                onChange={(e) => updateForm((current) => ({ ...current, cloudInitTemplateName: e.target.value }))}
                 placeholder="e.g. ci-node1"
               />
             </label>
@@ -941,8 +1143,8 @@ export function MachinesView({
               <textarea
                 required
                 className="min-h-[140px] font-mono text-[0.78rem]"
-                value={form.cloudInitUserData}
-                onChange={(e) => setForm((current) => ({ ...current, cloudInitUserData: e.target.value }))}
+                value={formState.cloudInitUserData}
+                onChange={(e) => updateForm((current) => ({ ...current, cloudInitUserData: e.target.value }))}
                 placeholder="#cloud-config\nusers:\n  - default"
               />
             </label>
@@ -950,16 +1152,16 @@ export function MachinesView({
         )}
         <SSHAccessFieldset
           sshKeys={sshKeys}
-          value={form}
-          onChange={(updater) => setForm((current) => ({ ...current, ...updater(current) }))}
+          value={formState}
+          onChange={(updater) => updateForm((current) => ({ ...current, ...updater(current) }))}
           onRefresh={onRefresh}
         />
         <label className="text-[0.84rem]">
           Subnet {subnets.length === 0 && <span className="text-ink-soft">(optional)</span>}
-          <select value={form.subnetRef} onChange={(e) => {
+          <select value={formState.subnetRef} onChange={(e) => {
             const subnetName = e.target.value
             const subnet = subnets.find((item) => item.name === subnetName)
-            setForm((current) => ({
+            updateForm((current) => ({
               ...current,
               subnetRef: subnetName,
               ipAssignment: subnetName ? current.ipAssignment : 'dhcp',
@@ -973,28 +1175,28 @@ export function MachinesView({
             ))}
           </select>
         </label>
-        {form.subnetRef && (
+        {formState.subnetRef && (
           <div className="grid gap-[0.45rem] pl-[0.4rem] border-l-2 border-brand/30">
             <div className="flex items-center gap-[0.8rem] text-[0.84rem]">
               <span>IP Assignment:</span>
               <label className="flex items-center gap-1 cursor-pointer">
-                <input type="radio" name={`${radioName}-ip-assignment`} checked={form.ipAssignment === 'dhcp'} onChange={() => setForm((current) => ({ ...current, ipAssignment: 'dhcp' }))} />
+                <input type="radio" name={`${radioName}-ip-assignment`} checked={formState.ipAssignment === 'dhcp'} onChange={() => updateForm((current) => ({ ...current, ipAssignment: 'dhcp' }))} />
                 DHCP
               </label>
               <label className="flex items-center gap-1 cursor-pointer">
-                <input type="radio" name={`${radioName}-ip-assignment`} checked={form.ipAssignment === 'static'} onChange={() => setForm((current) => ({ ...current, ipAssignment: 'static' }))} />
+                <input type="radio" name={`${radioName}-ip-assignment`} checked={formState.ipAssignment === 'static'} onChange={() => updateForm((current) => ({ ...current, ipAssignment: 'static' }))} />
                 Static
               </label>
             </div>
-            {form.ipAssignment === 'static' && (
+            {formState.ipAssignment === 'static' && (
               <label className="text-[0.84rem]">
                 Static IP
-                <input value={form.staticIP} onChange={(e) => setForm((current) => ({ ...current, staticIP: e.target.value }))} placeholder="e.g. 10.0.0.50" />
+                <input value={formState.staticIP} onChange={(e) => updateForm((current) => ({ ...current, staticIP: e.target.value }))} placeholder="e.g. 10.0.0.50" />
               </label>
             )}
             <label className="text-[0.84rem]">
               Domain
-              <input value={form.domain} onChange={(e) => setForm((current) => ({ ...current, domain: e.target.value }))} placeholder="e.g. example.local" />
+              <input value={formState.domain} onChange={(e) => updateForm((current) => ({ ...current, domain: e.target.value }))} placeholder="e.g. example.local" />
             </label>
           </div>
         )}
@@ -1296,7 +1498,7 @@ export function MachinesView({
               </div>
             )}
             <form className="grid gap-[0.55rem]" onSubmit={(e) => void submitMachineDialog(e)}>
-              {renderMachineSpecFields(`machine-${machineDialog.mode}`)}
+              {renderMachineSpecFields(form, (updater) => setForm((current) => updater(current)), `machine-${machineDialog.mode}`)}
               <div className="flex justify-end gap-[0.45rem] pt-[0.2rem]">
                 <button type="button" onClick={() => { closeMachineDialog() }} disabled={machineDialog.running}>Cancel</button>
                 <button
@@ -1323,6 +1525,97 @@ export function MachinesView({
           </div>
         </ModalOverlay>
       )}
+
+      {batchRedeployConfirm.open && (() => {
+        const activeTarget = batchRedeployConfirm.activeTarget || batchRedeployConfirm.targets[0]
+        const activeForm = batchRedeployConfirm.forms[activeTarget]
+        const invalidTargets = batchRedeployConfirm.targets.filter((target) => !machineFormReady(batchRedeployConfirm.forms[target]))
+        return (
+          <ModalOverlay onBackdropClick={() => {
+            if (!batchRedeployConfirm.running) {
+              setBatchRedeployConfirm(initialBatchRedeployConfirmState)
+            }
+          }}>
+            <div className="w-[min(980px,100%)] bg-white border border-line-strong shadow-[0_20px_45px_rgba(52,43,34,0.2)] p-[1.1rem] grid gap-[0.8rem] max-h-[90vh] overflow-auto">
+              <div className="flex justify-between items-center gap-[0.8rem]">
+                <div>
+                  <h3 className="text-[1.2rem]">Bulk Redeploy Machines</h3>
+                  <p className="m-0 text-ink-soft text-[0.84rem]">Edit each machine before running redeploy sequentially.</p>
+                </div>
+                <button
+                  aria-label="Close"
+                  className="border-0 bg-transparent shadow-none p-0 w-[1.8rem] h-[1.8rem] flex items-center justify-center text-[1.4rem] leading-none text-ink-soft hover:text-ink hover:shadow-none!"
+                  disabled={batchRedeployConfirm.running}
+                  onClick={() => setBatchRedeployConfirm(initialBatchRedeployConfirmState)}
+                >×</button>
+              </div>
+              <div className="grid grid-cols-[240px_minmax(0,1fr)] gap-[0.85rem] max-md:grid-cols-1">
+                <div className="border border-line bg-[#f9f7f4] p-[0.55rem] max-h-[68vh] overflow-auto">
+                  <p className="m-0 mb-[0.45rem] text-ink-soft text-[0.78rem]">Targets ({batchRedeployConfirm.targets.length})</p>
+                  <div className="grid gap-[0.35rem]">
+                    {batchRedeployConfirm.targets.map((target) => {
+                      const status = batchRedeployConfirm.status[target]?.state ?? 'pending'
+                      return (
+                        <button
+                          key={target}
+                          type="button"
+                          className={clsx(
+                            'w-full text-left border border-line shadow-none px-[0.55rem] py-[0.48rem] bg-white hover:bg-[#f3efe8]',
+                            activeTarget === target && 'border-brand bg-[rgba(43,122,120,0.08)]'
+                          )}
+                          onClick={() => setBatchRedeployConfirm((current) => ({ ...current, activeTarget: target }))}
+                        >
+                          <span className="block font-medium break-anywhere">{target}</span>
+                          <span className={clsx(
+                            'mt-[0.18rem] inline-flex text-[0.68rem] font-medium px-[0.35rem] py-[0.05rem] rounded-sm border',
+                            status === 'succeeded' && 'bg-[#e9f6ec] text-[#25633a] border-[#b8dec3]',
+                            status === 'failed' && 'bg-[#fff0ee] text-[#9b2d2d] border-[#ecc1ba]',
+                            status === 'running' && 'bg-[#eef5ff] text-[#265f9b] border-[#bfd5ee]',
+                            status === 'pending' && 'bg-[#f3f0ea] text-ink-soft border-[#e0dbd2]'
+                          )}>{status}</span>
+                          {batchRedeployConfirm.status[target]?.error && (
+                            <span className="block mt-[0.2rem] text-[#9b2d2d] text-[0.72rem] leading-tight">{batchRedeployConfirm.status[target]?.error}</span>
+                          )}
+                        </button>
+                      )
+                    })}
+                  </div>
+                </div>
+                <div className="min-w-0 grid gap-[0.55rem]">
+                  {activeForm && (
+                    <>
+                      <div className="bg-[#f9f7f4] border border-line p-[0.6rem] text-[0.84rem]">
+                        <p className="m-0 text-ink-soft">Editing <strong className="text-ink">{activeTarget}</strong></p>
+                        {invalidTargets.includes(activeTarget) && (
+                          <p className="m-0 mt-[0.2rem] text-[#9b2d2d] font-medium">Required fields are missing for this target.</p>
+                        )}
+                      </div>
+                      <fieldset disabled={batchRedeployConfirm.running} className="grid gap-[0.55rem] border-0 p-0 m-0 min-w-0 disabled:opacity-80">
+                        {renderMachineSpecFields(
+                          activeForm,
+                          (updater) => updateBatchRedeployForm(activeTarget, updater),
+                          `machine-bulk-${activeTarget}`
+                        )}
+                      </fieldset>
+                    </>
+                  )}
+                </div>
+              </div>
+              <div className="flex justify-end gap-[0.45rem] pt-[0.2rem]">
+                <button type="button" onClick={() => setBatchRedeployConfirm(initialBatchRedeployConfirmState)} disabled={batchRedeployConfirm.running}>Cancel</button>
+                <button
+                  type="button"
+                  disabled={batchRedeployConfirm.running || invalidTargets.length > 0}
+                  className="bg-[#d86b6b] border-[#be5252] text-white"
+                  onClick={() => void submitBatchRedeployConfirm()}
+                >
+                  {batchRedeployConfirm.running ? 'Redeploying...' : `Redeploy all (${batchRedeployConfirm.targets.length})`}
+                </button>
+              </div>
+            </div>
+          </ModalOverlay>
+        )
+      })()}
 
       {batchPowerConfirm.open && (
         <ModalOverlay onBackdropClick={() => {

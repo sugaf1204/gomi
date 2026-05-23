@@ -136,6 +136,7 @@ export function useWorkspaceContentProps({
     machines: {
       machineFilter,
       onMachineFilterChange: setMachineFilter,
+      machines,
       filteredMachines,
       dataLoading,
       selectedMachineName: selectedMachine,
