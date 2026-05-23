@@ -107,6 +107,37 @@ type MachineFormState = {
   loginUserPassword: string
 }
 
+type MachineQuickDeployPreset = {
+  name: string
+  count: string
+  mac: string
+  powerType: PowerType
+  ipmiHost: string
+  ipmiUsername: string
+  ipmiPassword: string
+  webhookOnURL: string
+  webhookOffURL: string
+  webhookStatusURL: string
+  webhookBootOrderURL: string
+  wolMAC: string
+  arch: string
+  firmware: 'uefi' | 'bios'
+  imageRef: string
+  osFamily: string
+  osVersion: string
+  targetDisk: string
+  cloudInitExistingRef: string
+  subnetRef: string
+  ipAssignment: 'dhcp' | 'static'
+  staticIP: string
+  domain: string
+  isHypervisor: boolean
+  bridgeName: string
+  sshKeyRefs: string[]
+  loginUserUsername: string
+  loginUserPassword: string
+}
+
 type MachineDialogMode = 'create' | 'redeploy'
 
 type MachineDialogState = {
@@ -115,6 +146,8 @@ type MachineDialogState = {
   machineName: string
   running: boolean
 }
+
+const MACHINE_QUICK_DEPLOY_STORAGE_KEY = 'gomi.machines.quick-deploy-preset'
 
 function defaultSubnet(subnets: Subnet[]) {
   return subnets[0] ?? null
@@ -153,6 +186,62 @@ function createInitialMachineForm(subnets: Subnet[]): MachineFormState {
     sshKeyRefs: [],
     loginUserUsername: '',
     loginUserPassword: ''
+  }
+}
+
+function createInitialMachineQuickDeployPreset(subnets: Subnet[]): MachineQuickDeployPreset {
+  const subnet = defaultSubnet(subnets)
+  return {
+    name: '',
+    count: '1',
+    mac: '',
+    powerType: 'manual',
+    ipmiHost: '',
+    ipmiUsername: '',
+    ipmiPassword: '',
+    webhookOnURL: '',
+    webhookOffURL: '',
+    webhookStatusURL: '',
+    webhookBootOrderURL: '',
+    wolMAC: '',
+    arch: 'amd64',
+    firmware: 'uefi',
+    imageRef: '',
+    osFamily: '',
+    osVersion: '',
+    targetDisk: '',
+    cloudInitExistingRef: '',
+    subnetRef: subnet?.name ?? '',
+    ipAssignment: 'dhcp',
+    staticIP: '',
+    domain: subnet?.spec.domainName ?? '',
+    isHypervisor: false,
+    bridgeName: 'br0',
+    sshKeyRefs: [],
+    loginUserUsername: '',
+    loginUserPassword: ''
+  }
+}
+
+function readMachineQuickDeployPreset(subnets: Subnet[]): MachineQuickDeployPreset {
+  const initial = createInitialMachineQuickDeployPreset(subnets)
+  if (typeof window === 'undefined') return initial
+  try {
+    const raw = localStorage.getItem(MACHINE_QUICK_DEPLOY_STORAGE_KEY)
+    if (!raw) return initial
+    const parsed = JSON.parse(raw) as Partial<MachineQuickDeployPreset & { count: number }>
+    return {
+      ...initial,
+      ...parsed,
+      name: typeof parsed.name === 'string' ? parsed.name : '',
+      count: String(parsed.count ?? '1'),
+      mac: typeof parsed.mac === 'string' ? parsed.mac : '',
+      ipmiPassword: '',
+      loginUserPassword: '',
+      sshKeyRefs: Array.isArray(parsed.sshKeyRefs) ? parsed.sshKeyRefs.filter((ref): ref is string => typeof ref === 'string') : []
+    }
+  } catch {
+    return initial
   }
 }
 
@@ -265,9 +354,63 @@ export function MachinesView({
   const [actionsMenuOpen, setActionsMenuOpen] = useState(false)
   const actionsMenuRef = useRef<HTMLDivElement | null>(null)
   const [form, setForm] = useState<MachineFormState>(() => createInitialMachineForm(subnets))
+  const [quickDeployPreset, setQuickDeployPreset] = useState<MachineQuickDeployPreset>(() => readMachineQuickDeployPreset(subnets))
+  const [quickDeploySettingsOpen, setQuickDeploySettingsOpen] = useState(false)
+  const [quickDeploying, setQuickDeploying] = useState(false)
 
   function notifyError(message: string) {
     window.dispatchEvent(new CustomEvent('gomi:toast', { detail: { tone: 'error', message } }))
+  }
+
+  function quickDeployMachineName(preset: MachineQuickDeployPreset): string {
+    return `${preset.name.trim()}-${Math.max(1, Number(preset.count) || 1)}`
+  }
+
+  function quickDeployMachineReady(preset: MachineQuickDeployPreset): boolean {
+    if (!preset.name.trim()) return false
+    if ((Number(preset.count) || 0) < 1) return false
+    if (!preset.mac.trim()) return false
+    if (!preset.imageRef.trim()) return false
+    if (!osImages.some((img) => img.name === preset.imageRef)) return false
+    if (preset.subnetRef && preset.ipAssignment === 'static' && !preset.staticIP.trim()) return false
+    if (preset.powerType === 'ipmi' && (!preset.ipmiHost.trim() || !preset.ipmiUsername.trim() || !preset.ipmiPassword.trim())) return false
+    if (preset.powerType === 'webhook' && (!preset.webhookOnURL.trim() || !preset.webhookOffURL.trim())) return false
+    return true
+  }
+
+  function quickDeployMachineFormState(preset: MachineQuickDeployPreset): MachineFormState {
+    return {
+      hostname: quickDeployMachineName(preset),
+      mac: preset.mac,
+      powerType: preset.powerType,
+      ipmiHost: preset.ipmiHost,
+      ipmiUsername: preset.ipmiUsername,
+      ipmiPassword: preset.ipmiPassword,
+      webhookOnURL: preset.webhookOnURL,
+      webhookOffURL: preset.webhookOffURL,
+      webhookStatusURL: preset.webhookStatusURL,
+      webhookBootOrderURL: preset.webhookBootOrderURL,
+      wolMAC: preset.wolMAC,
+      arch: preset.arch,
+      firmware: preset.firmware,
+      imageRef: preset.imageRef,
+      osFamily: preset.osFamily,
+      osVersion: preset.osVersion,
+      targetDisk: preset.targetDisk,
+      cloudInitMode: preset.cloudInitExistingRef ? 'existing' : 'none',
+      cloudInitExistingRef: preset.cloudInitExistingRef,
+      cloudInitTemplateName: '',
+      cloudInitUserData: '',
+      subnetRef: preset.subnetRef,
+      ipAssignment: preset.ipAssignment,
+      staticIP: preset.staticIP,
+      domain: preset.domain,
+      isHypervisor: preset.isHypervisor,
+      bridgeName: preset.bridgeName,
+      sshKeyRefs: preset.sshKeyRefs,
+      loginUserUsername: preset.loginUserUsername,
+      loginUserPassword: preset.loginUserPassword
+    }
   }
 
   async function createInlineCloudInitTemplate(templateName: string, userData: string) {
@@ -384,10 +527,58 @@ export function MachinesView({
     }
   }
 
+  async function handleQuickDeploy() {
+    const preset = quickDeployPreset
+    if (!quickDeployMachineReady(preset)) {
+      setQuickDeploySettingsOpen(true)
+      return
+    }
+
+    const machineName = quickDeployMachineName(preset)
+    const formState = quickDeployMachineFormState(preset)
+    setQuickDeploying(true)
+    try {
+      const payload = await buildMachineSpecPayload(formState)
+      const created = await api.createMachine({
+        name: machineName,
+        ...payload
+      })
+      onMachineUpsert(created)
+      onSelectMachine(created.name)
+      setQuickDeployPreset((current) => ({
+        ...current,
+        count: String(Math.max(1, Number(current.count) || 1) + 1)
+      }))
+      void onRefresh()
+    } catch (err) {
+      notifyError(err instanceof Error ? err.message : 'Failed to quick deploy machine')
+    } finally {
+      setQuickDeploying(false)
+    }
+  }
+
   useEffect(() => {
-    if (!machineDialog.open && !batchPowerConfirm.open && !batchDeleteConfirm.open) return
+    if (typeof window === 'undefined') return
+    try {
+      const safePreset: Partial<MachineQuickDeployPreset> = { ...quickDeployPreset }
+      delete safePreset.ipmiPassword
+      delete safePreset.loginUserPassword
+      localStorage.setItem(MACHINE_QUICK_DEPLOY_STORAGE_KEY, JSON.stringify({
+        ...safePreset,
+        count: Math.max(1, Number(quickDeployPreset.count) || 1)
+      }))
+    } catch {
+      // ignore localStorage access errors
+    }
+  }, [quickDeployPreset])
+
+  useEffect(() => {
+    if (!machineDialog.open && !quickDeploySettingsOpen && !batchPowerConfirm.open && !batchDeleteConfirm.open) return
     function onKeyDown(e: KeyboardEvent) {
       if (e.key === 'Escape') {
+        if (!quickDeploying) {
+          setQuickDeploySettingsOpen(false)
+        }
         if (!batchPowerConfirm.running) {
           setBatchPowerConfirm(initialBatchPowerConfirmState)
         }
@@ -401,7 +592,7 @@ export function MachinesView({
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [machineDialog.open, machineDialog.running, batchPowerConfirm.open, batchPowerConfirm.running, batchDeleteConfirm.open, batchDeleteConfirm.running])
+  }, [machineDialog.open, machineDialog.running, quickDeploySettingsOpen, quickDeploying, batchPowerConfirm.open, batchPowerConfirm.running, batchDeleteConfirm.open, batchDeleteConfirm.running])
 
   useEffect(() => {
     if (!machineDialog.open || form.subnetRef || subnets.length === 0) return
@@ -582,6 +773,15 @@ export function MachinesView({
     } else {
       setSelectedMachines(new Set(filteredMachines.map((m) => m.name)))
     }
+  }
+
+  function toggleQuickDeploySSHKeyRef(ref: string) {
+    setQuickDeployPreset((current) => {
+      const refs = current.sshKeyRefs.includes(ref)
+        ? current.sshKeyRefs.filter((item) => item !== ref)
+        : [...current.sshKeyRefs, ref]
+      return { ...current, sshKeyRefs: refs }
+    })
   }
 
   function renderMachineSpecFields(radioName: string) {
@@ -804,6 +1004,272 @@ export function MachinesView({
 
   return (
     <>
+      {quickDeploySettingsOpen && (
+        <ModalOverlay onBackdropClick={() => { if (!quickDeploying) setQuickDeploySettingsOpen(false) }}>
+          <div className="w-[min(680px,100%)] bg-white border border-line-strong shadow-[0_20px_45px_rgba(52,43,34,0.2)] p-[1.1rem] grid gap-[0.65rem] max-h-[90vh] overflow-auto">
+            <div className="flex justify-between items-center">
+              <div>
+                <h3 className="text-[1.2rem]">Quick Deploy Preset</h3>
+                <p className="m-0 text-ink-soft text-[0.82rem]">Next machine: <code>{quickDeployPreset.name.trim() ? quickDeployMachineName(quickDeployPreset) : '-'}</code></p>
+              </div>
+              <button
+                aria-label="Close"
+                className="border-0 bg-transparent shadow-none p-0 w-[1.8rem] h-[1.8rem] flex items-center justify-center text-[1.4rem] leading-none text-ink-soft hover:text-ink hover:shadow-none!"
+                disabled={quickDeploying}
+                onClick={() => setQuickDeploySettingsOpen(false)}
+              >x</button>
+            </div>
+
+            <div className="grid gap-[0.55rem]">
+              <div className="grid grid-cols-1 sm:grid-cols-[minmax(0,1fr)_130px] gap-[0.55rem]">
+                <label className="text-[0.84rem] min-w-0">
+                  Name
+                  <input
+                    required
+                    value={quickDeployPreset.name}
+                    onChange={(e) => setQuickDeployPreset((current) => ({ ...current, name: e.target.value }))}
+                    placeholder="e.g. node"
+                  />
+                </label>
+                <label className="text-[0.84rem] min-w-0">
+                  Count
+                  <input
+                    type="number"
+                    min="1"
+                    value={quickDeployPreset.count}
+                    onChange={(e) => setQuickDeployPreset((current) => ({ ...current, count: e.target.value }))}
+                  />
+                </label>
+              </div>
+
+              <label className="text-[0.84rem]">
+                MAC Address
+                <input
+                  required
+                  value={quickDeployPreset.mac}
+                  onChange={(e) => setQuickDeployPreset((current) => ({ ...current, mac: e.target.value }))}
+                  placeholder="aa:bb:cc:dd:ee:ff"
+                />
+              </label>
+
+              <label className="text-[0.84rem]">
+                Power Control Type
+                <select required value={quickDeployPreset.powerType} onChange={(e) => setQuickDeployPreset((current) => ({ ...current, powerType: e.target.value as PowerType }))}>
+                  <option value="manual">Manual</option>
+                  <option value="ipmi">IPMI</option>
+                  <option value="webhook">Webhook</option>
+                  <option value="wol">Wake-on-LAN</option>
+                </select>
+              </label>
+              {quickDeployPreset.powerType === 'ipmi' && (
+                <div className="grid gap-[0.45rem] pl-[0.4rem] border-l-2 border-brand/30">
+                  <label className="text-[0.84rem]">
+                    BMC Host
+                    <input required value={quickDeployPreset.ipmiHost} onChange={(e) => setQuickDeployPreset((current) => ({ ...current, ipmiHost: e.target.value }))} placeholder="10.0.0.1" />
+                  </label>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-[0.55rem]">
+                    <label className="text-[0.84rem] min-w-0">
+                      Username
+                      <input required value={quickDeployPreset.ipmiUsername} onChange={(e) => setQuickDeployPreset((current) => ({ ...current, ipmiUsername: e.target.value }))} placeholder="admin" />
+                    </label>
+                    <label className="text-[0.84rem] min-w-0">
+                      Password
+                      <input type="password" required value={quickDeployPreset.ipmiPassword} onChange={(e) => setQuickDeployPreset((current) => ({ ...current, ipmiPassword: e.target.value }))} />
+                    </label>
+                  </div>
+                  <p className="m-0 text-[0.78rem] text-ink-soft">IPMI password is used for this deploy only and is not saved in localStorage.</p>
+                </div>
+              )}
+              {quickDeployPreset.powerType === 'webhook' && (
+                <div className="grid gap-[0.45rem] pl-[0.4rem] border-l-2 border-brand/30">
+                  <label className="text-[0.84rem]">
+                    Power On URL
+                    <input required value={quickDeployPreset.webhookOnURL} onChange={(e) => setQuickDeployPreset((current) => ({ ...current, webhookOnURL: e.target.value }))} placeholder="https://..." />
+                  </label>
+                  <label className="text-[0.84rem]">
+                    Power Off URL
+                    <input required value={quickDeployPreset.webhookOffURL} onChange={(e) => setQuickDeployPreset((current) => ({ ...current, webhookOffURL: e.target.value }))} placeholder="https://..." />
+                  </label>
+                  <label className="text-[0.84rem]">
+                    Status URL <span className="text-ink-soft">(optional)</span>
+                    <input value={quickDeployPreset.webhookStatusURL} onChange={(e) => setQuickDeployPreset((current) => ({ ...current, webhookStatusURL: e.target.value }))} placeholder="https://..." />
+                  </label>
+                  <label className="text-[0.84rem]">
+                    Boot Order URL <span className="text-ink-soft">(optional, BIOS deploy)</span>
+                    <input value={quickDeployPreset.webhookBootOrderURL} onChange={(e) => setQuickDeployPreset((current) => ({ ...current, webhookBootOrderURL: e.target.value }))} placeholder="https://..." />
+                  </label>
+                </div>
+              )}
+              {quickDeployPreset.powerType === 'wol' && (
+                <div className="grid gap-[0.45rem] pl-[0.4rem] border-l-2 border-brand/30">
+                  <label className="text-[0.84rem]">
+                    Wake MAC <span className="text-ink-soft">(defaults to machine MAC)</span>
+                    <input value={quickDeployPreset.wolMAC} onChange={(e) => setQuickDeployPreset((current) => ({ ...current, wolMAC: e.target.value }))} placeholder={quickDeployPreset.mac || 'aa:bb:cc:dd:ee:ff'} />
+                  </label>
+                </div>
+              )}
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-[0.45rem]">
+                <label className="text-[0.84rem] min-w-0">
+                  Arch
+                  <select value={quickDeployPreset.arch} onChange={(e) => setQuickDeployPreset((current) => ({ ...current, arch: e.target.value }))}>
+                    <option value="amd64">amd64</option>
+                    <option value="arm64">arm64</option>
+                  </select>
+                </label>
+                <label className="text-[0.84rem] min-w-0">
+                  Firmware
+                  <select value={quickDeployPreset.firmware} onChange={(e) => setQuickDeployPreset((current) => ({ ...current, firmware: e.target.value as 'uefi' | 'bios' }))}>
+                    <option value="uefi">UEFI</option>
+                    <option value="bios">BIOS</option>
+                  </select>
+                </label>
+              </div>
+
+              <label className="text-[0.84rem] flex items-center gap-2 cursor-pointer select-none">
+                <input type="checkbox" checked={quickDeployPreset.isHypervisor} onChange={(e) => setQuickDeployPreset((current) => ({ ...current, isHypervisor: e.target.checked }))} />
+                Register as Hypervisor
+              </label>
+              {quickDeployPreset.isHypervisor && (
+                <label className="text-[0.84rem]">
+                  Bridge Name
+                  <input type="text" value={quickDeployPreset.bridgeName} onChange={(e) => setQuickDeployPreset((current) => ({ ...current, bridgeName: e.target.value }))} placeholder="br0" />
+                </label>
+              )}
+
+              <label className="text-[0.84rem]">
+                OS Image
+                <select value={quickDeployPreset.imageRef} onChange={(e) => {
+                  const selected = osImages.find((img) => img.name === e.target.value)
+                  setQuickDeployPreset((current) => ({ ...current, imageRef: e.target.value, osFamily: selected?.osFamily || '', osVersion: selected?.osVersion || '' }))
+                }}>
+                  <option value="">Select...</option>
+                  {osImages.map((img) => (
+                    <option key={img.name} value={img.name}>{img.name} ({img.osFamily} {img.osVersion})</option>
+                  ))}
+                </select>
+              </label>
+              <label className="text-[0.84rem]">
+                Target Disk <span className="text-ink-soft">(optional)</span>
+                <input value={quickDeployPreset.targetDisk} onChange={(e) => setQuickDeployPreset((current) => ({ ...current, targetDisk: e.target.value }))} placeholder="/dev/disk/by-id/..." />
+              </label>
+
+              <label className="text-[0.84rem]">
+                Cloud-Init <span className="text-ink-soft">(optional)</span>
+                <select
+                  value={quickDeployPreset.cloudInitExistingRef}
+                  onChange={(e) => setQuickDeployPreset((current) => ({ ...current, cloudInitExistingRef: e.target.value }))}
+                >
+                  <option value="">None</option>
+                  {cloudInits.map((ci) => (
+                    <option key={ci.name} value={ci.name}>{ci.name}</option>
+                  ))}
+                </select>
+              </label>
+
+              <fieldset className="border border-line rounded p-0 m-0">
+                <legend className="text-[0.84rem] font-medium px-[0.4rem] ml-[0.3rem]">Network</legend>
+                <div className="grid gap-[0.45rem] p-[0.7rem]">
+                  <label className="text-[0.84rem]">
+                    Subnet {subnets.length === 0 && <span className="text-ink-soft">(optional)</span>}
+                    <select value={quickDeployPreset.subnetRef} onChange={(e) => {
+                      const subnetName = e.target.value
+                      const subnet = subnets.find((item) => item.name === subnetName)
+                      setQuickDeployPreset((current) => ({
+                        ...current,
+                        subnetRef: subnetName,
+                        ipAssignment: subnetName ? current.ipAssignment : 'dhcp',
+                        staticIP: subnetName ? current.staticIP : '',
+                        domain: subnet?.spec.domainName || ''
+                      }))
+                    }}>
+                      <option value="">None</option>
+                      {subnets.map((subnet) => (
+                        <option key={subnet.name} value={subnet.name}>{subnet.name} ({subnet.spec.cidr})</option>
+                      ))}
+                    </select>
+                  </label>
+                  {quickDeployPreset.subnetRef && (
+                    <>
+                      <div className="flex items-center gap-[0.8rem] text-[0.84rem]">
+                        <span>IP Assignment:</span>
+                        <label className="flex items-center gap-1 cursor-pointer">
+                          <input type="radio" name="machine-quick-deploy-ip-assignment" checked={quickDeployPreset.ipAssignment === 'dhcp'} onChange={() => setQuickDeployPreset((current) => ({ ...current, ipAssignment: 'dhcp' }))} />
+                          DHCP
+                        </label>
+                        <label className="flex items-center gap-1 cursor-pointer">
+                          <input type="radio" name="machine-quick-deploy-ip-assignment" checked={quickDeployPreset.ipAssignment === 'static'} onChange={() => setQuickDeployPreset((current) => ({ ...current, ipAssignment: 'static' }))} />
+                          Static
+                        </label>
+                      </div>
+                      {quickDeployPreset.ipAssignment === 'static' && (
+                        <label className="text-[0.84rem]">
+                          Static IP
+                          <input value={quickDeployPreset.staticIP} onChange={(e) => setQuickDeployPreset((current) => ({ ...current, staticIP: e.target.value }))} placeholder="e.g. 10.0.0.50" />
+                        </label>
+                      )}
+                      <label className="text-[0.84rem]">
+                        Domain
+                        <input value={quickDeployPreset.domain} onChange={(e) => setQuickDeployPreset((current) => ({ ...current, domain: e.target.value }))} placeholder="e.g. example.local" />
+                      </label>
+                    </>
+                  )}
+                </div>
+              </fieldset>
+
+              <fieldset className="border border-line rounded p-0 m-0">
+                <legend className="text-[0.84rem] font-medium px-[0.4rem] ml-[0.3rem]">SSH Access</legend>
+                <div className="grid gap-[0.45rem] p-[0.7rem]">
+                  {sshKeys.length === 0 && <p className="m-0 text-[0.78rem] text-ink-soft">No SSH keys available.</p>}
+                  {sshKeys.map((key) => (
+                    <label key={key.name} className="flex items-center gap-[0.45rem] text-[0.84rem] cursor-pointer">
+                      <input
+                        type="checkbox"
+                        className="w-[0.95rem] h-[0.95rem] m-0 accent-[#2b7a78]"
+                        checked={quickDeployPreset.sshKeyRefs.includes(key.name)}
+                        onChange={() => toggleQuickDeploySSHKeyRef(key.name)}
+                      />
+                      {key.name}
+                    </label>
+                  ))}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-[0.45rem]">
+                    <label className="text-[0.84rem] min-w-0">
+                      Login Username
+                      <input value={quickDeployPreset.loginUserUsername} onChange={(e) => setQuickDeployPreset((current) => ({ ...current, loginUserUsername: e.target.value }))} placeholder="e.g. ubuntu" />
+                    </label>
+                    <label className="text-[0.84rem] min-w-0">
+                      Login Password
+                      <input type="password" value={quickDeployPreset.loginUserPassword} onChange={(e) => setQuickDeployPreset((current) => ({ ...current, loginUserPassword: e.target.value }))} />
+                    </label>
+                  </div>
+                  <p className="m-0 text-[0.78rem] text-ink-soft">Login password is used for this deploy only and is not saved in localStorage.</p>
+                </div>
+              </fieldset>
+
+              <div className="flex justify-between gap-[0.45rem] pt-[0.2rem]">
+                <button type="button" onClick={() => setQuickDeployPreset((current) => ({ ...current, count: '1' }))} disabled={quickDeploying}>
+                  Reset Count
+                </button>
+                <div className="flex justify-end gap-[0.45rem]">
+                  <button type="button" onClick={() => setQuickDeploySettingsOpen(false)} disabled={quickDeploying}>Close</button>
+                  <button
+                    type="button"
+                    className="bg-brand border-brand-strong text-white"
+                    disabled={quickDeploying || !quickDeployMachineReady(quickDeployPreset)}
+                    onClick={() => {
+                      setQuickDeploySettingsOpen(false)
+                      void handleQuickDeploy()
+                    }}
+                  >
+                    {quickDeploying ? 'Deploying...' : 'Deploy Now'}
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </ModalOverlay>
+      )}
+
       {machineDialog.open && (
         <ModalOverlay onBackdropClick={() => {
           if (!machineDialog.running) {
@@ -930,12 +1396,28 @@ export function MachinesView({
           <div className="grid gap-[0.45rem]">
             <div className="flex justify-between items-center gap-2">
               <h2 className="text-[1.4rem]">Machine List</h2>
-              <button
-                className="bg-brand border-brand-strong text-white py-[0.35rem] px-[0.55rem] text-[0.82rem]"
-                onClick={openCreateDialog}
-              >
-                Add
-              </button>
+              <div className="flex items-center justify-end flex-wrap gap-[0.35rem]">
+                <button
+                  className="bg-brand border-brand-strong text-white py-[0.35rem] px-[0.55rem] text-[0.82rem]"
+                  disabled={quickDeploying}
+                  onClick={() => void handleQuickDeploy()}
+                >
+                  {quickDeploying ? 'Deploying...' : 'Quick Deploy'}
+                </button>
+                <button
+                  className="py-[0.35rem] px-[0.55rem] text-[0.82rem]"
+                  disabled={quickDeploying}
+                  onClick={() => setQuickDeploySettingsOpen(true)}
+                >
+                  Preset
+                </button>
+                <button
+                  className="py-[0.35rem] px-[0.55rem] text-[0.82rem]"
+                  onClick={openCreateDialog}
+                >
+                  Add
+                </button>
+              </div>
             </div>
             <input
               aria-label="Machine filter"

@@ -197,6 +197,7 @@ function readQuickDeployPreset(): QuickDeployPreset {
       name: typeof parsed.name === 'string' ? parsed.name : '',
       count: String(parsed.count ?? '1'),
       ipAssignment: 'dhcp',
+      loginUserPassword: '',
       cloudInitRefs: Array.isArray(parsed.cloudInitRefs) ? parsed.cloudInitRefs.filter((ref): ref is string => typeof ref === 'string') : [],
       sshKeyRefs: Array.isArray(parsed.sshKeyRefs) ? parsed.sshKeyRefs.filter((ref): ref is string => typeof ref === 'string') : []
     }
@@ -374,8 +375,10 @@ export function VirtualMachinesView({
   useEffect(() => {
     if (typeof window === 'undefined') return
     try {
+      const safePreset: Partial<QuickDeployPreset> = { ...quickDeployPreset }
+      delete safePreset.loginUserPassword
       localStorage.setItem(QUICK_DEPLOY_STORAGE_KEY, JSON.stringify({
-        ...quickDeployPreset,
+        ...safePreset,
         count: Math.max(1, Number(quickDeployPreset.count) || 1)
       }))
     } catch {
