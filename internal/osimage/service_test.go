@@ -3,6 +3,7 @@ package osimage_test
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/sugaf1204/gomi/internal/infra/memory"
@@ -258,7 +259,7 @@ func TestServiceCreateSetsTimestamps(t *testing.T) {
 	}
 }
 
-func TestServiceCreateWithISOFormat(t *testing.T) {
+func TestServiceCreateRejectsISOFormat(t *testing.T) {
 	svc := newTestService()
 	ctx := context.Background()
 
@@ -270,11 +271,7 @@ func TestServiceCreateWithISOFormat(t *testing.T) {
 		Format:    osimage.FormatISO,
 		Source:    osimage.SourceUpload,
 	}
-	created, err := svc.Create(ctx, img)
-	if err != nil {
-		t.Fatalf("Create ISO: %v", err)
-	}
-	if created.Format != osimage.FormatISO {
-		t.Fatalf("expected format iso, got %s", created.Format)
+	if _, err := svc.Create(ctx, img); err == nil || !strings.Contains(err.Error(), "unsupported format: iso") {
+		t.Fatalf("expected ISO rejection, got %v", err)
 	}
 }

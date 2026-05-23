@@ -440,7 +440,13 @@ func (s *Server) applyInstallConfigByOSImage(ctx context.Context, v *vm.VirtualM
 	if format := effectiveVMCloudImageFormat(img); format != osimage.FormatQCOW2 {
 		return fmt.Errorf("cloudimage deployment requires qcow2 OS image, got %s", format)
 	}
-	if img.Variant != "" && img.Variant != osimage.VariantCloud {
+	if !osimage.SupportsDeploymentTarget(img, osimage.DeploymentTargetVM) {
+		if osimage.HasExplicitDeploymentTargets(img) {
+			return fmt.Errorf("cloudimage deployment requires vm-capable OS image")
+		}
+		return fmt.Errorf("cloudimage deployment requires cloud OS image variant, got %s", img.Variant)
+	}
+	if !osimage.HasExplicitDeploymentTargets(img) && img.Variant != "" && img.Variant != osimage.VariantCloud {
 		return fmt.Errorf("cloudimage deployment requires cloud OS image variant, got %s", img.Variant)
 	}
 	cfgType, err := inferInstallConfigType(img.OSFamily)
@@ -461,11 +467,8 @@ func (s *Server) applyInstallConfigByOSImage(ctx context.Context, v *vm.VirtualM
 }
 
 func effectiveVMCloudImageFormat(img osimage.OSImage) osimage.ImageFormat {
-	if img.Manifest != nil && img.Manifest.Root.Format != "" {
-		return img.Manifest.Root.Format
-	}
-	if img.Format != "" {
-		return img.Format
+	if format := osimage.EffectiveImageFormat(img); format != "" {
+		return format
 	}
 	return osimage.FormatQCOW2
 }

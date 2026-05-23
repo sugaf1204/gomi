@@ -274,18 +274,47 @@ export type OSImage = {
   osFamily: string
   osVersion: string
   arch: string
-  format: 'qcow2' | 'iso' | 'squashfs'
+  format: 'qcow2'
   variant?: 'cloud' | 'baremetal' | 'server' | 'desktop'
   source: 'upload' | 'url'
   url?: string
   checksum?: string
   sizeBytes?: number
   description?: string
+  manifest?: OSImageManifest
   ready: boolean
   localPath?: string
   error?: string
   createdAt?: string
   updatedAt?: string
+}
+
+export type OSImageManifest = {
+  name?: string
+  osFamily?: string
+  osVersion?: string
+  arch?: string
+  bootModes?: string[]
+  capabilities?: {
+    deployTargets?: ('vm' | 'baremetal')[]
+  }
+  cloudInit?: {
+    datasource?: string
+    seedTransport?: string
+    defaultUser?: string
+  }
+  root?: {
+    format?: 'qcow2'
+    path?: string
+    compression?: string
+    sha256?: string
+    uncompressedSizeBytes?: number
+    partitionTable?: string
+    rootPartition?: { number?: number; filesystem?: string; partuuid?: string }
+    bootPartition?: { number?: number; filesystem?: string; partuuid?: string }
+    efiPartition?: { number?: number; filesystem?: string; partuuid?: string }
+    biosBootPartition?: { number?: number; filesystem?: string; partuuid?: string }
+  }
 }
 
 export type BootEnvironmentStatus = {

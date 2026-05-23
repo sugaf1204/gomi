@@ -3,6 +3,7 @@ import clsx from 'clsx'
 import { api } from '../../api'
 import type { GuardedAction, MachineTab } from '../../app-types'
 import { phaseClass, powerStateClass, powerStateLabel } from '../../lib/formatters'
+import { supportsDeploymentTarget } from '../../lib/osImages'
 import type { AuditEvent, CloudInitTemplate, Hypervisor, Machine, PowerConfig, PowerType, SSHKey, Subnet } from '../../types'
 import { ActivityTab } from './machine-tabs/ActivityTab'
 import { ConfigurationTab } from './machine-tabs/ConfigurationTab'
@@ -1090,7 +1091,7 @@ export function MachinesView({
             updateForm((current) => ({ ...current, imageRef: e.target.value, osFamily: selected?.osFamily || '', osVersion: selected?.osVersion || '' }))
           }}>
             <option value="">None</option>
-            {osImages.map((img) => (
+            {osImages.filter((img) => supportsDeploymentTarget(img, 'baremetal')).map((img) => (
               <option key={img.name} value={img.name}>{img.name} ({img.osFamily} {img.osVersion})</option>
             ))}
           </select>

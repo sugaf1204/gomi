@@ -21,6 +21,13 @@ const (
 	VariantDesktop   Variant = "desktop"
 )
 
+type DeploymentTarget string
+
+const (
+	DeploymentTargetVM        DeploymentTarget = "vm"
+	DeploymentTargetBareMetal DeploymentTarget = "baremetal"
+)
+
 type SourceType string
 
 const (
@@ -54,16 +61,27 @@ type OSImage struct {
 }
 
 type Manifest struct {
-	SchemaVersion string        `json:"schemaVersion"`
-	Name          string        `json:"name,omitempty"`
-	OSFamily      string        `json:"osFamily,omitempty"`
-	OSVersion     string        `json:"osVersion,omitempty"`
-	Arch          string        `json:"arch,omitempty"`
-	BootModes     []string      `json:"bootModes,omitempty"`
-	Root          RootArtifact  `json:"root"`
-	TargetKernel  TargetKernel  `json:"targetKernel"`
-	Bundles       []Bundle      `json:"bundles,omitempty"`
-	Build         BuildMetadata `json:"build,omitempty"`
+	Name         string        `json:"name,omitempty"`
+	OSFamily     string        `json:"osFamily,omitempty"`
+	OSVersion    string        `json:"osVersion,omitempty"`
+	Arch         string        `json:"arch,omitempty"`
+	BootModes    []string      `json:"bootModes,omitempty"`
+	Capabilities Capabilities  `json:"capabilities,omitempty"`
+	CloudInit    CloudInit     `json:"cloudInit,omitempty"`
+	Root         RootArtifact  `json:"root"`
+	TargetKernel TargetKernel  `json:"targetKernel"`
+	Bundles      []Bundle      `json:"bundles,omitempty"`
+	Build        BuildMetadata `json:"build,omitempty"`
+}
+
+type Capabilities struct {
+	DeployTargets []DeploymentTarget `json:"deployTargets,omitempty"`
+}
+
+type CloudInit struct {
+	Datasource    string `json:"datasource,omitempty"`
+	SeedTransport string `json:"seedTransport,omitempty"`
+	DefaultUser   string `json:"defaultUser,omitempty"`
 }
 
 type RootArtifact struct {

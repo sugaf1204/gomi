@@ -553,8 +553,7 @@ func TestOSImageStore(t *testing.T) {
 		Format:    osimage.FormatQCOW2,
 		Ready:     true,
 		Manifest: &osimage.Manifest{
-			SchemaVersion: "gomi.osimage.v1",
-			BootModes:     []string{"bios", "uefi"},
+			BootModes: []string{"bios", "uefi"},
 			Root: osimage.RootArtifact{
 				Format: osimage.FormatQCOW2,
 				Path:   "root.qcow2",

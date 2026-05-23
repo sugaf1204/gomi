@@ -290,15 +290,14 @@ func (m *Manager) setStatus(st Status) {
 }
 
 type prebuiltManifest struct {
-	SchemaVersion string                      `json:"schemaVersion"`
-	Name          string                      `json:"name"`
-	Version       string                      `json:"version,omitempty"`
-	Distribution  string                      `json:"distribution,omitempty"`
-	Release       string                      `json:"release,omitempty"`
-	Arch          string                      `json:"arch,omitempty"`
-	Source        map[string]any              `json:"source,omitempty"`
-	Artifacts     map[string]prebuiltArtifact `json:"artifacts"`
-	Build         map[string]any              `json:"build,omitempty"`
+	Name         string                      `json:"name"`
+	Version      string                      `json:"version,omitempty"`
+	Distribution string                      `json:"distribution,omitempty"`
+	Release      string                      `json:"release,omitempty"`
+	Arch         string                      `json:"arch,omitempty"`
+	Source       map[string]any              `json:"source,omitempty"`
+	Artifacts    map[string]prebuiltArtifact `json:"artifacts"`
+	Build        map[string]any              `json:"build,omitempty"`
 }
 
 type prebuiltArtifact struct {
@@ -391,9 +390,6 @@ func (m *Manager) fetchPrebuilt(ctx context.Context, def Definition, buildID, bu
 }
 
 func validatePrebuiltManifest(def Definition, manifest prebuiltManifest) error {
-	if manifest.SchemaVersion != "gomi.bootenv/v1" {
-		return fmt.Errorf("unsupported boot environment manifest schema: %s", manifest.SchemaVersion)
-	}
 	if strings.TrimSpace(manifest.Name) != def.Name {
 		return fmt.Errorf("boot environment manifest name mismatch: expected %s got %s", def.Name, manifest.Name)
 	}

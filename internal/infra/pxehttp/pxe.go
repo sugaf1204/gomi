@@ -222,6 +222,7 @@ type pxeTarget struct {
 	variant         string
 	osFamily        string
 	completedRootFS bool
+	diskImageDeploy bool
 }
 
 func (h *Handler) PXEBootScript(c echo.Context) error {
@@ -314,7 +315,7 @@ func (h *Handler) PXENocloudUserData(c echo.Context) error {
 		result = injectHypervisorSetup(result, base, m.Name, registrationToken)
 	}
 
-	if target.node != nil && strings.TrimSpace(target.node.PrimaryMAC()) != "" {
+	if target.node != nil && strings.TrimSpace(target.node.PrimaryMAC()) != "" && !target.diskImageDeploy {
 		if m, ok := target.node.(*machine.Machine); ok && m.Role == machine.RoleHypervisor {
 			result = injectBridgedHostNetworkConfig(result, m, target.osFamily, base, h.resolveSubnetSpec(ctx, target.node))
 		} else {
@@ -1080,6 +1081,7 @@ func (h *Handler) resolvePXETarget(ctx context.Context, rawMAC string) (pxeTarge
 	}
 	if targetMachine != nil && targetMachine.IsProvisioningActive() {
 		completedRootFS := h.machineUsesCompletedRootFS(ctx, targetMachine)
+		diskImageDeploy := h.machineUsesDiskImage(ctx, targetMachine)
 		if machineImageApplied(targetMachine) {
 			return pxeTarget{
 				node:            targetMachine,
@@ -1087,6 +1089,7 @@ func (h *Handler) resolvePXETarget(ctx context.Context, rawMAC string) (pxeTarge
 				variant:         h.resolveOSImageVariant(ctx, targetMachine.OSImageVariantRef()),
 				osFamily:        string(targetMachine.OSPreset.Family),
 				completedRootFS: completedRootFS,
+				diskImageDeploy: diskImageDeploy,
 			}, false, nil
 		}
 		return pxeTarget{
@@ -1095,10 +1098,23 @@ func (h *Handler) resolvePXETarget(ctx context.Context, rawMAC string) (pxeTarge
 			variant:         h.resolveOSImageVariant(ctx, targetMachine.OSImageVariantRef()),
 			osFamily:        string(targetMachine.OSPreset.Family),
 			completedRootFS: completedRootFS,
+			diskImageDeploy: diskImageDeploy,
 		}, true, nil
 	}
 
 	return pxeTarget{installType: vm.InstallConfigPreseed}, false, nil
+}
+
+func (h *Handler) machineUsesDiskImage(ctx context.Context, m *machine.Machine) bool {
+	if h.osimages == nil || m == nil || strings.TrimSpace(m.OSPreset.ImageRef) == "" {
+		return false
+	}
+	img, err := h.osimages.Get(ctx, strings.TrimSpace(m.OSPreset.ImageRef))
+	if err != nil {
+		return false
+	}
+	return osimage.EffectiveImageFormat(img) == osimage.FormatQCOW2 &&
+		osimage.SupportsDeploymentTarget(img, osimage.DeploymentTargetBareMetal)
 }
 
 func (h *Handler) machineUsesCompletedRootFS(ctx context.Context, m *machine.Machine) bool {

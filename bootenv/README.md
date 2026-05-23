@@ -6,8 +6,10 @@ SquashFS locally.
 
 The boot environment is built with mkosi using `mkosi.conf`. The deploy logic
 inside the rootfs is `scripts/gomi-deploy-runner`, a shell script that posts
-hardware inventory, then either runs curtin for SquashFS target images or writes
-a qcow2 whole-disk image directly with `qemu-img convert`.
+hardware inventory and writes a qcow2 whole-disk image directly with
+`qemu-img convert`. Curtin remains available in the boot environment, but target
+OS artifacts are expected to be completed qcow2 disk images rather than
+SquashFS root filesystems.
 
 ## Local commands
 

@@ -35,11 +35,10 @@ func TestManagerInstallsPrebuiltBootEnvironment(t *testing.T) {
 		}
 	}
 	manifest := prebuiltManifest{
-		SchemaVersion: "gomi.bootenv/v1",
-		Name:          "ubuntu-minimal-cloud-amd64",
-		Version:       "test",
-		Arch:          "amd64",
-		Artifacts:     manifestArtifacts,
+		Name:      "ubuntu-minimal-cloud-amd64",
+		Version:   "test",
+		Arch:      "amd64",
+		Artifacts: manifestArtifacts,
 	}
 	rawManifest, err := json.MarshalIndent(manifest, "", "  ")
 	if err != nil {
