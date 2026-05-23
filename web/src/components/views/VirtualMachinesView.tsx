@@ -58,6 +58,23 @@ type VMForm = VMConfigForm & {
 
 type VMReinstallForm = VMConfigForm
 
+type QuickDeployPreset = {
+  name: string
+  count: string
+  hypervisorRef: string
+  cpuCores: string
+  memoryMB: string
+  diskGB: string
+  osImageRef: string
+  subnetRef: string
+  bridge: string
+  ipAssignment: 'dhcp'
+  cloudInitRefs: string[]
+  sshKeyRefs: string[]
+  loginUserUsername: string
+  loginUserPassword: string
+}
+
 type UpdateVMConfigForm = (updater: (current: VMConfigForm) => VMConfigForm) => void
 
 type VMPowerAction = 'power-on' | 'power-off'
@@ -96,6 +113,7 @@ type VMMigrateConfirmState = {
 }
 
 const VM_SELECTION_STORAGE_KEY = 'gomi.virtual-machines.selected'
+const QUICK_DEPLOY_STORAGE_KEY = 'gomi.virtual-machines.quick-deploy-preset'
 
 const initialVMConfigForm: VMConfigForm = {
   hypervisorRef: '',
@@ -132,6 +150,23 @@ const initialForm: VMForm = {
 
 const initialReinstallForm: VMReinstallForm = { ...initialVMConfigForm }
 
+const initialQuickDeployPreset: QuickDeployPreset = {
+  name: '',
+  count: '1',
+  hypervisorRef: '',
+  cpuCores: '2',
+  memoryMB: '2048',
+  diskGB: '20',
+  osImageRef: '',
+  subnetRef: '',
+  bridge: '',
+  ipAssignment: 'dhcp',
+  cloudInitRefs: [],
+  sshKeyRefs: [],
+  loginUserUsername: '',
+  loginUserPassword: ''
+}
+
 const initialPowerConfirm: VMPowerConfirmState = {
   open: false,
   action: 'power-on',
@@ -160,6 +195,27 @@ const initialMigrateConfirm: VMMigrateConfirmState = {
   vmName: '',
   targetHypervisor: '',
   running: false
+}
+
+function readQuickDeployPreset(): QuickDeployPreset {
+  if (typeof window === 'undefined') return initialQuickDeployPreset
+  try {
+    const raw = localStorage.getItem(QUICK_DEPLOY_STORAGE_KEY)
+    if (!raw) return initialQuickDeployPreset
+    const parsed = JSON.parse(raw) as Partial<QuickDeployPreset & { count: number }>
+    return {
+      ...initialQuickDeployPreset,
+      ...parsed,
+      name: typeof parsed.name === 'string' ? parsed.name : '',
+      count: String(parsed.count ?? '1'),
+      ipAssignment: 'dhcp',
+      loginUserPassword: '',
+      cloudInitRefs: Array.isArray(parsed.cloudInitRefs) ? parsed.cloudInitRefs.filter((ref): ref is string => typeof ref === 'string') : [],
+      sshKeyRefs: Array.isArray(parsed.sshKeyRefs) ? parsed.sshKeyRefs.filter((ref): ref is string => typeof ref === 'string') : []
+    }
+  } catch {
+    return initialQuickDeployPreset
+  }
 }
 
 function formatCPUPinning(cpuPinning?: Record<number, string>) {
@@ -290,6 +346,9 @@ export function VirtualMachinesView({
   const [formOpen, setFormOpen] = useState(false)
   const [form, setForm] = useState(initialForm)
   const [creating, setCreating] = useState(false)
+  const [quickDeployPreset, setQuickDeployPreset] = useState<QuickDeployPreset>(readQuickDeployPreset)
+  const [quickDeploySettingsOpen, setQuickDeploySettingsOpen] = useState(false)
+  const [quickDeploying, setQuickDeploying] = useState(false)
   const [reinstallOpen, setReinstallOpen] = useState(false)
   const [reinstallForm, setReinstallForm] = useState<VMReinstallForm>(initialReinstallForm)
   const [reinstalling, setReinstalling] = useState(false)
@@ -304,6 +363,7 @@ export function VirtualMachinesView({
   const [reinstallAdvancedOpen, setReinstallAdvancedOpen] = useState(false)
 
   const osImageByName = useMemo(() => new Map(osImages.map((img) => [img.name, img])), [osImages])
+  const vmOSImages = useMemo(() => osImages.filter((img) => img.format === 'qcow2' && (!img.variant || img.variant === 'cloud')), [osImages])
   const checkedNames = useMemo(
     () => virtualMachines.filter((vm) => checkedVMs.has(vm.name)).map((vm) => vm.name),
     [checkedVMs, virtualMachines]
@@ -333,12 +393,41 @@ export function VirtualMachinesView({
     return vm.cloudInitRef || '-'
   }
 
+  function quickDeployVMName(preset: QuickDeployPreset): string {
+    return `${preset.name.trim()}-${Math.max(1, Number(preset.count) || 1)}`
+  }
+
+  function quickDeployPresetReady(preset: QuickDeployPreset): boolean {
+    if (!preset.name.trim()) return false
+    if ((Number(preset.count) || 0) < 1) return false
+    if (!preset.osImageRef.trim()) return false
+    return osImages.some((img) => img.name === preset.osImageRef)
+  }
+
+  function openQuickDeploySettings() {
+    setQuickDeploySettingsOpen(true)
+  }
+
   useEffect(() => {
     if (!routeSelectedVM) return
     if (routeSelectedVM !== selected) {
       setSelected(routeSelectedVM)
     }
   }, [routeSelectedVM, selected, setSelected])
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    try {
+      const safePreset: Partial<QuickDeployPreset> = { ...quickDeployPreset }
+      delete safePreset.loginUserPassword
+      localStorage.setItem(QUICK_DEPLOY_STORAGE_KEY, JSON.stringify({
+        ...safePreset,
+        count: Math.max(1, Number(quickDeployPreset.count) || 1)
+      }))
+    } catch {
+      // ignore localStorage access errors
+    }
+  }, [quickDeployPreset])
 
   useEffect(() => {
     if (dataLoading) return
@@ -350,9 +439,10 @@ export function VirtualMachinesView({
   }, [dataLoading, routeSelectedVM, selected, virtualMachines, setSelected])
 
   useEffect(() => {
-    if (!formOpen && !reinstallOpen && !powerConfirm.open && !deleteConfirm.open && !bulkRedeployConfirm.open && !migrateConfirm.open) return
+    if (!formOpen && !quickDeploySettingsOpen && !reinstallOpen && !powerConfirm.open && !deleteConfirm.open && !bulkRedeployConfirm.open && !migrateConfirm.open) return
     function onKeyDown(e: KeyboardEvent) {
       if (e.key !== 'Escape') return
+      if (!quickDeploying) setQuickDeploySettingsOpen(false)
       if (!powerConfirm.running) setPowerConfirm(initialPowerConfirm)
       if (!reinstalling) setReinstallOpen(false)
       if (!deleteConfirm.running) setDeleteConfirm(initialDeleteConfirm)
@@ -361,7 +451,7 @@ export function VirtualMachinesView({
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [formOpen, reinstallOpen, reinstalling, powerConfirm.open, powerConfirm.running, deleteConfirm.open, deleteConfirm.running, bulkRedeployConfirm.open, bulkRedeployConfirm.running, migrateConfirm.open, migrateConfirm.running])
+  }, [formOpen, quickDeploySettingsOpen, quickDeploying, reinstallOpen, reinstalling, powerConfirm.open, powerConfirm.running, deleteConfirm.open, deleteConfirm.running, bulkRedeployConfirm.open, bulkRedeployConfirm.running, migrateConfirm.open, migrateConfirm.running])
 
   useEffect(() => {
     if (!actionsMenuOpen) return
@@ -415,7 +505,11 @@ export function VirtualMachinesView({
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault()
     if (!form.osImageRef) {
-      notifyError('OS Image is required for PXE deployment')
+      notifyError('qcow2 OS Image is required for VM deployment')
+      return
+    }
+    if (!vmOSImages.some((img) => img.name === form.osImageRef)) {
+      notifyError('VM deployment requires a qcow2 OS Image')
       return
     }
 
@@ -477,6 +571,61 @@ export function VirtualMachinesView({
       notifyError(err instanceof Error ? err.message : 'Failed to create VM')
     } finally {
       setCreating(false)
+    }
+  }
+
+  async function handleQuickDeploy() {
+    const preset = quickDeployPreset
+    if (!quickDeployPresetReady(preset)) {
+      openQuickDeploySettings()
+      return
+    }
+
+    const vmName = quickDeployVMName(preset)
+    const vmNetwork = (preset.bridge || preset.subnetRef)
+      ? [{ name: 'default', bridge: preset.bridge || undefined, network: preset.subnetRef || undefined }]
+      : undefined
+
+    setQuickDeploying(true)
+    try {
+      const result = await api.createVirtualMachine({
+        name: vmName,
+        hypervisorRef: preset.hypervisorRef || '',
+        resources: {
+          cpuCores: Number(preset.cpuCores) || 2,
+          memoryMB: Number(preset.memoryMB) || 2048,
+          diskGB: Number(preset.diskGB) || 20
+        },
+        osImageRef: preset.osImageRef,
+        cloudInitRefs: preset.cloudInitRefs.length > 0 ? preset.cloudInitRefs : undefined,
+        powerControlMethod: 'libvirt',
+        ...(vmNetwork ? { network: vmNetwork } : {}),
+        ipAssignment: preset.ipAssignment,
+        ...(preset.subnetRef ? { subnetRef: preset.subnetRef } : {}),
+        sshKeyRefs: preset.sshKeyRefs,
+        ...(preset.loginUserUsername.trim()
+          ? {
+              loginUser: {
+                username: preset.loginUserUsername.trim(),
+                ...(preset.loginUserPassword.trim() ? { password: preset.loginUserPassword.trim() } : {})
+              }
+            }
+          : {})
+      })
+      onVirtualMachineUpsert(result)
+      setVMSelection(vmName)
+      setQuickDeployPreset((current) => ({
+        ...current,
+        count: String(Math.max(1, Number(current.count) || 1) + 1)
+      }))
+      void onRefresh()
+      if (result.phase === 'Error') {
+        notifyError(`VM created but deploy failed: ${result.lastError || 'deploy failed'}`)
+      }
+    } catch (err) {
+      notifyError(err instanceof Error ? err.message : 'Failed to quick deploy VM')
+    } finally {
+      setQuickDeploying(false)
     }
   }
 
@@ -588,6 +737,10 @@ export function VirtualMachinesView({
     }
     if (formState.ipAssignment === 'static' && !formState.staticIP.trim()) {
       throw new Error('Static IP is required when static assignment is selected')
+    }
+    if (!vmOSImages.some((img) => img.name === reinstallForm.osImageRef)) {
+      notifyError('VM deployment requires a qcow2 OS Image')
+      return
     }
 
     const cloudInitRefs = await resolveCloudInitRefs(formState, description, currentVMCloudInitRefs(currentVM))
@@ -855,6 +1008,24 @@ export function VirtualMachinesView({
     setReinstallForm((current) => updater(current))
   }
 
+  function toggleQuickDeployCloudInitRef(ref: string) {
+    setQuickDeployPreset((current) => {
+      const refs = current.cloudInitRefs.includes(ref)
+        ? current.cloudInitRefs.filter((item) => item !== ref)
+        : [...current.cloudInitRefs, ref]
+      return { ...current, cloudInitRefs: refs }
+    })
+  }
+
+  function toggleQuickDeploySSHKeyRef(ref: string) {
+    setQuickDeployPreset((current) => {
+      const refs = current.sshKeyRefs.includes(ref)
+        ? current.sshKeyRefs.filter((item) => item !== ref)
+        : [...current.sshKeyRefs, ref]
+      return { ...current, sshKeyRefs: refs }
+    })
+  }
+
   function bridgePlaceholder(formState: VMConfigForm): string {
     const hypervisor = hypervisors.find((item) => item.name === formState.hypervisorRef)
     if (hypervisor?.bridgeName) {
@@ -873,6 +1044,8 @@ export function VirtualMachinesView({
     setAdvancedExpanded: (value: boolean | ((current: boolean) => boolean)) => void,
     radioNamePrefix: string
   ) {
+    const selectedOSImage = formState.osImageRef ? osImageByName.get(formState.osImageRef) : undefined
+    const hasUnsupportedSelectedOSImage = Boolean(selectedOSImage && (selectedOSImage.format !== 'qcow2' || (selectedOSImage.variant && selectedOSImage.variant !== 'cloud')))
     return (
       <>
         <label className="text-[0.84rem]">
@@ -906,7 +1079,12 @@ export function VirtualMachinesView({
           OS Image
           <select required value={formState.osImageRef} onChange={(e) => updateForm((current) => ({ ...current, osImageRef: e.target.value }))}>
             <option value="">Select...</option>
-            {osImages.map((img) => (
+            {hasUnsupportedSelectedOSImage && selectedOSImage && (
+              <option value={selectedOSImage.name} disabled>
+                {selectedOSImage.name} ({selectedOSImage.osFamily} {selectedOSImage.osVersion}{selectedOSImage.variant ? ` ${selectedOSImage.variant}` : ''}, unsupported for VM)
+              </option>
+            )}
+            {vmOSImages.map((img) => (
               <option key={img.name} value={img.name}>{img.name} ({img.osFamily} {img.osVersion}{img.variant ? ` ${img.variant}` : ''})</option>
             ))}
           </select>
@@ -1066,6 +1244,189 @@ export function VirtualMachinesView({
 
   return (
     <>
+      {quickDeploySettingsOpen && (
+        <ModalOverlay onBackdropClick={() => { if (!quickDeploying) setQuickDeploySettingsOpen(false) }}>
+          <div className="w-[min(680px,100%)] bg-white border border-line-strong shadow-[0_20px_45px_rgba(52,43,34,0.2)] p-[1.1rem] grid gap-[0.65rem] max-h-[90vh] overflow-auto">
+            <div className="flex justify-between items-center">
+              <div>
+                <h3 className="text-[1.2rem]">Quick Deploy Preset</h3>
+                <p className="m-0 text-ink-soft text-[0.82rem]">Next VM: <code>{quickDeployPreset.name.trim() ? quickDeployVMName(quickDeployPreset) : '-'}</code></p>
+              </div>
+              <button
+                aria-label="Close"
+                className="border-0 bg-transparent shadow-none p-0 w-[1.8rem] h-[1.8rem] flex items-center justify-center text-[1.4rem] leading-none text-ink-soft hover:text-ink hover:shadow-none!"
+                disabled={quickDeploying}
+                onClick={() => setQuickDeploySettingsOpen(false)}
+              >x</button>
+            </div>
+
+            <div className="grid gap-[0.55rem]">
+              <div className="grid grid-cols-1 sm:grid-cols-[minmax(0,1fr)_130px] gap-[0.55rem]">
+                <label className="text-[0.84rem] min-w-0">
+                  Name
+                  <input
+                    required
+                    value={quickDeployPreset.name}
+                    onChange={(e) => setQuickDeployPreset((current) => ({ ...current, name: e.target.value }))}
+                    placeholder="e.g. devvm"
+                  />
+                </label>
+                <label className="text-[0.84rem] min-w-0">
+                  Count
+                  <input
+                    type="number"
+                    min="1"
+                    value={quickDeployPreset.count}
+                    onChange={(e) => setQuickDeployPreset((current) => ({ ...current, count: e.target.value }))}
+                  />
+                </label>
+              </div>
+
+              <label className="text-[0.84rem]">
+                Hypervisor
+                <select value={quickDeployPreset.hypervisorRef} onChange={(e) => {
+                  const hvName = e.target.value
+                  const hv = hypervisors.find((item) => item.name === hvName)
+                  setQuickDeployPreset((current) => ({ ...current, hypervisorRef: hvName, bridge: hv?.bridgeName || current.bridge }))
+                }}>
+                  <option value="">Auto (lowest usage)</option>
+                  {hypervisors.map((hv) => (
+                    <option key={hv.name} value={hv.name}>{hv.name} ({hv.connection.host}){hv.bridgeName ? ` [${hv.bridgeName}]` : ''}</option>
+                  ))}
+                </select>
+              </label>
+
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-[0.45rem]">
+                <label className="text-[0.84rem] min-w-0">
+                  CPU Cores
+                  <input type="number" min="1" value={quickDeployPreset.cpuCores} onChange={(e) => setQuickDeployPreset((current) => ({ ...current, cpuCores: e.target.value }))} />
+                </label>
+                <label className="text-[0.84rem] min-w-0">
+                  Memory (MB)
+                  <input type="number" min="256" value={quickDeployPreset.memoryMB} onChange={(e) => setQuickDeployPreset((current) => ({ ...current, memoryMB: e.target.value }))} />
+                </label>
+                <label className="text-[0.84rem] min-w-0">
+                  Disk (GB)
+                  <input type="number" min="1" value={quickDeployPreset.diskGB} onChange={(e) => setQuickDeployPreset((current) => ({ ...current, diskGB: e.target.value }))} />
+                </label>
+              </div>
+
+              <label className="text-[0.84rem]">
+                OS Image
+                <select required value={quickDeployPreset.osImageRef} onChange={(e) => setQuickDeployPreset((current) => ({ ...current, osImageRef: e.target.value }))}>
+                  <option value="">Select...</option>
+                  {osImages.map((img) => (
+                    <option key={img.name} value={img.name}>{img.name} ({img.osFamily} {img.osVersion}{img.variant ? ` ${img.variant}` : ''})</option>
+                  ))}
+                </select>
+              </label>
+
+              <fieldset className="border border-line rounded p-0 m-0">
+                <legend className="text-[0.84rem] font-medium px-[0.4rem] ml-[0.3rem]">Network</legend>
+                <div className="grid gap-[0.45rem] p-[0.7rem]">
+                  <label className="text-[0.84rem]">
+                    Subnet
+                    <select value={quickDeployPreset.subnetRef} onChange={(e) => {
+                      const subnetName = e.target.value
+                      const subnet = subnets.find((item) => item.name === subnetName)
+                      setQuickDeployPreset((current) => ({
+                        ...current,
+                        subnetRef: subnetName,
+                        bridge: subnet?.spec.pxeInterface || ''
+                      }))
+                    }}>
+                      <option value="">None (use default)</option>
+                      {subnets.map((subnet) => (
+                        <option key={subnet.name} value={subnet.name}>{subnet.name} ({subnet.spec.cidr})</option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="text-[0.84rem]">
+                    Bridge
+                    <input
+                      value={quickDeployPreset.bridge}
+                      onChange={(e) => setQuickDeployPreset((current) => ({ ...current, bridge: e.target.value }))}
+                      placeholder="virbr0"
+                    />
+                  </label>
+                  <p className="m-0 text-[0.78rem] text-ink-soft">Quick Deploy always uses DHCP. Use Create for static IPs.</p>
+                </div>
+              </fieldset>
+
+              <fieldset className="border border-line rounded p-0 m-0">
+                <legend className="text-[0.84rem] font-medium px-[0.4rem] ml-[0.3rem]">Cloud-Init</legend>
+                <div className="grid gap-[0.35rem] p-[0.7rem]">
+                  {cloudInits.length === 0 && <p className="m-0 text-[0.78rem] text-ink-soft">No Cloud-Init templates available.</p>}
+                  {cloudInits.map((ci) => (
+                    <label key={ci.name} className="flex items-center gap-[0.45rem] text-[0.84rem] cursor-pointer">
+                      <input
+                        type="checkbox"
+                        className="w-[0.95rem] h-[0.95rem] m-0 accent-[#2b7a78]"
+                        checked={quickDeployPreset.cloudInitRefs.includes(ci.name)}
+                        onChange={() => toggleQuickDeployCloudInitRef(ci.name)}
+                      />
+                      {ci.name}
+                    </label>
+                  ))}
+                </div>
+              </fieldset>
+
+              <fieldset className="border border-line rounded p-0 m-0">
+                <legend className="text-[0.84rem] font-medium px-[0.4rem] ml-[0.3rem]">SSH Access</legend>
+                <div className="grid gap-[0.45rem] p-[0.7rem]">
+                  {sshKeys.length === 0 && <p className="m-0 text-[0.78rem] text-ink-soft">No SSH keys available.</p>}
+                  {sshKeys.map((key) => (
+                    <label key={key.name} className="flex items-center gap-[0.45rem] text-[0.84rem] cursor-pointer">
+                      <input
+                        type="checkbox"
+                        className="w-[0.95rem] h-[0.95rem] m-0 accent-[#2b7a78]"
+                        checked={quickDeployPreset.sshKeyRefs.includes(key.name)}
+                        onChange={() => toggleQuickDeploySSHKeyRef(key.name)}
+                      />
+                      {key.name}
+                    </label>
+                  ))}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-[0.45rem]">
+                    <label className="text-[0.84rem] min-w-0">
+                      Login Username
+                      <input value={quickDeployPreset.loginUserUsername} onChange={(e) => setQuickDeployPreset((current) => ({ ...current, loginUserUsername: e.target.value }))} placeholder="e.g. ubuntu" />
+                    </label>
+                    <label className="text-[0.84rem] min-w-0">
+                      Login Password
+                      <input type="password" value={quickDeployPreset.loginUserPassword} onChange={(e) => setQuickDeployPreset((current) => ({ ...current, loginUserPassword: e.target.value }))} />
+                    </label>
+                  </div>
+                </div>
+              </fieldset>
+
+              <div className="flex justify-between gap-[0.45rem] pt-[0.2rem]">
+                <button
+                  type="button"
+                  onClick={() => setQuickDeployPreset((current) => ({ ...current, count: '1' }))}
+                  disabled={quickDeploying}
+                >
+                  Reset Count
+                </button>
+                <div className="flex justify-end gap-[0.45rem]">
+                  <button type="button" onClick={() => setQuickDeploySettingsOpen(false)} disabled={quickDeploying}>Close</button>
+                  <button
+                    type="button"
+                    className="bg-brand border-brand-strong text-white"
+                    disabled={quickDeploying || !quickDeployPresetReady(quickDeployPreset)}
+                    onClick={() => {
+                      setQuickDeploySettingsOpen(false)
+                      void handleQuickDeploy()
+                    }}
+                  >
+                    {quickDeploying ? 'Deploying...' : 'Deploy Now'}
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </ModalOverlay>
+      )}
+
       {formOpen && (
         <ModalOverlay onBackdropClick={() => { if (!creating) { setFormOpen(false) } }}>
           <div className="w-[min(760px,100%)] bg-white border border-line-strong shadow-[0_20px_45px_rgba(52,43,34,0.2)] p-[1.1rem] grid gap-[0.65rem] max-h-[90vh] overflow-auto">
@@ -1386,16 +1747,32 @@ export function VirtualMachinesView({
           <div className="grid gap-[0.45rem]">
             <div className="flex justify-between items-center gap-2">
               <h2 className="text-[1.4rem]">Virtual Machines</h2>
-              <button
-                className="bg-brand border-brand-strong text-white py-[0.35rem] px-[0.55rem] text-[0.82rem]"
-                onClick={() => {
-                  setForm({ ...initialForm })
-                  setAdvancedOpen(false)
-                  setFormOpen(true)
-                }}
-              >
-                Create
-              </button>
+              <div className="flex items-center justify-end flex-wrap gap-[0.35rem]">
+                <button
+                  className="bg-brand border-brand-strong text-white py-[0.35rem] px-[0.55rem] text-[0.82rem]"
+                  disabled={quickDeploying}
+                  onClick={() => void handleQuickDeploy()}
+                >
+                  {quickDeploying ? 'Deploying...' : 'Quick Deploy'}
+                </button>
+                <button
+                  className="py-[0.35rem] px-[0.55rem] text-[0.82rem]"
+                  disabled={quickDeploying}
+                  onClick={openQuickDeploySettings}
+                >
+                  Preset
+                </button>
+                <button
+                  className="py-[0.35rem] px-[0.55rem] text-[0.82rem]"
+                  onClick={() => {
+                    setForm({ ...initialForm })
+                    setAdvancedOpen(false)
+                    setFormOpen(true)
+                  }}
+                >
+                  Create
+                </button>
+              </div>
             </div>
           </div>
 
