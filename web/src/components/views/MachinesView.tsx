@@ -672,7 +672,7 @@ export function MachinesView({
   function machineFormReady(formState: MachineFormState) {
     const powerReady =
       formState.powerType === 'ipmi'
-        ? Boolean(formState.ipmiHost.trim() && formState.ipmiUsername.trim() && formState.ipmiPassword.trim())
+        ? Boolean(formState.ipmiHost.trim() && formState.ipmiUsername.trim())
         : formState.powerType === 'webhook'
           ? Boolean(formState.webhookOnURL.trim() && formState.webhookOffURL.trim())
           : true

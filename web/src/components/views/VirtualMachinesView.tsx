@@ -699,7 +699,7 @@ export function VirtualMachinesView({
       && Number.isFinite(cpuCores)
       && cpuCores >= 1
       && Number.isFinite(memoryMB)
-      && memoryMB >= 256
+      && memoryMB > 0
       && Number.isFinite(diskGB)
       && diskGB >= 1
       && (formState.ipAssignment !== 'static' || formState.staticIP.trim())
