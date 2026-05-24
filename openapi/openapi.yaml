@@ -368,6 +368,100 @@ paths:
       responses:
         '201':
           description: created
+  /dns-records:
+    get:
+      summary: List manual DNS records
+      tags: [dns-records]
+      security:
+        - cookieAuth: []
+      responses:
+        '200':
+          description: success
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/DNSRecord'
+        '409':
+          description: embedded DNS mode is required
+    post:
+      summary: Create manual DNS record
+      tags: [dns-records]
+      security:
+        - cookieAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DNSRecordInput'
+      responses:
+        '201':
+          description: created
+        '400':
+          description: invalid record
+        '409':
+          description: embedded DNS mode is required
+  /dns-records/{name}/{type}:
+    put:
+      summary: Update manual DNS record
+      tags: [dns-records]
+      security:
+        - cookieAuth: []
+      parameters:
+        - in: path
+          name: name
+          required: true
+          schema:
+            type: string
+        - in: path
+          name: type
+          required: true
+          schema:
+            type: string
+            enum: [A, CNAME, TXT]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DNSRecordInput'
+      responses:
+        '200':
+          description: success
+        '400':
+          description: invalid record
+        '409':
+          description: embedded DNS mode is required
+    delete:
+      summary: Delete manual DNS record
+      tags: [dns-records]
+      security:
+        - cookieAuth: []
+      parameters:
+        - in: path
+          name: name
+          required: true
+          schema:
+            type: string
+        - in: path
+          name: type
+          required: true
+          schema:
+            type: string
+            enum: [A, CNAME, TXT]
+      responses:
+        '204':
+          description: deleted
+        '400':
+          description: invalid record key
+        '409':
+          description: embedded DNS mode is required
 components:
   securitySchemes:
     cookieAuth:
@@ -375,6 +469,34 @@ components:
       in: cookie
       name: session
   schemas:
+    DNSRecordInput:
+      type: object
+      required: [name, type, values]
+      properties:
+        name:
+          type: string
+        type:
+          type: string
+          enum: [A, CNAME, TXT]
+        ttl:
+          type: integer
+          minimum: 0
+        values:
+          type: array
+          items:
+            type: string
+    DNSRecord:
+      allOf:
+        - $ref: '#/components/schemas/DNSRecordInput'
+        - type: object
+          required: [ttl, createdAt, updatedAt]
+          properties:
+            createdAt:
+              type: string
+              format: date-time
+            updatedAt:
+              type: string
+              format: date-time
     CreateMachineRequest:
       type: object
       required: [hostname, mac, arch, firmware, powerPolicyRef, osPreset]

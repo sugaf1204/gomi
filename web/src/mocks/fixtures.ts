@@ -1,4 +1,4 @@
-import type { AuditEvent, Machine, Subnet } from '../types'
+import type { AuditEvent, DNSRecord, Machine, Subnet } from '../types'
 
 export const machines: Machine[] = [
   {
@@ -135,5 +135,32 @@ export const subnets: Subnet[] = [
     },
     createdAt: '2025-12-05T12:00:00Z',
     updatedAt: '2025-12-05T12:00:00Z'
+  }
+]
+
+export const dnsRecords: DNSRecord[] = [
+  {
+    name: 'app.lab.internal.',
+    type: 'A',
+    ttl: 300,
+    values: ['10.0.0.60'],
+    createdAt: '2025-12-10T06:00:00Z',
+    updatedAt: '2025-12-10T06:00:00Z'
+  },
+  {
+    name: 'grafana.lab.internal.',
+    type: 'CNAME',
+    ttl: 300,
+    values: ['app.lab.internal.'],
+    createdAt: '2025-12-10T06:05:00Z',
+    updatedAt: '2025-12-10T06:05:00Z'
+  },
+  {
+    name: 'owner.lab.internal.',
+    type: 'TXT',
+    ttl: 300,
+    values: ['managed-by=gomi'],
+    createdAt: '2025-12-10T06:10:00Z',
+    updatedAt: '2025-12-10T06:10:00Z'
   }
 ]

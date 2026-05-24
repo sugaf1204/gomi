@@ -337,6 +337,15 @@ export type DHCPLease = {
   leasedAt: string
 }
 
+export type DNSRecord = {
+  name: string
+  type: 'A' | 'CNAME' | 'TXT'
+  ttl: number
+  values: string[]
+  createdAt: string
+  updatedAt: string
+}
+
 export type SystemInfo = {
   hostname: string
   os: string

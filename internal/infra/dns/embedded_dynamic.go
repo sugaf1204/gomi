@@ -19,8 +19,10 @@ import (
 )
 
 type dynamicRecordSet struct {
-	TTL    uint32
-	Values []string
+	TTL       uint32
+	Values    []string
+	CreatedAt time.Time
+	UpdatedAt time.Time
 }
 
 type dynamicRecordFile struct {
@@ -28,10 +30,131 @@ type dynamicRecordFile struct {
 }
 
 type dynamicRecordEntry struct {
-	Name   string   `json:"name"`
-	Type   string   `json:"type"`
-	TTL    uint32   `json:"ttl"`
-	Values []string `json:"values"`
+	Name      string    `json:"name"`
+	Type      string    `json:"type"`
+	TTL       uint32    `json:"ttl"`
+	Values    []string  `json:"values"`
+	CreatedAt time.Time `json:"createdAt,omitempty"`
+	UpdatedAt time.Time `json:"updatedAt,omitempty"`
+}
+
+type DynamicRecord struct {
+	Name      string    `json:"name"`
+	Type      string    `json:"type"`
+	TTL       uint32    `json:"ttl"`
+	Values    []string  `json:"values"`
+	CreatedAt time.Time `json:"createdAt"`
+	UpdatedAt time.Time `json:"updatedAt"`
+}
+
+func (s *EmbeddedServer) ListDynamicRecords(_ context.Context) ([]DynamicRecord, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := s.ensureDynamicRecordsLoadedLocked(); err != nil {
+		return nil, err
+	}
+	return dynamicRecordsFromMap(s.dynamicRecords), nil
+}
+
+func (s *EmbeddedServer) UpsertDynamicRecord(_ context.Context, record DynamicRecord) (DynamicRecord, error) {
+	name, rrType, ttl, values, err := s.validateDynamicRecord(record)
+	if err != nil {
+		return DynamicRecord{}, err
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := s.ensureDynamicRecordsLoadedLocked(); err != nil {
+		return DynamicRecord{}, err
+	}
+
+	now := nowUTC()
+	createdAt := now
+	if existing, ok := s.dynamicRecords[name][rrType]; ok && !existing.CreatedAt.IsZero() {
+		createdAt = existing.CreatedAt
+	}
+	if s.dynamicRecords[name] == nil {
+		s.dynamicRecords[name] = map[uint16]dynamicRecordSet{}
+	}
+	s.dynamicRecords[name][rrType] = dynamicRecordSet{
+		TTL:       ttl,
+		Values:    values,
+		CreatedAt: createdAt,
+		UpdatedAt: now,
+	}
+	if err := s.persistDynamicRecordsLocked(); err != nil {
+		return DynamicRecord{}, err
+	}
+	s.serialAt = now
+	return dynamicRecordFromSet(name, rrType, s.dynamicRecords[name][rrType]), nil
+}
+
+func (s *EmbeddedServer) DeleteDynamicRecord(_ context.Context, rawName, rawType string) error {
+	name, ok := canonicalFQDN(rawName)
+	if !ok {
+		return errDynamicFormat
+	}
+	rrType, ok := dynamicTypeFromName(rawType)
+	if !ok {
+		return errDynamicUnsupported
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := s.ensureDynamicRecordsLoadedLocked(); err != nil {
+		return err
+	}
+	deleteDynamicRecordSet(s.dynamicRecords, name, rrType)
+	if err := s.persistDynamicRecordsLocked(); err != nil {
+		return err
+	}
+	s.serialAt = nowUTC()
+	return nil
+}
+
+func (s *EmbeddedServer) validateDynamicRecord(record DynamicRecord) (string, uint16, uint32, []string, error) {
+	if hasDNSNameUnsafeChars(record.Name) {
+		return "", 0, 0, nil, errDynamicFormat
+	}
+	name, ok := canonicalFQDN(record.Name)
+	if !ok {
+		return "", 0, 0, nil, errDynamicFormat
+	}
+	rrType, ok := dynamicTypeFromName(record.Type)
+	if !ok {
+		return "", 0, 0, nil, errDynamicUnsupported
+	}
+	ttl := record.TTL
+	if ttl == 0 {
+		ttl = s.ttl
+	}
+	if ttl == 0 {
+		return "", 0, 0, nil, errDynamicFormat
+	}
+	values := normalizeDynamicRecordValues(rrType, record.Values)
+	if len(values) == 0 {
+		return "", 0, 0, nil, errDynamicFormat
+	}
+	if rrType == dnsv2.TypeCNAME && len(values) != 1 {
+		return "", 0, 0, nil, errDynamicFormat
+	}
+	for _, value := range values {
+		if !validDynamicRecordValue(rrType, value) {
+			return "", 0, 0, nil, errDynamicUnsupported
+		}
+	}
+	return name, rrType, ttl, values, nil
+}
+
+func (s *EmbeddedServer) ensureDynamicRecordsLoadedLocked() error {
+	if s.dynamicLoaded {
+		return nil
+	}
+	if err := s.loadDynamicRecordsLocked(); err != nil {
+		return err
+	}
+	s.dynamicLoaded = true
+	return nil
 }
 
 func (s *EmbeddedServer) queryRecordsLocked(name string, qType uint16) ([]dnsv2.RR, bool) {
@@ -284,12 +407,16 @@ func (s *EmbeddedServer) loadDynamicRecordsLocked() error {
 	if s.dynamicRecordsPath == "" {
 		return nil
 	}
+	loadedAt := nowUTC()
 	data, err := os.ReadFile(s.dynamicRecordsPath)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
 	}
 	if err != nil {
 		return fmt.Errorf("read dynamic dns records: %w", err)
+	}
+	if info, statErr := os.Stat(s.dynamicRecordsPath); statErr == nil {
+		loadedAt = info.ModTime().UTC()
 	}
 	var file dynamicRecordFile
 	if err := json.Unmarshal(data, &file); err != nil {
@@ -309,8 +436,26 @@ func (s *EmbeddedServer) loadDynamicRecordsLocked() error {
 		if ttl == 0 {
 			ttl = s.ttl
 		}
-		for _, value := range entry.Values {
-			addDynamicRecordValue(records, name, rrType, ttl, value)
+		values := normalizeDynamicRecordValues(rrType, entry.Values)
+		if len(values) == 0 {
+			continue
+		}
+		createdAt := entry.CreatedAt.UTC()
+		if createdAt.IsZero() {
+			createdAt = loadedAt
+		}
+		updatedAt := entry.UpdatedAt.UTC()
+		if updatedAt.IsZero() {
+			updatedAt = loadedAt
+		}
+		if records[name] == nil {
+			records[name] = map[uint16]dynamicRecordSet{}
+		}
+		records[name][rrType] = dynamicRecordSet{
+			TTL:       ttl,
+			Values:    values,
+			CreatedAt: createdAt,
+			UpdatedAt: updatedAt,
 		}
 	}
 	s.dynamicRecords = records
@@ -369,14 +514,49 @@ func dynamicRecordEntries(records map[string]map[uint16]dynamicRecordSet) []dyna
 			values := append([]string(nil), set.Values...)
 			sort.Strings(values)
 			entries = append(entries, dynamicRecordEntry{
-				Name:   name,
-				Type:   dynamicTypeName(rrType),
-				TTL:    set.TTL,
-				Values: values,
+				Name:      name,
+				Type:      dynamicTypeName(rrType),
+				TTL:       set.TTL,
+				Values:    values,
+				CreatedAt: set.CreatedAt,
+				UpdatedAt: set.UpdatedAt,
 			})
 		}
 	}
 	return entries
+}
+
+func dynamicRecordsFromMap(records map[string]map[uint16]dynamicRecordSet) []DynamicRecord {
+	entries := dynamicRecordEntries(records)
+	out := make([]DynamicRecord, 0, len(entries))
+	for _, entry := range entries {
+		rrType, ok := dynamicTypeFromName(entry.Type)
+		if !ok {
+			continue
+		}
+		out = append(out, DynamicRecord{
+			Name:      entry.Name,
+			Type:      dynamicTypeName(rrType),
+			TTL:       entry.TTL,
+			Values:    append([]string(nil), entry.Values...),
+			CreatedAt: entry.CreatedAt,
+			UpdatedAt: entry.UpdatedAt,
+		})
+	}
+	return out
+}
+
+func dynamicRecordFromSet(name string, rrType uint16, set dynamicRecordSet) DynamicRecord {
+	values := append([]string(nil), set.Values...)
+	sort.Strings(values)
+	return DynamicRecord{
+		Name:      name,
+		Type:      dynamicTypeName(rrType),
+		TTL:       set.TTL,
+		Values:    values,
+		CreatedAt: set.CreatedAt,
+		UpdatedAt: set.UpdatedAt,
+	}
 }
 
 func dynamicRRs(name string, rrType uint16, set dynamicRecordSet) []dnsv2.RR {
@@ -433,10 +613,15 @@ func addDynamicRecordValue(records map[string]map[uint16]dynamicRecordSet, name 
 	if records[name] == nil {
 		records[name] = map[uint16]dynamicRecordSet{}
 	}
+	now := nowUTC()
 	set := records[name][rrType]
 	if set.TTL == 0 {
 		set.TTL = ttl
 	}
+	if set.CreatedAt.IsZero() {
+		set.CreatedAt = now
+	}
+	set.UpdatedAt = now
 	if rrType == dnsv2.TypeCNAME {
 		set.Values = []string{value}
 	} else if !containsString(set.Values, value) {
@@ -474,7 +659,53 @@ func deleteDynamicRecordValue(records map[string]map[uint16]dynamicRecordSet, na
 		return
 	}
 	set.Values = values
+	set.UpdatedAt = nowUTC()
 	records[name][rrType] = set
+}
+
+func normalizeDynamicRecordValues(rrType uint16, raw []string) []string {
+	values := []string{}
+	seen := map[string]struct{}{}
+	for _, value := range raw {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		if rrType == dnsv2.TypeCNAME {
+			if target, ok := canonicalFQDN(value); ok {
+				value = target
+			}
+		}
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		values = append(values, value)
+	}
+	sort.Strings(values)
+	return values
+}
+
+func validDynamicRecordValue(rrType uint16, value string) bool {
+	switch rrType {
+	case dnsv2.TypeA:
+		addr, err := netip.ParseAddr(value)
+		return err == nil && addr.Is4()
+	case dnsv2.TypeTXT:
+		return strings.TrimSpace(value) != ""
+	case dnsv2.TypeCNAME:
+		if hasDNSNameUnsafeChars(value) {
+			return false
+		}
+		_, ok := canonicalFQDN(value)
+		return ok
+	default:
+		return false
+	}
+}
+
+func hasDNSNameUnsafeChars(value string) bool {
+	return strings.ContainsAny(strings.TrimSpace(value), " \t\r\n/")
 }
 
 func updateZone(req *dnsv2.Msg) (string, bool) {

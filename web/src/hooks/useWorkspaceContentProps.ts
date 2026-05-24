@@ -2,7 +2,7 @@ import type { FormEvent } from 'react'
 import type { ActivitySummary, ActivityType, MachineStats, MachineTab, Theme } from '../app-types'
 import type { ActivityItem, GuardedAction, SubnetFormState } from '../app-types'
 import type { WorkspaceContentProps } from '../components/layout/WorkspaceContent'
-import type { AuditEvent, CloudInitTemplate, DHCPLease, Hypervisor, Machine, Me, OSImage, PowerConfig, SSHKey, Subnet, SystemInfo, VirtualMachine } from '../types'
+import type { AuditEvent, CloudInitTemplate, DHCPLease, DNSRecord, Hypervisor, Machine, Me, OSImage, PowerConfig, SSHKey, Subnet, SystemInfo, VirtualMachine } from '../types'
 
 type Params = {
   refreshAll: () => Promise<void>
@@ -18,6 +18,8 @@ type Params = {
   cloudInits: CloudInitTemplate[]
   osImages: OSImage[]
   dhcpLeases: DHCPLease[]
+  dnsRecords: DNSRecord[]
+  dnsRecordsError: string
   systemInfo: SystemInfo | null
   me: Me | null
   theme: Theme
@@ -76,6 +78,8 @@ export function useWorkspaceContentProps({
   cloudInits,
   osImages,
   dhcpLeases,
+  dnsRecords,
+  dnsRecordsError,
   systemInfo,
   me,
   theme,
@@ -202,6 +206,11 @@ export function useWorkspaceContentProps({
     },
     dhcpLeases: {
       dhcpLeases
+    },
+    dnsRecords: {
+      dnsRecords,
+      dnsRecordsError,
+      onRefresh: refreshAll
     },
     cloudInit: {
       cloudInits,

@@ -176,6 +176,10 @@ func (r *Runtime) StartServer(ctx context.Context) error {
 	}
 
 	r.configureDNSController()
+	var dnsRecords infraapi.DNSRecordManager
+	if embedded, ok := r.dnsController.(*dns.EmbeddedServer); ok {
+		dnsRecords = embedded
+	}
 
 	srv := infraapi.NewServer(infraapi.ServerConfig{
 		Machines:         r.machineSvc,
@@ -191,6 +195,7 @@ func (r *Runtime) StartServer(ctx context.Context) error {
 		VMs:              r.vmSvc,
 		CloudInits:       r.cloudInitSvc,
 		OSImages:         r.osimageSvc,
+		DNSRecords:       dnsRecords,
 		LeaseStore:       r.leaseStore,
 		FilesDir:         filepath.Join(r.Config.DataDir, "files"),
 		ImageStorageDir:  filepath.Join(r.Config.DataDir, "images"),

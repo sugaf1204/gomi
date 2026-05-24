@@ -16,6 +16,7 @@ import (
 	"github.com/sugaf1204/gomi/internal/discovery"
 	"github.com/sugaf1204/gomi/internal/hwinfo"
 	"github.com/sugaf1204/gomi/internal/hypervisor"
+	"github.com/sugaf1204/gomi/internal/infra/dns"
 	"github.com/sugaf1204/gomi/internal/infra/pxehttp"
 	"github.com/sugaf1204/gomi/internal/machine"
 	"github.com/sugaf1204/gomi/internal/osimage"
@@ -40,6 +41,7 @@ type Server struct {
 	vms              *vm.Service
 	cloudInits       *cloudinit.Service
 	osimages         *osimage.Service
+	dnsRecords       DNSRecordManager
 	leaseStore       pxe.LeaseStore
 	agentTokenStore  hypervisor.AgentTokenStore
 	filesDir         string
@@ -52,6 +54,12 @@ type Server struct {
 	vmRuntimeDeleter func(ctx context.Context, v vm.VirtualMachine) error
 	bootenvs         *bootenv.Manager
 	setupMu          sync.Mutex
+}
+
+type DNSRecordManager interface {
+	ListDynamicRecords(ctx context.Context) ([]dns.DynamicRecord, error)
+	UpsertDynamicRecord(ctx context.Context, record dns.DynamicRecord) (dns.DynamicRecord, error)
+	DeleteDynamicRecord(ctx context.Context, name, recordType string) error
 }
 
 type PowerExecutor interface {
@@ -86,6 +94,7 @@ type ServerConfig struct {
 	VMs              *vm.Service
 	CloudInits       *cloudinit.Service
 	OSImages         *osimage.Service
+	DNSRecords       DNSRecordManager
 	LeaseStore       pxe.LeaseStore
 	AgentTokenStore  hypervisor.AgentTokenStore
 	FilesDir         string
@@ -123,6 +132,7 @@ func NewServer(cfg ServerConfig) *Server {
 		vms:              cfg.VMs,
 		cloudInits:       cfg.CloudInits,
 		osimages:         cfg.OSImages,
+		dnsRecords:       cfg.DNSRecords,
 		leaseStore:       cfg.LeaseStore,
 		agentTokenStore:  cfg.AgentTokenStore,
 		filesDir:         cfg.FilesDir,
@@ -280,6 +290,12 @@ func NewServer(cfg ServerConfig) *Server {
 
 	// DHCP Lease routes — reads for all authenticated users.
 	authed.GET("/dhcp-leases", s.ListDHCPLeases)
+
+	// DNS record routes — embedded DNS manual records.
+	authed.GET("/dns-records", s.ListDNSRecords)
+	writer.POST("/dns-records", s.CreateDNSRecord)
+	writer.PUT("/dns-records/:name/:type", s.UpdateDNSRecord)
+	writer.DELETE("/dns-records/:name/:type", s.DeleteDNSRecord)
 
 	// Serve embedded frontend (SPA fallback)
 	if cfg.FrontendFS != nil {

@@ -1,4 +1,4 @@
-import type { AuditEvent, BootEnvironmentStatus, CloudInitTemplate, DHCPLease, HardwareInfo, Hypervisor, Machine, Me, OSImage, PowerConfig, SSHKey, Subnet, SystemInfo, VirtualMachine } from './types'
+import type { AuditEvent, BootEnvironmentStatus, CloudInitTemplate, DHCPLease, DNSRecord, HardwareInfo, Hypervisor, Machine, Me, OSImage, PowerConfig, SSHKey, Subnet, SystemInfo, VirtualMachine } from './types'
 
 const API_BASE = import.meta.env.VITE_API_BASE ?? `${window.location.origin}/api/v1`
 
@@ -414,6 +414,30 @@ class ApiClient {
   // DHCP Lease APIs
   listDHCPLeases() {
     return this.request<{ items: DHCPLease[] }>('/dhcp-leases')
+  }
+
+  listDNSRecords() {
+    return this.request<{ items: DNSRecord[] }>('/dns-records')
+  }
+
+  createDNSRecord(record: Pick<DNSRecord, 'name' | 'type' | 'ttl' | 'values'>) {
+    return this.request<DNSRecord>('/dns-records', {
+      method: 'POST',
+      body: JSON.stringify(record)
+    })
+  }
+
+  updateDNSRecord(record: Pick<DNSRecord, 'name' | 'type' | 'ttl' | 'values'>) {
+    return this.request<DNSRecord>(`/dns-records/${encodeURIComponent(record.name)}/${encodeURIComponent(record.type)}`, {
+      method: 'PUT',
+      body: JSON.stringify(record)
+    })
+  }
+
+  deleteDNSRecord(name: string, type: DNSRecord['type']) {
+    return this.request<void>(`/dns-records/${encodeURIComponent(name)}/${encodeURIComponent(type)}`, {
+      method: 'DELETE'
+    })
   }
 }
 
