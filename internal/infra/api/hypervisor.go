@@ -100,8 +100,24 @@ GOMI_SERVER="${GOMI_SERVER:?GOMI_SERVER env var is required}"
 GOMI_TOKEN="${GOMI_TOKEN:?GOMI_TOKEN env var is required}"
 
 echo "Installing libvirt and dependencies..."
-apt-get update -qq
-apt-get install -y -qq libvirt-daemon-system libvirt-clients qemu-system virtinst cloud-image-utils curl jq zstd xz-utils
+if command -v apt-get >/dev/null 2>&1; then
+  apt-get update -qq
+  apt-get install -y -qq libvirt-daemon-system libvirt-clients qemu-system virtinst cloud-image-utils curl jq zstd xz-utils
+elif command -v dnf >/dev/null 2>&1; then
+  dnf -y install libvirt-daemon libvirt-daemon-driver-qemu libvirt-client qemu-system-x86-core virt-install cloud-utils-cloud-localds curl jq zstd xz || \
+    dnf -y install libvirt-daemon libvirt-daemon-driver-qemu libvirt-client qemu-system-x86-core virt-install cloud-utils-cloud-localds curl jq zstd xz
+else
+  echo "Unsupported package manager: expected apt-get or dnf" >&2
+  exit 1
+fi
+
+modprobe br_netfilter 2>/dev/null || true
+cat > /etc/sysctl.d/99-gomi-libvirt-bridge.conf <<SYSCTLEOF
+net.bridge.bridge-nf-call-iptables = 0
+net.bridge.bridge-nf-call-ip6tables = 0
+net.bridge.bridge-nf-call-arptables = 0
+SYSCTLEOF
+sysctl -p /etc/sysctl.d/99-gomi-libvirt-bridge.conf >/dev/null 2>&1 || true
 
 virsh pool-define-as default dir --target /var/lib/libvirt/images >/dev/null 2>&1 || true
 virsh pool-build default >/dev/null 2>&1 || true

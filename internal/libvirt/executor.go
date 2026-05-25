@@ -97,18 +97,20 @@ func (e *rpcExecutor) CreateVolume(_ context.Context, name string, sizeGB int, f
 		return fmt.Errorf("lookup storage pool 'default': %w", err)
 	}
 
-	if format != "qcow2" {
-		return fmt.Errorf("unsupported disk format: %s (must be qcow2)", format)
+	switch format {
+	case "qcow2", "raw":
+	default:
+		return fmt.Errorf("unsupported disk format: %s (must be qcow2 or raw)", format)
 	}
 	sizeBytes := int64(sizeGB) * 1024 * 1024 * 1024
 
 	volXML := fmt.Sprintf(`<volume type='file'>
-  <name>%s%s</name>
+  <name>%s</name>
   <capacity unit='bytes'>%d</capacity>
   <target>
     <format type='%s'/>
   </target>
-</volume>`, name, ".qcow2", sizeBytes, format)
+</volume>`, xmlEscape(volumeFileName(name, format)), sizeBytes, xmlEscape(format))
 
 	_, err = e.l.StorageVolCreateXML(pool, volXML, 0)
 	if err != nil {
@@ -173,8 +175,10 @@ func (e *rpcExecutor) CreateVolumeFromReader(ctx context.Context, name string, s
 	if err != nil {
 		return fmt.Errorf("lookup storage pool 'default': %w", err)
 	}
-	if format != "qcow2" {
-		return fmt.Errorf("unsupported disk format: %s (must be qcow2)", format)
+	switch format {
+	case "qcow2", "raw":
+	default:
+		return fmt.Errorf("unsupported disk format: %s (must be qcow2 or raw)", format)
 	}
 	if sizeBytes <= 0 {
 		return fmt.Errorf("volume size must be positive")
@@ -206,7 +210,7 @@ func (e *rpcExecutor) DeleteVolume(_ context.Context, name string) error {
 		return fmt.Errorf("lookup storage pool 'default': %w", err)
 	}
 
-	candidates := []string{name + ".qcow2", name + ".img"}
+	candidates := []string{name + ".qcow2", name + ".img", name + ".raw", name + "-cidata.raw"}
 	for _, volName := range candidates {
 		vol, err := e.l.StorageVolLookupByName(pool, volName)
 		if err != nil {

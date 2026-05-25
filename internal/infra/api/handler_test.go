@@ -506,6 +506,118 @@ func TestVirtualMachineCRUD(t *testing.T) {
 	requireStatus(t, rec, http.StatusNotFound)
 }
 
+func TestCreateVirtualMachine_AllowsNonUbuntuCloudImagesAndRejectsBareMetalTargets(t *testing.T) {
+	env := setupTestEnv(t)
+
+	hvBody := map[string]any{
+		"name": "hv-multi-os-vm",
+		"connection": map[string]any{
+			"type": "tcp",
+			"host": "127.0.0.1",
+		},
+	}
+	rec := doRequest(env.echo, http.MethodPost, "/api/v1/hypervisors", hvBody, env.token)
+	requireStatus(t, rec, http.StatusCreated)
+
+	for _, img := range []map[string]any{
+		{
+			"name":      "debian-13-cloud",
+			"osFamily":  "debian",
+			"osVersion": "13",
+			"arch":      "amd64",
+			"format":    "qcow2",
+			"variant":   "cloud",
+			"source":    "upload",
+		},
+		{
+			"name":      "fedora-44-cloud",
+			"osFamily":  "fedora",
+			"osVersion": "44",
+			"arch":      "amd64",
+			"format":    "qcow2",
+			"variant":   "cloud",
+			"source":    "upload",
+		},
+		{
+			"name":      "rhel-10-cloud",
+			"osFamily":  "rhel",
+			"osVersion": "10",
+			"arch":      "amd64",
+			"format":    "qcow2",
+			"source":    "upload",
+			"manifest": map[string]any{
+				"capabilities": map[string]any{
+					"deployTargets": []string{"vm"},
+				},
+				"root": map[string]any{
+					"format": "qcow2",
+					"path":   "root.qcow2",
+				},
+			},
+		},
+	} {
+		rec = doRequest(env.echo, http.MethodPost, "/api/v1/os-images", img, env.token)
+		requireStatus(t, rec, http.StatusCreated)
+
+		name := "vm-" + img["name"].(string)
+		vmBody := map[string]any{
+			"name":          name,
+			"hypervisorRef": "hv-multi-os-vm",
+			"resources": map[string]any{
+				"cpuCores": 1,
+				"memoryMB": 1024,
+				"diskGB":   10,
+			},
+			"osImageRef": img["name"],
+		}
+		rec = doRequest(env.echo, http.MethodPost, "/api/v1/virtual-machines", vmBody, env.token)
+		requireStatus(t, rec, http.StatusCreated)
+		created := parseBody(t, rec)
+		installCfg, _ := created["installConfig"].(map[string]any)
+		if installCfg["type"] != "curtin" {
+			t.Fatalf("expected %s installConfig.type=curtin, got %v", name, installCfg["type"])
+		}
+	}
+
+	bareMetalOnly := map[string]any{
+		"name":      "debian-13-baremetal-qcow2",
+		"osFamily":  "debian",
+		"osVersion": "13",
+		"arch":      "amd64",
+		"format":    "qcow2",
+		"source":    "upload",
+		"manifest": map[string]any{
+			"capabilities": map[string]any{
+				"deployTargets": []string{"baremetal"},
+			},
+			"root": map[string]any{
+				"format": "qcow2",
+				"path":   "root.qcow2",
+				"rootPartition": map[string]any{
+					"number":     1,
+					"filesystem": "ext4",
+				},
+			},
+		},
+	}
+	rec = doRequest(env.echo, http.MethodPost, "/api/v1/os-images", bareMetalOnly, env.token)
+	requireStatus(t, rec, http.StatusCreated)
+	rec = doRequest(env.echo, http.MethodPost, "/api/v1/virtual-machines", map[string]any{
+		"name":          "vm-debian-baremetal-only",
+		"hypervisorRef": "hv-multi-os-vm",
+		"resources": map[string]any{
+			"cpuCores": 1,
+			"memoryMB": 1024,
+			"diskGB":   10,
+		},
+		"osImageRef": "debian-13-baremetal-qcow2",
+	}, env.token)
+	requireStatus(t, rec, http.StatusBadRequest)
+	if !strings.Contains(rec.Body.String(), "cloudimage deployment requires vm-capable OS image") {
+		t.Fatalf("expected vm-capable validation error, got: %s", rec.Body.String())
+	}
+}
+
 // ---------------------------------------------------------------------------
 // CloudInitTemplate CRUD Tests
 // ---------------------------------------------------------------------------
@@ -1208,6 +1320,9 @@ func TestSetupAndRegisterScriptPublic(t *testing.T) {
 	if !strings.Contains(body, "qemu-system") {
 		t.Fatalf("expected setup script to install qemu-system, got:\n%s", body)
 	}
+	if !strings.Contains(body, "dnf -y install libvirt-daemon libvirt-daemon-driver-qemu libvirt-client qemu-system-x86-core virt-install cloud-utils-cloud-localds curl jq zstd xz") {
+		t.Fatalf("expected setup script to support Fedora/dnf libvirt packages, got:\n%s", body)
+	}
 	if !strings.Contains(body, "zstd") {
 		t.Fatalf("expected setup script to install zstd for artifact image sync, got:\n%s", body)
 	}
@@ -1219,6 +1334,15 @@ func TestSetupAndRegisterScriptPublic(t *testing.T) {
 	}
 	if !strings.Contains(body, `auth_tcp = "none"`) {
 		t.Fatalf("expected setup script to configure unauthenticated libvirt TCP, got:\n%s", body)
+	}
+	for _, want := range []string{
+		"99-gomi-libvirt-bridge.conf",
+		"net.bridge.bridge-nf-call-iptables = 0",
+		"net.bridge.bridge-nf-call-arptables = 0",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("expected setup script to configure libvirt bridge netfilter %q, got:\n%s", want, body)
+		}
 	}
 	if !strings.Contains(body, `/files/gomi-hypervisor.service`) {
 		t.Fatalf("expected setup script to install packaged hypervisor unit file, got:\n%s", body)

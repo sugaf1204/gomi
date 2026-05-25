@@ -71,6 +71,20 @@ SCRIPT
     sudo chmod 0755 "$rootfs/etc/initramfs-tools/scripts/$stage/gomi-timing"
   done
 
+  sudo tee "$rootfs/etc/initramfs-tools/scripts/init-top/gomi-target-filesystems" >/dev/null <<'SCRIPT'
+#!/bin/sh
+PREREQ=""
+prereqs() { echo "$PREREQ"; }
+case "$1" in
+  prereqs) prereqs; exit 0 ;;
+esac
+
+for module in btrfs xfs; do
+  modprobe "$module" 2>/dev/null || true
+done
+SCRIPT
+  sudo chmod 0755 "$rootfs/etc/initramfs-tools/scripts/init-top/gomi-target-filesystems"
+
   sudo tee "$rootfs/etc/initramfs-tools/hooks/gomi-deploy-modules" >/dev/null <<'SCRIPT'
 #!/bin/sh
 set -e
@@ -107,12 +121,14 @@ for dir in \
   drivers/nvdimm \
   drivers/dax \
   net/vmw_vsock \
-  net/9p
+  net/9p \
+  fs/btrfs \
+  fs/xfs
 do
   add_module_dir "$dir"
 done
 
-for module in bcache zfs virtiofs 9p squashfs overlay; do
+for module in bcache zfs virtiofs 9p squashfs overlay btrfs xfs; do
   add_module_if_available "$module"
 done
 SCRIPT
@@ -208,6 +224,8 @@ validate_initrd_modules() {
   assert_boot_driver virtio_scsi virtio_scsi "$initrd_list" "$builtin_list"
   assert_boot_driver squashfs squashfs "$initrd_list" "$builtin_list"
   assert_boot_driver overlayfs overlay "$initrd_list" "$builtin_list"
+  assert_boot_driver btrfs btrfs "$initrd_list" "$builtin_list"
+  assert_boot_driver xfs xfs "$initrd_list" "$builtin_list"
   rm -f "$initrd_list"
 }
 
