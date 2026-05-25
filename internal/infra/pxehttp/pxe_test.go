@@ -209,8 +209,12 @@ func TestPXEBootScript_LocalBootWhenVMNotProvisioning(t *testing.T) {
 		t.Fatalf("unexpected status: %d", rec.Code)
 	}
 	body := rec.Body.String()
-	if !strings.Contains(body, "iseq ${platform} efi && sanboot --no-describe --drive 0 --filename \\EFI\\BOOT\\BOOTX64.EFI ||") {
-		t.Fatalf("expected UEFI local boot to sanboot fallback EFI loader, got: %s", body)
+	if !strings.Contains(body, "iseq ${platform} efi && goto local_efi || goto local_bios") ||
+		!strings.Contains(body, "sanboot --no-describe --drive 0 || exit 1") {
+		t.Fatalf("expected UEFI local boot to use arch-neutral sanboot with firmware fallback, got: %s", body)
+	}
+	if strings.Contains(body, "BOOTX64.EFI") {
+		t.Fatalf("UEFI local boot must not force an x86-only EFI filename, got: %s", body)
 	}
 	if strings.Contains(body, "grubnetx64.efi") {
 		t.Fatalf("UEFI local boot must not chain network GRUB, got: %s", body)
@@ -238,8 +242,12 @@ func TestPXEBootScript_LocalBootWhenNoProvisioningTarget(t *testing.T) {
 		t.Fatalf("unexpected status: %d", rec.Code)
 	}
 	body := rec.Body.String()
-	if !strings.Contains(body, "iseq ${platform} efi && sanboot --no-describe --drive 0 --filename \\EFI\\BOOT\\BOOTX64.EFI ||") {
-		t.Fatalf("expected UEFI local boot to sanboot fallback EFI loader, got: %s", body)
+	if !strings.Contains(body, "iseq ${platform} efi && goto local_efi || goto local_bios") ||
+		!strings.Contains(body, "sanboot --no-describe --drive 0 || exit 1") {
+		t.Fatalf("expected UEFI local boot to use arch-neutral sanboot with firmware fallback, got: %s", body)
+	}
+	if strings.Contains(body, "BOOTX64.EFI") {
+		t.Fatalf("UEFI local boot must not force an x86-only EFI filename, got: %s", body)
 	}
 	if strings.Contains(body, "grubnetx64.efi") {
 		t.Fatalf("UEFI local boot must not chain network GRUB, got: %s", body)
@@ -347,8 +355,12 @@ func TestPXEBootScript_CurtinForUbuntuVMUsesLocalBootScript(t *testing.T) {
 	}
 
 	body := rec.Body.String()
-	if !strings.Contains(body, "iseq ${platform} efi && sanboot --no-describe --drive 0 --filename \\EFI\\BOOT\\BOOTX64.EFI ||") {
-		t.Fatalf("expected UEFI local boot to sanboot fallback EFI loader for curtin, got: %s", body)
+	if !strings.Contains(body, "iseq ${platform} efi && goto local_efi || goto local_bios") ||
+		!strings.Contains(body, "sanboot --no-describe --drive 0 || exit 1") {
+		t.Fatalf("expected UEFI local boot to use arch-neutral sanboot with firmware fallback for curtin, got: %s", body)
+	}
+	if strings.Contains(body, "BOOTX64.EFI") {
+		t.Fatalf("UEFI local boot must not force an x86-only EFI filename for curtin, got: %s", body)
 	}
 	if strings.Contains(body, "grubnetx64.efi") {
 		t.Fatalf("UEFI local boot must not chain network GRUB for curtin, got: %s", body)
@@ -2786,8 +2798,12 @@ func TestPXEDeployEvents_ImageAppliedLocalBootsAndConfiguresBIOSBootOrder(t *tes
 		t.Fatalf("unexpected boot status: %d body=%s", bootRec.Code, bootRec.Body.String())
 	}
 	body := bootRec.Body.String()
-	if !strings.Contains(body, "iseq ${platform} efi && sanboot --no-describe --drive 0 --filename \\EFI\\BOOT\\BOOTX64.EFI ||") {
-		t.Fatalf("expected local sanboot script after image_applied, got: %s", body)
+	if !strings.Contains(body, "iseq ${platform} efi && goto local_efi || goto local_bios") ||
+		!strings.Contains(body, "sanboot --no-describe --drive 0 || exit 1") {
+		t.Fatalf("expected local arch-neutral sanboot script after image_applied, got: %s", body)
+	}
+	if strings.Contains(body, "BOOTX64.EFI") {
+		t.Fatalf("UEFI local boot must not force an x86-only EFI filename after image_applied, got: %s", body)
 	}
 	if strings.Contains(body, "grubnetx64.efi") {
 		t.Fatalf("UEFI local boot must not chain network GRUB after image_applied, got: %s", body)

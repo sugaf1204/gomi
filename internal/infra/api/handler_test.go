@@ -1320,8 +1320,15 @@ func TestSetupAndRegisterScriptPublic(t *testing.T) {
 	if !strings.Contains(body, "qemu-system") {
 		t.Fatalf("expected setup script to install qemu-system, got:\n%s", body)
 	}
-	if !strings.Contains(body, "dnf -y install libvirt-daemon libvirt-daemon-driver-qemu libvirt-client qemu-system-x86-core virt-install cloud-utils-cloud-localds curl jq zstd xz") {
-		t.Fatalf("expected setup script to support Fedora/dnf libvirt packages, got:\n%s", body)
+	for _, want := range []string{
+		`qemu_system_pkg="qemu-system-$(uname -m)-core"`,
+		`x86_64|amd64) qemu_system_pkg="qemu-system-x86-core"`,
+		`aarch64|arm64) qemu_system_pkg="qemu-system-aarch64-core"`,
+		`dnf -y install libvirt-daemon libvirt-daemon-driver-qemu libvirt-client "$qemu_system_pkg" virt-install cloud-utils-cloud-localds curl jq zstd xz`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("expected setup script to support architecture-aware Fedora/dnf libvirt package %q, got:\n%s", want, body)
+		}
 	}
 	if !strings.Contains(body, "zstd") {
 		t.Fatalf("expected setup script to install zstd for artifact image sync, got:\n%s", body)

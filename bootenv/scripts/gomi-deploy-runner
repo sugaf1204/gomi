@@ -345,6 +345,14 @@ EOF
     user-data: |
 EOF
     indent_file "$seed_dir/user-data"
+    cat <<'EOF'
+    vendor-data: |
+EOF
+    indent_file "$seed_dir/vendor-data"
+    cat <<'EOF'
+    network-config: |
+EOF
+    indent_file "$seed_dir/network-config"
   } >/mnt/gomi-target/etc/cloud/cloud.cfg.d/99_gomi_nocloud.cfg
   if apply_target_boot_quirks /mnt/gomi-target "$os_family" "$os_version"; then
     post_timing runner.apply_target_boot_quirks "applied target boot quirks"

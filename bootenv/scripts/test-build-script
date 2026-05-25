@@ -77,6 +77,8 @@ grep -q 'datasource_list: \[ NoCloud, None \]' "$runner" || fail "deploy runner 
 ! grep -q 'seedfrom:' "$runner" || fail "deploy runner must not force local NoCloud seed through NoCloudNet seedfrom"
 grep -q 'meta-data: |' "$runner" || fail "deploy runner does not embed NoCloud meta-data"
 grep -q 'user-data: |' "$runner" || fail "deploy runner does not embed NoCloud user-data"
+grep -q 'vendor-data: |' "$runner" || fail "deploy runner does not embed NoCloud vendor-data"
+grep -q 'network-config: |' "$runner" || fail "deploy runner does not embed NoCloud network-config"
 
 require_package() {
   local package="$1"

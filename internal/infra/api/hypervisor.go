@@ -104,8 +104,13 @@ if command -v apt-get >/dev/null 2>&1; then
   apt-get update -qq
   apt-get install -y -qq libvirt-daemon-system libvirt-clients qemu-system virtinst cloud-image-utils curl jq zstd xz-utils
 elif command -v dnf >/dev/null 2>&1; then
-  dnf -y install libvirt-daemon libvirt-daemon-driver-qemu libvirt-client qemu-system-x86-core virt-install cloud-utils-cloud-localds curl jq zstd xz || \
-    dnf -y install libvirt-daemon libvirt-daemon-driver-qemu libvirt-client qemu-system-x86-core virt-install cloud-utils-cloud-localds curl jq zstd xz
+  qemu_system_pkg="qemu-system-$(uname -m)-core"
+  case "$(uname -m)" in
+    x86_64|amd64) qemu_system_pkg="qemu-system-x86-core" ;;
+    aarch64|arm64) qemu_system_pkg="qemu-system-aarch64-core" ;;
+  esac
+  dnf -y install libvirt-daemon libvirt-daemon-driver-qemu libvirt-client "$qemu_system_pkg" virt-install cloud-utils-cloud-localds curl jq zstd xz || \
+    dnf -y install libvirt-daemon libvirt-daemon-driver-qemu libvirt-client "$qemu_system_pkg" virt-install cloud-utils-cloud-localds curl jq zstd xz
 else
   echo "Unsupported package manager: expected apt-get or dnf" >&2
   exit 1
