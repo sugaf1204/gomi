@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -94,7 +95,48 @@ func TestDNSRecordAPIRejectsInvalidRecord(t *testing.T) {
 	}
 }
 
+func TestDNSRecordAPIReturnsServerErrorForPersistenceFailure(t *testing.T) {
+	backend := memory.New()
+	authStore := backend.Auth()
+	createUser(t, authStore, "admin", "adminpass", auth.RoleAdmin)
+	adminToken := createSession(t, authStore, "admin")
+	srv := infraapi.NewServer(infraapi.ServerConfig{
+		AuthStore:   authStore,
+		AuthService: infraapi.NewAuthService(authStore, time.Hour),
+		DNSRecords:  failingDNSRecordManager{},
+	})
+
+	body := bytes.NewBufferString(`{"name":"app.lab.local","type":"A","values":["10.0.0.50"]}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/dns-records", body)
+	req.Header.Set("Authorization", "Bearer "+adminToken)
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	srv.Echo().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500, got %d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+type failingDNSRecordManager struct{}
+
+func (failingDNSRecordManager) ListDynamicRecords(context.Context) ([]dns.DynamicRecord, error) {
+	return nil, errors.New("storage unavailable")
+}
+
+func (failingDNSRecordManager) UpsertDynamicRecord(context.Context, dns.DynamicRecord) (dns.DynamicRecord, error) {
+	return dns.DynamicRecord{}, errors.New("storage unavailable")
+}
+
+func (failingDNSRecordManager) DeleteDynamicRecord(context.Context, string, string) error {
+	return errors.New("storage unavailable")
+}
+
 func setupDNSTestEnv(t *testing.T) testEnv {
+	return setupDNSTestEnvWithRecordsPath(t, filepath.Join(t.TempDir(), "dns-records.json"))
+}
+
+func setupDNSTestEnvWithRecordsPath(t *testing.T, dynamicRecordsPath string) testEnv {
 	t.Helper()
 
 	backend := memory.New()
@@ -115,7 +157,7 @@ func setupDNSTestEnv(t *testing.T) testEnv {
 	dnsServer := dns.NewEmbeddedServer(dns.EmbeddedConfig{
 		Addr:               ":0",
 		TTL:                300 * time.Second,
-		DynamicRecordsPath: filepath.Join(t.TempDir(), "dns-records.json"),
+		DynamicRecordsPath: dynamicRecordsPath,
 		Machines:           backend.Machines(),
 		VMs:                backend.VMs(),
 		Subnets:            backend.Subnets(),

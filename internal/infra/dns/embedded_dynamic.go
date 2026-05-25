@@ -57,7 +57,7 @@ func (s *EmbeddedServer) ListDynamicRecords(_ context.Context) ([]DynamicRecord,
 }
 
 func (s *EmbeddedServer) UpsertDynamicRecord(_ context.Context, record DynamicRecord) (DynamicRecord, error) {
-	name, rrType, ttl, values, err := s.validateDynamicRecord(record)
+	name, rrType, ttl, values, err := s.validateDynamicRecordShape(record)
 	if err != nil {
 		return DynamicRecord{}, err
 	}
@@ -65,6 +65,9 @@ func (s *EmbeddedServer) UpsertDynamicRecord(_ context.Context, record DynamicRe
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if err := s.ensureDynamicRecordsLoadedLocked(); err != nil {
+		return DynamicRecord{}, err
+	}
+	if err := s.validateDynamicRecordPlacementLocked(name, rrType); err != nil {
 		return DynamicRecord{}, err
 	}
 
@@ -112,7 +115,7 @@ func (s *EmbeddedServer) DeleteDynamicRecord(_ context.Context, rawName, rawType
 	return nil
 }
 
-func (s *EmbeddedServer) validateDynamicRecord(record DynamicRecord) (string, uint16, uint32, []string, error) {
+func (s *EmbeddedServer) validateDynamicRecordShape(record DynamicRecord) (string, uint16, uint32, []string, error) {
 	if hasDNSNameUnsafeChars(record.Name) {
 		return "", 0, 0, nil, errDynamicFormat
 	}
@@ -144,6 +147,35 @@ func (s *EmbeddedServer) validateDynamicRecord(record DynamicRecord) (string, ui
 		}
 	}
 	return name, rrType, ttl, values, nil
+}
+
+func (s *EmbeddedServer) validateDynamicRecordPlacementLocked(name string, rrType uint16) error {
+	zone, ok := s.zoneForNameLocked(name)
+	if !ok || !nameInZone(name, zone) {
+		return errDynamicNotZone
+	}
+	if rrType == dnsv2.TypeCNAME {
+		if len(s.records[name]) > 0 {
+			return errDynamicCNAMEConflict
+		}
+		for existingType := range s.dynamicRecords[name] {
+			if existingType != dnsv2.TypeCNAME {
+				return errDynamicCNAMEConflict
+			}
+		}
+		return nil
+	}
+	if _, ok := s.dynamicRecords[name][dnsv2.TypeCNAME]; ok {
+		return errDynamicCNAMEConflict
+	}
+	return nil
+}
+
+func IsDynamicRecordValidationError(err error) bool {
+	return errors.Is(err, errDynamicFormat) ||
+		errors.Is(err, errDynamicNotZone) ||
+		errors.Is(err, errDynamicUnsupported) ||
+		errors.Is(err, errDynamicCNAMEConflict)
 }
 
 func (s *EmbeddedServer) ensureDynamicRecordsLoadedLocked() error {
@@ -774,7 +806,8 @@ func nowUTC() time.Time {
 }
 
 var (
-	errDynamicFormat      = errors.New("dynamic dns update format error")
-	errDynamicNotZone     = errors.New("dynamic dns update outside zone")
-	errDynamicUnsupported = errors.New("dynamic dns record type unsupported")
+	errDynamicFormat        = errors.New("dynamic dns update format error")
+	errDynamicNotZone       = errors.New("dynamic dns update outside zone")
+	errDynamicUnsupported   = errors.New("dynamic dns record type unsupported")
+	errDynamicCNAMEConflict = errors.New("dynamic dns cname conflicts with existing records")
 )

@@ -21,9 +21,10 @@ type DNSRecordForm = {
 const initialForm: DNSRecordForm = { name: '', type: 'A', ttl: '', values: '' }
 const recordTypes: DNSRecord['type'][] = ['A', 'CNAME', 'TXT']
 
-function splitValues(raw: string) {
+function splitValues(raw: string, recordType: DNSRecord['type']) {
+  const separator = recordType === 'TXT' ? /\n/ : /[\n,]/
   return raw
-    .split(/[\n,]/)
+    .split(separator)
     .map((value) => value.trim())
     .filter(Boolean)
 }
@@ -65,7 +66,7 @@ export function DNSRecordsView({ dnsRecords, dnsRecordsError, onRefresh }: DNSRe
       name: form.name.trim(),
       type: form.type,
       ttl: form.ttl.trim() ? Number(form.ttl) : 0,
-      values: splitValues(form.values)
+      values: splitValues(form.values, form.type)
     }
     setSaving(true)
     try {

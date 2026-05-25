@@ -430,7 +430,7 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/DNSRecordInput'
+              $ref: '#/components/schemas/DNSRecordUpdateInput'
       responses:
         '200':
           description: success
@@ -478,6 +478,17 @@ components:
         type:
           type: string
           enum: [A, CNAME, TXT]
+        ttl:
+          type: integer
+          minimum: 0
+        values:
+          type: array
+          items:
+            type: string
+    DNSRecordUpdateInput:
+      type: object
+      required: [values]
+      properties:
         ttl:
           type: integer
           minimum: 0

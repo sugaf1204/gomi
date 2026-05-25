@@ -30,7 +30,7 @@ func (s *Server) CreateDNSRecord(c echo.Context) error {
 	}
 	created, err := s.dnsRecords.UpsertDynamicRecord(c.Request().Context(), record)
 	if err != nil {
-		return c.JSON(gohttp.StatusBadRequest, jsonErrorErr(err))
+		return c.JSON(dnsRecordErrorStatus(err), jsonErrorErr(err))
 	}
 	httputil.CreateAudit(c, s.authStore, "", "create-dns-record", "success", "dns record created: "+created.Name+" "+created.Type, nil)
 	return c.JSON(gohttp.StatusCreated, created)
@@ -48,7 +48,7 @@ func (s *Server) UpdateDNSRecord(c echo.Context) error {
 	record.Type = c.Param("type")
 	updated, err := s.dnsRecords.UpsertDynamicRecord(c.Request().Context(), record)
 	if err != nil {
-		return c.JSON(gohttp.StatusBadRequest, jsonErrorErr(err))
+		return c.JSON(dnsRecordErrorStatus(err), jsonErrorErr(err))
 	}
 	httputil.CreateAudit(c, s.authStore, "", "update-dns-record", "success", "dns record updated: "+updated.Name+" "+updated.Type, nil)
 	return c.JSON(gohttp.StatusOK, updated)
@@ -61,8 +61,15 @@ func (s *Server) DeleteDNSRecord(c echo.Context) error {
 	name := c.Param("name")
 	recordType := c.Param("type")
 	if err := s.dnsRecords.DeleteDynamicRecord(c.Request().Context(), name, recordType); err != nil {
-		return c.JSON(gohttp.StatusBadRequest, jsonErrorErr(err))
+		return c.JSON(dnsRecordErrorStatus(err), jsonErrorErr(err))
 	}
 	httputil.CreateAudit(c, s.authStore, "", "delete-dns-record", "success", "dns record deleted: "+name+" "+recordType, nil)
 	return c.NoContent(gohttp.StatusNoContent)
+}
+
+func dnsRecordErrorStatus(err error) int {
+	if dns.IsDynamicRecordValidationError(err) {
+		return gohttp.StatusBadRequest
+	}
+	return gohttp.StatusInternalServerError
 }
