@@ -86,6 +86,7 @@ export function Sidebar({
 
         <button className={navBtn('network')} onClick={() => onViewChange('network')}>Network</button>
         <button className={navBtn('dhcp-leases')} onClick={() => onViewChange('dhcp-leases')}>DHCP Leases</button>
+        <button className={navBtn('dns-records')} onClick={() => onViewChange('dns-records')}>DNS Records</button>
         <button className={navBtn('users')} onClick={() => onViewChange('users')}>Users</button>
         <button className={navBtn('activity')} onClick={() => onViewChange('activity')}>Activity</button>
       </nav>

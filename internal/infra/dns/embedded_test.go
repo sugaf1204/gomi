@@ -149,6 +149,136 @@ func TestEmbeddedServerDeletesDynamicRRSet(t *testing.T) {
 	}
 }
 
+func TestEmbeddedServerManagesDynamicRecords(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "records.json")
+	server := newEmbeddedTestServerWithPath(t, path)
+
+	created, err := server.UpsertDynamicRecord(ctx, DynamicRecord{
+		Name:   "app.lab.local",
+		Type:   "A",
+		TTL:    60,
+		Values: []string{"10.0.0.50"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if created.Name != "app.lab.local." || created.Type != "A" || created.TTL != 60 {
+		t.Fatalf("unexpected created record: %#v", created)
+	}
+	assertARecord(t, serveEmbedded(t, server, "app.lab.local.", dnsv2.TypeA), "10.0.0.50")
+
+	updated, err := server.UpsertDynamicRecord(ctx, DynamicRecord{
+		Name:   "app.lab.local.",
+		Type:   "A",
+		Values: []string{"10.0.0.51"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.TTL != 300 {
+		t.Fatalf("expected default ttl 300, got %d", updated.TTL)
+	}
+	assertARecord(t, serveEmbedded(t, server, "app.lab.local.", dnsv2.TypeA), "10.0.0.51")
+
+	records, err := server.ListDynamicRecords(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(records) != 1 || records[0].Name != "app.lab.local." || records[0].Values[0] != "10.0.0.51" {
+		t.Fatalf("unexpected listed records: %#v", records)
+	}
+
+	reloaded := newEmbeddedTestServerWithPath(t, path)
+	records, err = reloaded.ListDynamicRecords(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(records) != 1 || records[0].UpdatedAt.IsZero() {
+		t.Fatalf("expected persisted record with timestamps, got %#v", records)
+	}
+
+	if err := reloaded.DeleteDynamicRecord(ctx, "app.lab.local", "A"); err != nil {
+		t.Fatal(err)
+	}
+	resp := serveEmbedded(t, reloaded, "app.lab.local.", dnsv2.TypeA)
+	if resp.Rcode != dnsv2.RcodeNameError {
+		t.Fatalf("expected NXDOMAIN after delete, got %s", dnsv2.RcodeToString[resp.Rcode])
+	}
+}
+
+func TestEmbeddedServerDynamicRecordValidation(t *testing.T) {
+	ctx := context.Background()
+	server := newEmbeddedTestServerWithPath(t, filepath.Join(t.TempDir(), "records.json"))
+
+	cases := []DynamicRecord{
+		{Name: "bad name", Type: "A", Values: []string{"10.0.0.1"}},
+		{Name: "app.lab.local", Type: "AAAA", Values: []string{"::1"}},
+		{Name: "app.lab.local", Type: "A", Values: []string{"not-an-ip"}},
+		{Name: "alias.lab.local", Type: "CNAME", Values: []string{"one.lab.local", "two.lab.local"}},
+		{Name: "empty.lab.local", Type: "TXT", Values: []string{}},
+		{Name: "app.example.com", Type: "A", Values: []string{"10.0.0.1"}},
+	}
+	for _, tc := range cases {
+		if _, err := server.UpsertDynamicRecord(ctx, tc); err == nil {
+			t.Fatalf("expected validation error for %#v", tc)
+		}
+	}
+}
+
+func TestEmbeddedServerRejectsCNAMEConflicts(t *testing.T) {
+	ctx := context.Background()
+	server := newEmbeddedTestServerWithPath(t, filepath.Join(t.TempDir(), "records.json"))
+
+	if _, err := server.UpsertDynamicRecord(ctx, DynamicRecord{
+		Name:   "app.lab.local",
+		Type:   "A",
+		Values: []string{"10.0.0.50"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := server.UpsertDynamicRecord(ctx, DynamicRecord{
+		Name:   "app.lab.local",
+		Type:   "CNAME",
+		Values: []string{"target.lab.local"},
+	}); err == nil {
+		t.Fatal("expected CNAME conflict with existing A record")
+	}
+
+	if _, err := server.UpsertDynamicRecord(ctx, DynamicRecord{
+		Name:   "alias.lab.local",
+		Type:   "CNAME",
+		Values: []string{"target.lab.local"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := server.UpsertDynamicRecord(ctx, DynamicRecord{
+		Name:   "alias.lab.local",
+		Type:   "TXT",
+		Values: []string{"owner=gomi"},
+	}); err == nil {
+		t.Fatal("expected non-CNAME conflict with existing CNAME record")
+	}
+
+	if _, err := server.UpsertDynamicRecord(ctx, DynamicRecord{
+		Name:   "node-01.lab.local",
+		Type:   "CNAME",
+		Values: []string{"target.lab.local"},
+	}); err == nil {
+		t.Fatal("expected CNAME conflict with generated A record")
+	}
+}
+
+func TestEmbeddedServerManualDeleteDoesNotDeleteGeneratedARecord(t *testing.T) {
+	ctx := context.Background()
+	server := newEmbeddedTestServerWithPath(t, filepath.Join(t.TempDir(), "records.json"))
+
+	if err := server.DeleteDynamicRecord(ctx, "node-01.lab.local.", "A"); err != nil {
+		t.Fatal(err)
+	}
+	assertARecord(t, serveEmbedded(t, server, "node-01.lab.local.", dnsv2.TypeA), "10.0.0.11")
+}
+
 func TestEmbeddedServerAXFRIncludesDynamicRecords(t *testing.T) {
 	server := newEmbeddedTestServerWithPath(t, filepath.Join(t.TempDir(), "records.json"))
 	serveEmbeddedUpdate(t, server, []dnsv2.RR{

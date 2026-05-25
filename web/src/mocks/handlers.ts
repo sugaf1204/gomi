@@ -1,5 +1,5 @@
 import { http, HttpResponse } from 'msw'
-import { auditEvents, machines, subnets } from './fixtures'
+import { auditEvents, dnsRecords, machines, subnets } from './fixtures'
 
 const API_BASE = 'http://localhost:5392/api/v1'
 
@@ -140,6 +140,33 @@ export const handlers = [
 
   http.get(`${API_BASE}/dhcp-leases`, () => {
     return HttpResponse.json({ items: [] })
+  }),
+
+  http.get(`${API_BASE}/dns-records`, () => {
+    return HttpResponse.json({ items: dnsRecords })
+  }),
+
+  http.post(`${API_BASE}/dns-records`, async ({ request }) => {
+    const body = (await request.json()) as Record<string, unknown>
+    return HttpResponse.json({
+      ...body,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    }, { status: 201 })
+  }),
+
+  http.put(`${API_BASE}/dns-records/:name/:type`, async ({ params, request }) => {
+    const body = (await request.json()) as Record<string, unknown>
+    return HttpResponse.json({
+      ...body,
+      name: params.name,
+      type: params.type,
+      updatedAt: new Date().toISOString()
+    })
+  }),
+
+  http.delete(`${API_BASE}/dns-records/:name/:type`, () => {
+    return new HttpResponse(null, { status: 204 })
   }),
 
   http.get(`${API_BASE}/system-info`, () => {

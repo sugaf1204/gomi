@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { api } from '../api'
 import type { LoadState, View } from '../app-types'
 import { useApiTokenEffect, useRefreshEffects } from './useAppEffects'
-import type { AuditEvent, CloudInitTemplate, DHCPLease, Hypervisor, Machine, Me, OSImage, SSHKey, Subnet, SystemInfo, VirtualMachine } from '../types'
+import type { AuditEvent, CloudInitTemplate, DHCPLease, DNSRecord, Hypervisor, Machine, Me, OSImage, SSHKey, Subnet, SystemInfo, VirtualMachine } from '../types'
 
 function upsertByName<T extends { name: string }>(items: T[], item: T) {
   const next = items.filter((current) => current.name !== item.name)
@@ -36,6 +36,8 @@ export function useAppDataState({
   const [cloudInits, setCloudInits] = useState<CloudInitTemplate[]>([])
   const [osImages, setOSImages] = useState<OSImage[]>([])
   const [dhcpLeases, setDHCPLeases] = useState<DHCPLease[]>([])
+  const [dnsRecords, setDNSRecords] = useState<DNSRecord[]>([])
+  const [dnsRecordsError, setDNSRecordsError] = useState('')
   const [systemInfo, setSystemInfo] = useState<SystemInfo | null>(null)
   const [error, setError] = useState('')
   const [state, setState] = useState<LoadState>('idle')
@@ -50,7 +52,7 @@ export function useAppDataState({
     }
     setError('')
     try {
-      const [meData, machineData, subnetData, sshKeyData, hypervisorData, vmData, cloudInitData, osImageData, dhcpLeaseData, systemInfoData] = await Promise.allSettled([
+      const [meData, machineData, subnetData, sshKeyData, hypervisorData, vmData, cloudInitData, osImageData, dhcpLeaseData, dnsRecordData, systemInfoData] = await Promise.allSettled([
         api.me(),
         api.listMachines(),
         api.listSubnets(),
@@ -60,6 +62,7 @@ export function useAppDataState({
         api.listCloudInitTemplates(),
         api.listOSImages(),
         api.listDHCPLeases(),
+        api.listDNSRecords(),
         api.systemInfo()
       ])
       if (meData.status === 'rejected') throw meData.reason
@@ -102,6 +105,13 @@ export function useAppDataState({
         setDHCPLeases(dhcpLeaseData.value.items ?? [])
       } else {
         setDHCPLeases([])
+      }
+      if (dnsRecordData.status === 'fulfilled') {
+        setDNSRecords(dnsRecordData.value.items ?? [])
+        setDNSRecordsError('')
+      } else {
+        setDNSRecords([])
+        setDNSRecordsError(toErrorMessage(dnsRecordData.reason))
       }
       if (systemInfoData.status === 'fulfilled') {
         setSystemInfo(systemInfoData.value)
@@ -150,6 +160,8 @@ export function useAppDataState({
     setCloudInits([])
     setOSImages([])
     setDHCPLeases([])
+    setDNSRecords([])
+    setDNSRecordsError('')
     setSystemInfo(null)
     setError('')
     setState('idle')
@@ -176,6 +188,8 @@ export function useAppDataState({
     cloudInits,
     osImages,
     dhcpLeases,
+    dnsRecords,
+    dnsRecordsError,
     systemInfo,
     error,
     setError,

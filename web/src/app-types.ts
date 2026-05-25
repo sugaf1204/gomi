@@ -1,7 +1,7 @@
 import type { PowerConfig } from './types'
 
 export type LoadState = 'idle' | 'loading' | 'error'
-export type View = 'overview' | 'machines' | 'hypervisors' | 'virtual-machines' | 'activity' | 'network' | 'dhcp-leases' | 'cloud-init' | 'os-images' | 'users' | 'settings'
+export type View = 'overview' | 'machines' | 'hypervisors' | 'virtual-machines' | 'activity' | 'network' | 'dhcp-leases' | 'dns-records' | 'cloud-init' | 'os-images' | 'users' | 'settings'
 export type GuardedAction = 'redeploy' | 'poweron' | 'poweroff' | 'delete'
 export type MachineTab = 'info' | 'detail' | 'network' | 'console' | 'activity' | 'configuration'
 export type ActivityType = 'all' | 'audit'

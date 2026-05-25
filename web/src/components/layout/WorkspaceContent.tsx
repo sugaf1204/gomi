@@ -2,6 +2,7 @@ import type { View } from '../../app-types'
 import { ActivityView, type ActivityViewProps } from '../views/ActivityView'
 import { CloudInitView, type CloudInitViewProps } from '../views/CloudInitView'
 import { DHCPLeasesView, type DHCPLeasesViewProps } from '../views/DHCPLeasesView'
+import { DNSRecordsView, type DNSRecordsViewProps } from '../views/DNSRecordsView'
 import { HypervisorsView, type HypervisorsViewProps } from '../views/HypervisorsView'
 import { MachinesView, type MachinesViewProps } from '../views/MachinesView'
 import { NetworkView, type NetworkViewProps } from '../views/NetworkView'
@@ -22,6 +23,7 @@ export type WorkspaceContentProps = {
   activity: ActivityViewProps
   network: NetworkViewProps
   dhcpLeases: DHCPLeasesViewProps
+  dnsRecords: DNSRecordsViewProps
   cloudInit: CloudInitViewProps
   osImages: OSImagesViewProps
   users: UsersViewProps
@@ -38,6 +40,7 @@ export function WorkspaceContent({
   activity,
   network,
   dhcpLeases,
+  dnsRecords,
   cloudInit,
   osImages,
   users,
@@ -54,6 +57,7 @@ export function WorkspaceContent({
       {view === 'activity' && <ActivityView {...activity} />}
       {view === 'network' && <NetworkView {...network} />}
       {view === 'dhcp-leases' && <DHCPLeasesView {...dhcpLeases} />}
+      {view === 'dns-records' && <DNSRecordsView {...dnsRecords} />}
       {view === 'cloud-init' && <CloudInitView {...cloudInit} />}
       {view === 'os-images' && <OSImagesView {...osImages} />}
       {view === 'users' && <UsersView {...users} />}
