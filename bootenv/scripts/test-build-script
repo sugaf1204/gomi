@@ -39,6 +39,7 @@ for module in bcache zfs virtiofs 9p squashfs overlay btrfs xfs; do
 done
 
 grep -q 'gomi-target-filesystems' "$script" || fail "initramfs target filesystem loader is missing"
+# shellcheck disable=SC2016
 grep -q 'modprobe "$module"' "$script" || fail "initramfs target filesystem loader does not modprobe modules"
 
 grep -q 'cleanup_rootfs_before_pack' "$script" || fail "rootfs cleanup function is missing"
@@ -64,11 +65,13 @@ grep -q 'skipped unsupported target root filesystem' "$runner" || fail "deploy r
 grep -q 'etc/growroot-disabled' "$runner" || fail "deploy runner does not disable target initramfs root growth after resize"
 grep -q 'runner.resize_root_filesystem' "$runner" || fail "deploy runner does not report root filesystem resize timing"
 grep -q 'mount_target_root' "$runner" || fail "deploy runner does not isolate target root mounting"
+# shellcheck disable=SC2016
 grep -q 'btrfs|xfs) modprobe "$fstype"' "$runner" || fail "deploy runner does not load target filesystem modules before mount"
 grep -q 'apply_target_boot_quirks' "$runner" || fail "deploy runner does not apply scoped target boot quirks"
 grep -q 'modprobe.blacklist=amdgpu' "$runner" || fail "deploy runner does not include Ubuntu 22.04 AMD GPU boot quirk"
 grep -q 'has_amd_display_controller' "$runner" || fail "deploy runner boot quirk is not hardware scoped"
 grep -q 'for subvol in root @' "$runner" || fail "deploy runner does not try common btrfs root subvolumes"
+# shellcheck disable=SC2016
 grep -q '"subvol=$subvol"' "$runner" || fail "deploy runner does not mount selected btrfs subvolume"
 grep -q 'datasource_list: \[ NoCloud, None \]' "$runner" || fail "deploy runner does not prefer local NoCloud seed"
 ! grep -q 'seedfrom:' "$runner" || fail "deploy runner must not force local NoCloud seed through NoCloudNet seedfrom"
