@@ -2,6 +2,14 @@
 
 milestone is written in docs/MILESTONE.md
 
+## Implementation Hygiene
+
+- Keep implementation files focused on one responsibility. As a guideline, aim for source files to stay under about 300 lines when practical; if a file approaches 500 lines, first look for a natural split before adding more behavior.
+- Prefer small, named helpers over long inline blocks. Functions should normally fit on one screen and have a single clear reason to change.
+- Do not hide unrelated refactors inside feature work or hotfixes. If cleanup is needed, keep it local to the touched behavior and make the intent obvious in the diff.
+- Keep tests close to the behavior they verify. Add or update focused tests for new branching logic, error handling, OS-family selection, deployment artifact handling, and UI state transitions.
+- Generated files, fixtures, vendored code, and intentionally table-driven data may exceed the line-count guideline, but avoid mixing hand-written business logic into those large files.
+
 ## UI Implementation Policy
 
 - Implement VM and Machine UI with shared patterns and components whenever possible.
@@ -26,6 +34,8 @@ For PXE, boot, DHCP, curtin, cloud-init, power control, networking, libvirt, and
 Spot fixes are acceptable only when the condition is narrowly selected by typed metadata or explicit target identity and when the fallback behavior for other nodes is unchanged. Avoid changing global defaults during live recovery unless you have first confirmed that every caller and deployment scenario depending on that default remains correct.
 
 Before pushing a fix discovered during live validation, document the side-effect check in the commit/PR notes: what paths may be affected, what was verified, and what remains unverified.
+
+When exact e2e verification is required, do not deviate from the regular product or operational procedure. For root-cause investigation after a failed or confusing run, temporary deviations such as direct database inspection or edits are allowed, but treat them as diagnostic actions rather than valid e2e proof.
 
 ## Ignore Backword Compatibility
 This project is under development.
