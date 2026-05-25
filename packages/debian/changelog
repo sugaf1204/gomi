@@ -1,3 +1,9 @@
+gomi (0.0.22) unstable; urgency=medium
+
+  * Fix multi-OS disk image deployment across Debian, Fedora, and Ubuntu.
+
+ -- sugaf1204 <sugaf1204@example.invalid>  Mon, 25 May 2026 15:15:00 +0900
+
 gomi (0.0.21) unstable; urgency=medium
 
   * Expand qcow2 root filesystems before first target boot.
