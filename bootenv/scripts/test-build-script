@@ -27,14 +27,20 @@ for dir in \
   drivers/nvdimm \
   drivers/dax \
   net/vmw_vsock \
-  net/9p
+  net/9p \
+  fs/btrfs \
+  fs/xfs
 do
   grep -q "$dir" "$script" || fail "initramfs hook does not include $dir"
 done
 
-for module in bcache zfs virtiofs 9p squashfs overlay; do
+for module in bcache zfs virtiofs 9p squashfs overlay btrfs xfs; do
   grep -q "$module" "$script" || fail "initramfs hook does not include $module"
 done
+
+grep -q 'gomi-target-filesystems' "$script" || fail "initramfs target filesystem loader is missing"
+# shellcheck disable=SC2016
+grep -q 'modprobe "$module"' "$script" || fail "initramfs target filesystem loader does not modprobe modules"
 
 grep -q 'cleanup_rootfs_before_pack' "$script" || fail "rootfs cleanup function is missing"
 for rel in boot usr/lib/modules usr/lib/firmware var/cache/apt var/lib/apt/lists tmp var/tmp; do
@@ -43,6 +49,8 @@ done
 
 grep -q 'validate_initrd_modules' "$script" || fail "initrd module validation is missing"
 grep -q 'validate_squashfs_cleanup' "$script" || fail "squashfs cleanup validation is missing"
+grep -q 'assert_boot_driver btrfs btrfs' "$script" || fail "initrd validation does not assert btrfs"
+grep -q 'assert_boot_driver xfs xfs' "$script" || fail "initrd validation does not assert xfs"
 
 grep -q 'repair_partition_table' "$runner" || fail "deploy runner does not repair partition table"
 grep -q 'PTTYPE' "$runner" || fail "deploy runner does not detect partition table type"
@@ -51,8 +59,26 @@ grep -q 'runner.repair_partition_table' "$runner" || fail "deploy runner does no
 grep -q 'resize_root_filesystem' "$runner" || fail "deploy runner does not resize root filesystem"
 grep -q "parted -s \"\\\$disk\" resizepart" "$runner" || fail "deploy runner does not grow target root partition"
 grep -q "resize2fs \"\\\$root_device\"" "$runner" || fail "deploy runner does not grow ext root filesystems"
+grep -q 'is_unsupported_ext_resize_error' "$runner" || fail "deploy runner does not classify unsupported ext resize errors"
+grep -q 'Get a newer version of e2fsck' "$runner" || fail "deploy runner does not recognize newer ext feature errors"
+grep -q 'skipped unsupported target root filesystem' "$runner" || fail "deploy runner does not skip unsupported target root filesystems"
 grep -q 'etc/growroot-disabled' "$runner" || fail "deploy runner does not disable target initramfs root growth after resize"
 grep -q 'runner.resize_root_filesystem' "$runner" || fail "deploy runner does not report root filesystem resize timing"
+grep -q 'mount_target_root' "$runner" || fail "deploy runner does not isolate target root mounting"
+# shellcheck disable=SC2016
+grep -q 'btrfs|xfs) modprobe "$fstype"' "$runner" || fail "deploy runner does not load target filesystem modules before mount"
+grep -q 'apply_target_boot_quirks' "$runner" || fail "deploy runner does not apply scoped target boot quirks"
+grep -q 'modprobe.blacklist=amdgpu' "$runner" || fail "deploy runner does not include Ubuntu 22.04 AMD GPU boot quirk"
+grep -q 'has_amd_display_controller' "$runner" || fail "deploy runner boot quirk is not hardware scoped"
+grep -q 'for subvol in root @' "$runner" || fail "deploy runner does not try common btrfs root subvolumes"
+# shellcheck disable=SC2016
+grep -q '"subvol=$subvol"' "$runner" || fail "deploy runner does not mount selected btrfs subvolume"
+grep -q 'datasource_list: \[ NoCloud, None \]' "$runner" || fail "deploy runner does not prefer local NoCloud seed"
+! grep -q 'seedfrom:' "$runner" || fail "deploy runner must not force local NoCloud seed through NoCloudNet seedfrom"
+grep -q 'meta-data: |' "$runner" || fail "deploy runner does not embed NoCloud meta-data"
+grep -q 'user-data: |' "$runner" || fail "deploy runner does not embed NoCloud user-data"
+grep -q 'vendor-data: |' "$runner" || fail "deploy runner does not embed NoCloud vendor-data"
+grep -q 'network-config: |' "$runner" || fail "deploy runner does not embed NoCloud network-config"
 
 require_package() {
   local package="$1"
@@ -63,3 +89,4 @@ require_package() {
 require_package rsync
 require_package sudo
 require_package gdisk
+require_package linux-image-generic-hwe-22.04

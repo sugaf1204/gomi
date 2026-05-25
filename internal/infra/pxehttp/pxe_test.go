@@ -209,8 +209,12 @@ func TestPXEBootScript_LocalBootWhenVMNotProvisioning(t *testing.T) {
 		t.Fatalf("unexpected status: %d", rec.Code)
 	}
 	body := rec.Body.String()
-	if !strings.Contains(body, "iseq ${platform} efi && exit 1 ||") {
-		t.Fatalf("expected UEFI local boot to return to firmware, got: %s", body)
+	if !strings.Contains(body, "iseq ${platform} efi && goto local_efi || goto local_bios") ||
+		!strings.Contains(body, "sanboot --no-describe --drive 0 || exit 1") {
+		t.Fatalf("expected UEFI local boot to use arch-neutral sanboot with firmware fallback, got: %s", body)
+	}
+	if strings.Contains(body, "BOOTX64.EFI") {
+		t.Fatalf("UEFI local boot must not force an x86-only EFI filename, got: %s", body)
 	}
 	if strings.Contains(body, "grubnetx64.efi") {
 		t.Fatalf("UEFI local boot must not chain network GRUB, got: %s", body)
@@ -238,8 +242,12 @@ func TestPXEBootScript_LocalBootWhenNoProvisioningTarget(t *testing.T) {
 		t.Fatalf("unexpected status: %d", rec.Code)
 	}
 	body := rec.Body.String()
-	if !strings.Contains(body, "iseq ${platform} efi && exit 1 ||") {
-		t.Fatalf("expected UEFI local boot to return to firmware, got: %s", body)
+	if !strings.Contains(body, "iseq ${platform} efi && goto local_efi || goto local_bios") ||
+		!strings.Contains(body, "sanboot --no-describe --drive 0 || exit 1") {
+		t.Fatalf("expected UEFI local boot to use arch-neutral sanboot with firmware fallback, got: %s", body)
+	}
+	if strings.Contains(body, "BOOTX64.EFI") {
+		t.Fatalf("UEFI local boot must not force an x86-only EFI filename, got: %s", body)
 	}
 	if strings.Contains(body, "grubnetx64.efi") {
 		t.Fatalf("UEFI local boot must not chain network GRUB, got: %s", body)
@@ -347,8 +355,12 @@ func TestPXEBootScript_CurtinForUbuntuVMUsesLocalBootScript(t *testing.T) {
 	}
 
 	body := rec.Body.String()
-	if !strings.Contains(body, "iseq ${platform} efi && exit 1 ||") {
-		t.Fatalf("expected UEFI local boot to return to firmware for curtin, got: %s", body)
+	if !strings.Contains(body, "iseq ${platform} efi && goto local_efi || goto local_bios") ||
+		!strings.Contains(body, "sanboot --no-describe --drive 0 || exit 1") {
+		t.Fatalf("expected UEFI local boot to use arch-neutral sanboot with firmware fallback for curtin, got: %s", body)
+	}
+	if strings.Contains(body, "BOOTX64.EFI") {
+		t.Fatalf("UEFI local boot must not force an x86-only EFI filename for curtin, got: %s", body)
 	}
 	if strings.Contains(body, "grubnetx64.efi") {
 		t.Fatalf("UEFI local boot must not chain network GRUB for curtin, got: %s", body)
@@ -462,6 +474,9 @@ func TestPXEPreseed_CustomInlineByMAC(t *testing.T) {
 	}
 	if !strings.Contains(got, "install-complete?token=token-preseed-custom&type=preseed") {
 		t.Fatalf("expected install-complete callback with token, got: %s", got)
+	}
+	if !strings.Contains(got, "curl -fsS --connect-timeout 5 --max-time 15") {
+		t.Fatalf("expected bounded install-complete curl timeout, got: %s", got)
 	}
 	if strings.Contains(got, "exit/poweroff") {
 		t.Fatalf("expected poweroff to be removed, got: %s", got)
@@ -620,6 +635,9 @@ func TestPXENocloudUserData_InjectsInstallCompleteToken(t *testing.T) {
 	body := rec.Body.String()
 	if !strings.Contains(body, "install-complete?token=token-curtin&type=curtin") {
 		t.Fatalf("expected install-complete callback in curtin, got: %s", body)
+	}
+	if !strings.Contains(body, "curl -fsS --connect-timeout 5 --max-time 15") {
+		t.Fatalf("expected bounded install-complete curl timeout, got: %s", body)
 	}
 	if !strings.Contains(body, "package_update: true") {
 		t.Fatalf("expected package_update in curtin user-data, got: %s", body)
@@ -2315,6 +2333,9 @@ func TestPXEInventory_QCOW2ImageReturnsDiskImageDeployPlan(t *testing.T) {
 	if deploy["format"] != "qcow2" || deploy["targetDisk"] != "/dev/nvme0n1" || deploy["rootPartitionNumber"].(float64) != 1 {
 		t.Fatalf("unexpected diskImageDeploy: %#v", deploy)
 	}
+	if deploy["osFamily"] != "debian" || deploy["osVersion"] != "13" {
+		t.Fatalf("disk-image response must include OS metadata for runner quirks: %#v", deploy)
+	}
 	if _, ok := deploy["sha256"]; ok {
 		t.Fatalf("disk-image response must not force runner to download qcow2 into tmpfs: %#v", deploy)
 	}
@@ -2777,8 +2798,12 @@ func TestPXEDeployEvents_ImageAppliedLocalBootsAndConfiguresBIOSBootOrder(t *tes
 		t.Fatalf("unexpected boot status: %d body=%s", bootRec.Code, bootRec.Body.String())
 	}
 	body := bootRec.Body.String()
-	if !strings.Contains(body, "iseq ${platform} efi && exit 1 ||") {
-		t.Fatalf("expected local boot script after image_applied, got: %s", body)
+	if !strings.Contains(body, "iseq ${platform} efi && goto local_efi || goto local_bios") ||
+		!strings.Contains(body, "sanboot --no-describe --drive 0 || exit 1") {
+		t.Fatalf("expected local arch-neutral sanboot script after image_applied, got: %s", body)
+	}
+	if strings.Contains(body, "BOOTX64.EFI") {
+		t.Fatalf("UEFI local boot must not force an x86-only EFI filename after image_applied, got: %s", body)
 	}
 	if strings.Contains(body, "grubnetx64.efi") {
 		t.Fatalf("UEFI local boot must not chain network GRUB after image_applied, got: %s", body)
@@ -3185,6 +3210,9 @@ func TestPXENocloudUserData_HypervisorRunsSetupAndRegisterScript(t *testing.T) {
 		"qemu-system",
 		"zstd",
 		"xz-utils",
+		"99-gomi-libvirt-bridge.conf",
+		"net.bridge.bridge-nf-call-iptables = 0",
+		"net.bridge.bridge-nf-call-arptables = 0",
 		`auth_tcp = "none"`,
 		"systemctl start libvirtd-tcp.socket",
 		"/api/v1/hypervisors/setup-and-register.sh",
@@ -3201,6 +3229,78 @@ func TestPXENocloudUserData_HypervisorRunsSetupAndRegisterScript(t *testing.T) {
 	}
 	if strings.Contains(body, "qemu-kvm") {
 		t.Fatalf("hypervisor user-data must not request obsolete qemu-kvm package, got:\n%s", body)
+	}
+}
+
+func TestPXENocloudUserData_FedoraHypervisorUsesFedoraPackages(t *testing.T) {
+	backend := memory.New()
+	machineSvc := machine.NewService(backend.Machines())
+	now := time.Now().UTC()
+
+	target := machine.Machine{
+		Name:       "fedora-node",
+		Hostname:   "fedora-node",
+		MAC:        "52:54:00:44:00:01",
+		Arch:       "amd64",
+		Firmware:   machine.FirmwareUEFI,
+		Role:       machine.RoleHypervisor,
+		BridgeName: "br0",
+		OSPreset: machine.OSPreset{
+			Family: machine.OSType("fedora"),
+		},
+		Phase: machine.PhaseProvisioning,
+		Provision: &machine.ProvisionProgress{
+			Active:          true,
+			CompletionToken: "token-hv-fedora",
+			Artifacts: map[string]string{
+				machine.ProvisionArtifactHypervisorRegistrationToken: "hv-registration-token-fedora",
+			},
+		},
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	if err := backend.Machines().Upsert(context.Background(), target); err != nil {
+		t.Fatalf("upsert machine: %v", err)
+	}
+
+	e := echo.New()
+	req := httptest.NewRequest(http.MethodGet, "/pxe/nocloud/525400440001/user-data", nil)
+	req.Host = "192.168.2.254:8080"
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+	c.SetParamNames("mac")
+	c.SetParamValues("525400440001")
+
+	h := &Handler{machines: machineSvc}
+	if err := h.PXENocloudUserData(c); err != nil {
+		t.Fatalf("PXENocloudUserData: %v", err)
+	}
+	if rec.Code != http.StatusOK {
+		t.Fatalf("unexpected status: %d", rec.Code)
+	}
+	body := rec.Body.String()
+	for _, want := range []string{
+		"/api/v1/hypervisors/setup-and-register.sh",
+		`ARCH=$(uname -m)`,
+		"hv-registration-token-fedora",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("expected Fedora hypervisor user-data to contain %q, got:\n%s", want, body)
+		}
+	}
+	for _, forbidden := range []string{
+		"libvirt-daemon-system",
+		"libvirt-clients",
+		"cloud-image-utils",
+		"xz-utils",
+		"dpkg --print-architecture",
+		"libvirt-daemon-driver-qemu",
+		"qemu-system-x86-core",
+		"packages: []",
+	} {
+		if strings.Contains(body, forbidden) {
+			t.Fatalf("did not expect Debian-specific %q in Fedora user-data, got:\n%s", forbidden, body)
+		}
 	}
 }
 
@@ -3515,6 +3615,263 @@ func TestPXENocloudUserData_FedoraMachineStaticWritesNetworkManagerKeyfile(t *te
 	}
 	if strings.Contains(body, "resize_rootfs: false") {
 		t.Fatalf("non-completed-rootfs Fedora deploy must not disable resize_rootfs, got:\n%s", body)
+	}
+}
+
+func TestPXENocloudUserData_FedoraVMStaticWritesNetworkManagerKeyfile(t *testing.T) {
+	backend := memory.New()
+	vmSvc := vm.NewService(backend.VMs())
+	osImageSvc := osimage.NewService(backend.OSImages())
+	now := time.Now().UTC()
+	if err := backend.OSImages().Upsert(context.Background(), osimage.OSImage{
+		Name:      "fedora-44-amd64-cloud",
+		OSFamily:  "fedora",
+		OSVersion: "44",
+		Arch:      "amd64",
+		Ready:     true,
+		CreatedAt: now,
+		UpdatedAt: now,
+	}); err != nil {
+		t.Fatalf("upsert os image: %v", err)
+	}
+	target := vm.VirtualMachine{
+		Name:         "vm-fedora-nm",
+		OSImageRef:   "fedora-44-amd64-cloud",
+		IPAssignment: vm.IPAssignmentStatic,
+		Network: []vm.NetworkInterface{
+			{MAC: "52:54:00:44:00:50", IPAddress: "192.168.2.230"},
+		},
+		Phase: vm.PhaseProvisioning,
+		Provisioning: vm.ProvisioningStatus{
+			Active:          true,
+			CompletionToken: "token-vm-fedora-nm",
+		},
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	if err := backend.VMs().Upsert(context.Background(), target); err != nil {
+		t.Fatalf("upsert vm: %v", err)
+	}
+
+	e := echo.New()
+	req := httptest.NewRequest(http.MethodGet, "/pxe/nocloud/525400440050/user-data", nil)
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+	c.SetParamNames("mac")
+	c.SetParamValues("525400440050")
+
+	h := &Handler{vms: vmSvc, osimages: osImageSvc}
+	if err := h.PXENocloudUserData(c); err != nil {
+		t.Fatalf("PXENocloudUserData: %v", err)
+	}
+	body := rec.Body.String()
+	for _, want := range []string{
+		"/etc/NetworkManager/system-connections/gomi-nic.nmconnection",
+		"mac-address=52:54:00:44:00:50",
+		"address1=192.168.2.230/24",
+		"nmcli connection reload",
+		"nmcli connection up 'gomi-nic'",
+		"install-complete?token=token-vm-fedora-nm",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("expected Fedora VM user-data to contain %q, got:\n%s", want, body)
+		}
+	}
+	if strings.Contains(body, "99-gomi-network.yaml") || strings.Contains(body, "netplan apply") {
+		t.Fatalf("Fedora VM must not receive netplan user-data, got:\n%s", body)
+	}
+}
+
+func TestPXENocloudNetworkConfig_DebianVMStaticUsesCloudInitV1Ifupdown(t *testing.T) {
+	backend := memory.New()
+	vmSvc := vm.NewService(backend.VMs())
+	osImageSvc := osimage.NewService(backend.OSImages())
+	now := time.Now().UTC()
+	if err := backend.OSImages().Upsert(context.Background(), osimage.OSImage{
+		Name:      "debian-12-amd64-cloud",
+		OSFamily:  "debian",
+		OSVersion: "12",
+		Arch:      "amd64",
+		Ready:     true,
+		CreatedAt: now,
+		UpdatedAt: now,
+	}); err != nil {
+		t.Fatalf("upsert os image: %v", err)
+	}
+	target := vm.VirtualMachine{
+		Name:         "vm-debian-ifupdown",
+		OSImageRef:   "debian-12-amd64-cloud",
+		IPAssignment: vm.IPAssignmentStatic,
+		Network: []vm.NetworkInterface{
+			{MAC: "52:54:00:44:00:51", IPAddress: "192.168.2.231"},
+		},
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	if err := backend.VMs().Upsert(context.Background(), target); err != nil {
+		t.Fatalf("upsert vm: %v", err)
+	}
+
+	e := echo.New()
+	req := httptest.NewRequest(http.MethodGet, "/pxe/nocloud/525400440051/network-config", nil)
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+	c.SetParamNames("mac")
+	c.SetParamValues("525400440051")
+
+	h := &Handler{vms: vmSvc, osimages: osImageSvc}
+	if err := h.PXENocloudNetworkConfig(c); err != nil {
+		t.Fatalf("PXENocloudNetworkConfig: %v", err)
+	}
+	body := rec.Body.String()
+	for _, want := range []string{
+		"version: 1",
+		"type: physical",
+		"name: eth0",
+		`mac_address: "52:54:00:44:00:51"`,
+		"type: static",
+		"address: 192.168.2.231/24",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("expected Debian VM network-config to contain %q, got:\n%s", want, body)
+		}
+	}
+	if strings.Contains(body, "renderer: networkd") || strings.Contains(body, "ethernets:") {
+		t.Fatalf("Debian VM cloud image must not receive netplan v2 network-config, got:\n%s", body)
+	}
+}
+
+func TestPXENocloudUserData_DebianVMStaticUsesIfupdown(t *testing.T) {
+	backend := memory.New()
+	vmSvc := vm.NewService(backend.VMs())
+	osImageSvc := osimage.NewService(backend.OSImages())
+	now := time.Now().UTC()
+	if err := backend.OSImages().Upsert(context.Background(), osimage.OSImage{
+		Name:      "debian-12-amd64-cloud",
+		OSFamily:  "debian",
+		OSVersion: "12",
+		Arch:      "amd64",
+		Ready:     true,
+		CreatedAt: now,
+		UpdatedAt: now,
+	}); err != nil {
+		t.Fatalf("upsert os image: %v", err)
+	}
+	target := vm.VirtualMachine{
+		Name:         "vm-debian-ifupdown",
+		OSImageRef:   "debian-12-amd64-cloud",
+		IPAssignment: vm.IPAssignmentStatic,
+		Network: []vm.NetworkInterface{
+			{MAC: "52:54:00:44:00:51", IPAddress: "192.168.2.231"},
+		},
+		Phase: vm.PhaseProvisioning,
+		Provisioning: vm.ProvisioningStatus{
+			Active:          true,
+			CompletionToken: "token-vm-debian-ifupdown",
+		},
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	if err := backend.VMs().Upsert(context.Background(), target); err != nil {
+		t.Fatalf("upsert vm: %v", err)
+	}
+
+	e := echo.New()
+	req := httptest.NewRequest(http.MethodGet, "/pxe/nocloud/525400440051/user-data", nil)
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+	c.SetParamNames("mac")
+	c.SetParamValues("525400440051")
+
+	h := &Handler{vms: vmSvc, osimages: osImageSvc}
+	if err := h.PXENocloudUserData(c); err != nil {
+		t.Fatalf("PXENocloudUserData: %v", err)
+	}
+	body := rec.Body.String()
+	for _, want := range []string{
+		"/usr/local/sbin/gomi-apply-debian-ifupdown",
+		"/etc/network/interfaces.d/99-gomi.cfg",
+		"target_mac='52:54:00:44:00:51'",
+		"target_ip='192.168.2.231'",
+		"address $target_ip/$prefix_len",
+		"install-complete?token=token-vm-debian-ifupdown",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("expected Debian VM user-data to contain %q, got:\n%s", want, body)
+		}
+	}
+	if strings.Contains(body, "netplan") || strings.Contains(body, "gomi-network-rollback.timer") {
+		t.Fatalf("Debian VM cloud image must not receive netplan user-data, got:\n%s", body)
+	}
+}
+
+func TestPXENocloudUserData_UbuntuVMStaticEnablesNetworkdBeforeNetplan(t *testing.T) {
+	backend := memory.New()
+	vmSvc := vm.NewService(backend.VMs())
+	osImageSvc := osimage.NewService(backend.OSImages())
+	now := time.Now().UTC()
+	if err := backend.OSImages().Upsert(context.Background(), osimage.OSImage{
+		Name:      "ubuntu-26.04-amd64-cloud",
+		OSFamily:  "ubuntu",
+		OSVersion: "26.04",
+		Arch:      "amd64",
+		Ready:     true,
+		CreatedAt: now,
+		UpdatedAt: now,
+	}); err != nil {
+		t.Fatalf("upsert os image: %v", err)
+	}
+	target := vm.VirtualMachine{
+		Name:         "vm-ubuntu-netplan",
+		OSImageRef:   "ubuntu-26.04-amd64-cloud",
+		IPAssignment: vm.IPAssignmentStatic,
+		Network: []vm.NetworkInterface{
+			{MAC: "52:54:00:44:00:52", IPAddress: "192.168.2.232"},
+		},
+		Phase: vm.PhaseProvisioning,
+		Provisioning: vm.ProvisioningStatus{
+			Active:          true,
+			CompletionToken: "token-vm-ubuntu-netplan",
+		},
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	if err := backend.VMs().Upsert(context.Background(), target); err != nil {
+		t.Fatalf("upsert vm: %v", err)
+	}
+
+	e := echo.New()
+	req := httptest.NewRequest(http.MethodGet, "/pxe/nocloud/525400440052/user-data", nil)
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+	c.SetParamNames("mac")
+	c.SetParamValues("525400440052")
+
+	h := &Handler{vms: vmSvc, osimages: osImageSvc}
+	if err := h.PXENocloudUserData(c); err != nil {
+		t.Fatalf("PXENocloudUserData: %v", err)
+	}
+	body := rec.Body.String()
+	for _, want := range []string{
+		"99-gomi-network.yaml",
+		"renderer: networkd",
+		"192.168.2.232/24",
+		"systemctl enable --now systemd-networkd.service systemd-networkd.socket",
+		"netplan apply",
+		"install-complete?token=token-vm-ubuntu-netplan",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("expected Ubuntu VM user-data to contain %q, got:\n%s", want, body)
+		}
+	}
+	if strings.Contains(body, "/usr/local/sbin/gomi-apply-netplan-networkd") ||
+		strings.Contains(body, "NetworkManager/system-connections") {
+		t.Fatalf("Ubuntu VM must not receive Debian rollback or NetworkManager config, got:\n%s", body)
+	}
+	enableIdx := strings.Index(body, "- systemctl enable --now systemd-networkd.service systemd-networkd.socket")
+	applyIdx := strings.Index(body, "- netplan apply")
+	if enableIdx == -1 || applyIdx == -1 || enableIdx > applyIdx {
+		t.Fatalf("expected Ubuntu VM to enable networkd before netplan apply, got:\n%s", body)
 	}
 }
 

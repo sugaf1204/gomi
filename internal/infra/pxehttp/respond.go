@@ -32,6 +32,8 @@ type inventoryResponse struct {
 type diskImageDeployResponse struct {
 	ImageURL            string `json:"imageUrl"`
 	Format              string `json:"format"`
+	OSFamily            string `json:"osFamily,omitempty"`
+	OSVersion           string `json:"osVersion,omitempty"`
 	TargetDisk          string `json:"targetDisk"`
 	RootPartitionNumber int    `json:"rootPartitionNumber"`
 	EFIPartitionNumber  int    `json:"efiPartitionNumber,omitempty"`

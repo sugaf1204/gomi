@@ -101,8 +101,13 @@ repair_partition_table() {
   udevadm settle || true
 }
 
+is_unsupported_ext_resize_error() {
+  local log_file="$1"
+  grep -qiE 'unsupported feature|has unsupported feature|unsupported filesystem feature|Get a newer version of e2fsck|Get a newer version of resize2fs' "$log_file"
+}
+
 resize_root_filesystem() {
-  local disk="$1" part="$2" root_device="$3" fstype rc
+  local disk="$1" part="$2" root_device="$3" fstype rc fsck_log resize_log
   parted -s "$disk" resizepart "$part" 100% || return 2
   partprobe "$disk" || return 1
   udevadm settle || true
@@ -111,19 +116,112 @@ resize_root_filesystem() {
     ext2|ext3|ext4) ;;
     *) return 2 ;;
   esac
-  if e2fsck -f -y "$root_device"; then
+  fsck_log="$(mktemp "$tmpdir/gomi-e2fsck.XXXXXX.log")" || return 1
+  resize_log="$(mktemp "$tmpdir/gomi-resize2fs.XXXXXX.log")" || {
+    rm -f "$fsck_log"
+    return 1
+  }
+  if e2fsck -f -y "$root_device" >"$fsck_log" 2>&1; then
     :
   else
     rc="$?"
-    [ "$rc" -le 3 ] || return 1
+    if [ "$rc" -gt 3 ] && is_unsupported_ext_resize_error "$fsck_log"; then
+      rm -f "$fsck_log" "$resize_log"
+      return 2
+    fi
+    [ "$rc" -le 3 ] || {
+      cat "$fsck_log" >&2 || true
+      rm -f "$fsck_log" "$resize_log"
+      return 1
+    }
   fi
-  resize2fs "$root_device" || return 1
+  if ! resize2fs "$root_device" >"$resize_log" 2>&1; then
+    if is_unsupported_ext_resize_error "$resize_log"; then
+      rm -f "$fsck_log" "$resize_log"
+      return 2
+    fi
+    cat "$resize_log" >&2 || true
+    rm -f "$fsck_log" "$resize_log"
+    return 1
+  fi
+  rm -f "$fsck_log" "$resize_log"
 }
 
 disk_links() {
   local dir="$1" dev="$2"
   [ -d "$dir" ] || return 0
   { find -L "$dir" -samefile "$dev" -print 2>/dev/null || true; } | paste -sd, -
+}
+
+indent_file() {
+  sed 's/^/        /' "$1"
+}
+
+has_amd_display_controller() {
+  local dev
+  for dev in /sys/bus/pci/devices/*; do
+    [ -r "$dev/vendor" ] || continue
+    [ -r "$dev/class" ] || continue
+    [ "$(cat "$dev/vendor" 2>/dev/null)" = "0x1002" ] || continue
+    case "$(cat "$dev/class" 2>/dev/null)" in
+      0x03*) return 0 ;;
+    esac
+  done
+  return 1
+}
+
+append_linux_arg_once() {
+  local file="$1" arg="$2"
+  [ -f "$file" ] || return 0
+  grep -q -- "$arg" "$file" && return 0
+  sed -i -E "/^[[:space:]]*linux[[:space:]]/ s|$| $arg|" "$file"
+}
+
+apply_target_boot_quirks() {
+  local mountpoint="$1" os_family="$2" os_version="$3"
+
+  [ "$os_family" = "ubuntu" ] || return 1
+  [ "$os_version" = "22.04" ] || return 1
+  has_amd_display_controller || return 1
+
+  mkdir -p "$mountpoint/etc/modprobe.d"
+  cat >"$mountpoint/etc/modprobe.d/gomi-blacklist-amdgpu.conf" <<'EOF'
+# Ubuntu 22.04 can hang early on some AMD GPUs when matching amdgpu firmware is unavailable.
+blacklist amdgpu
+EOF
+  if [ -f "$mountpoint/etc/default/grub" ] && ! grep -q 'modprobe.blacklist=amdgpu' "$mountpoint/etc/default/grub"; then
+    sed -i -E 's/^(GRUB_CMDLINE_LINUX_DEFAULT="[^"]*)"/\1 modprobe.blacklist=amdgpu nomodeset"/' "$mountpoint/etc/default/grub"
+    sed -i -E 's/^(GRUB_CMDLINE_LINUX="[^"]*)"/\1 modprobe.blacklist=amdgpu nomodeset"/' "$mountpoint/etc/default/grub"
+  fi
+  append_linux_arg_once "$mountpoint/boot/grub/grub.cfg" "modprobe.blacklist=amdgpu"
+  append_linux_arg_once "$mountpoint/boot/grub/grub.cfg" "nomodeset"
+  return 0
+}
+
+mount_target_root() {
+  local root_device="$1" mountpoint="$2" fstype log_file
+  fstype="$(blkid -o value -s TYPE "$root_device" 2>/dev/null || true)"
+  case "$fstype" in
+    btrfs|xfs) modprobe "$fstype" 2>/dev/null || true ;;
+  esac
+  log_file="$(mktemp "$tmpdir/gomi-mount-root.XXXXXX.log")" || return 1
+  case "$fstype" in
+    btrfs)
+      for subvol in root @; do
+        if mount -t btrfs -o "subvol=$subvol" "$root_device" "$mountpoint" >"$log_file" 2>&1; then
+          rm -f "$log_file"
+          return 0
+        fi
+      done
+      ;;
+  esac
+  if mount "$root_device" "$mountpoint" >"$log_file" 2>&1; then
+    rm -f "$log_file"
+    return 0
+  fi
+  cat "$log_file" >&2 || true
+  rm -f "$log_file"
+  return 1
 }
 
 base="$(cmdline_value gomi.base || true)"
@@ -186,6 +284,8 @@ post_timing runner.inventory "posted hardware inventory"
 if [ "$deploy_mode" = "disk-image" ]; then
   image_url="$(jq -r '.diskImageDeploy.imageUrl // empty' "$response_file")"
   image_format="$(jq -r '.diskImageDeploy.format // empty' "$response_file")"
+  os_family="$(jq -r '.diskImageDeploy.osFamily // empty' "$response_file")"
+  os_version="$(jq -r '.diskImageDeploy.osVersion // empty' "$response_file")"
   target_disk="$(jq -r '.diskImageDeploy.targetDisk // empty' "$response_file")"
   root_part="$(jq -r '.diskImageDeploy.rootPartitionNumber // 0' "$response_file")"
   seed_url="$(jq -r '.diskImageDeploy.seedUrl // empty' "$response_file")"
@@ -222,7 +322,7 @@ if [ "$deploy_mode" = "disk-image" ]; then
     post_timing runner.resize_root_filesystem "skipped unsupported target root filesystem" "skipped"
   fi
   mkdir -p /mnt/gomi-target
-  mount "$root_device" /mnt/gomi-target || fail "failed to mount target root partition"
+  mount_log="$(mount_target_root "$root_device" /mnt/gomi-target 2>&1)" || fail "failed to mount target root partition" "$mount_log"
   target_mount="/mnt/gomi-target"
   seed_dir="/mnt/gomi-target/var/lib/cloud/seed/nocloud"
   mkdir -p "$seed_dir" /mnt/gomi-target/etc/cloud/cloud.cfg.d
@@ -232,13 +332,33 @@ if [ "$deploy_mode" = "disk-image" ]; then
   for file in user-data meta-data vendor-data network-config; do
     curl -fsS -o "$seed_dir/$file" "$seed_url/$file" || fail "failed to fetch NoCloud $file"
   done
-  cat >/mnt/gomi-target/etc/cloud/cloud.cfg.d/99_gomi_nocloud.cfg <<'EOF'
+  {
+    cat <<'EOF'
 datasource_list: [ NoCloud, None ]
+ssh_deletekeys: false
 datasource:
   NoCloud:
-    seedfrom: /var/lib/cloud/seed/nocloud/
-ssh_deletekeys: false
+    meta-data: |
 EOF
+    indent_file "$seed_dir/meta-data"
+    cat <<'EOF'
+    user-data: |
+EOF
+    indent_file "$seed_dir/user-data"
+    cat <<'EOF'
+    vendor-data: |
+EOF
+    indent_file "$seed_dir/vendor-data"
+    cat <<'EOF'
+    network-config: |
+EOF
+    indent_file "$seed_dir/network-config"
+  } >/mnt/gomi-target/etc/cloud/cloud.cfg.d/99_gomi_nocloud.cfg
+  if apply_target_boot_quirks /mnt/gomi-target "$os_family" "$os_version"; then
+    post_timing runner.apply_target_boot_quirks "applied target boot quirks"
+  else
+    post_timing runner.apply_target_boot_quirks "no target boot quirks needed" "skipped"
+  fi
   umount "$target_mount"
   target_mount=""
   post_timing runner.inject_seed "injected NoCloud seed"

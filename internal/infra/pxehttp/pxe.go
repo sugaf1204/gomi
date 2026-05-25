@@ -312,7 +312,7 @@ func (h *Handler) PXENocloudUserData(c echo.Context) error {
 		if err != nil {
 			return c.JSON(gohttp.StatusInternalServerError, jsonErrorErr(err))
 		}
-		result = injectHypervisorSetup(result, base, m.Name, registrationToken)
+		result = injectHypervisorSetup(result, base, m.Name, registrationToken, target.osFamily)
 	}
 
 	if target.node != nil && strings.TrimSpace(target.node.PrimaryMAC()) != "" && !target.diskImageDeploy {
@@ -355,6 +355,16 @@ func (h *Handler) PXENocloudNetworkConfig(c echo.Context) error {
 	ctx := c.Request().Context()
 
 	n := h.findHostByMAC(ctx, rawMAC)
+	if _, ok := n.(*vm.VirtualMachine); ok && isDebianOSFamily(h.resolveOSImageFamily(ctx, n.OSImageVariantRef())) {
+		ip := ""
+		var spec *subnet.SubnetSpec
+		if n.GetIPAssignment() == resource.IPAssignmentStatic {
+			ip = n.StaticIP()
+			spec = h.resolveSubnetSpec(ctx, n)
+		}
+		return c.Blob(gohttp.StatusOK, "text/plain; charset=utf-8",
+			[]byte(buildCloudInitV1NetworkConfig(mac, ip, spec)))
+	}
 	renderer := h.resolveNetworkConfigRenderer(ctx, n)
 
 	// Hypervisor machines get a bridged network config.
@@ -403,9 +413,49 @@ func buildNetworkConfigWithRenderer(mac, ip string, spec *subnet.SubnetSpec, ren
 	))
 }
 
+type cloudInitV1NetworkConfig struct {
+	Version int                         `yaml:"version"`
+	Config  []cloudInitV1NetworkElement `yaml:"config"`
+}
+
+type cloudInitV1NetworkElement struct {
+	Type       string                     `yaml:"type"`
+	Name       string                     `yaml:"name"`
+	MACAddress string                     `yaml:"mac_address,omitempty"`
+	Subnets    []cloudInitV1NetworkSubnet `yaml:"subnets"`
+}
+
+type cloudInitV1NetworkSubnet struct {
+	Type           string   `yaml:"type"`
+	Address        string   `yaml:"address,omitempty"`
+	Gateway        string   `yaml:"gateway,omitempty"`
+	DNSNameservers []string `yaml:"dns_nameservers,omitempty"`
+}
+
+func buildCloudInitV1NetworkConfig(mac, ip string, spec *subnet.SubnetSpec) string {
+	subnetCfg := cloudInitV1NetworkSubnet{Type: "dhcp"}
+	if ip = strings.TrimSpace(ip); ip != "" {
+		subnetCfg = cloudInitV1NetworkSubnet{
+			Type:           "static",
+			Address:        fmt.Sprintf("%s/%d", ip, subnetPrefixLen(spec)),
+			Gateway:        subnetGateway(spec),
+			DNSNameservers: subnetNameServers(spec),
+		}
+	}
+	return marshalYAMLString(cloudInitV1NetworkConfig{
+		Version: 1,
+		Config: []cloudInitV1NetworkElement{{
+			Type:       "physical",
+			Name:       "eth0",
+			MACAddress: strings.ToLower(strings.TrimSpace(mac)),
+			Subnets:    []cloudInitV1NetworkSubnet{subnetCfg},
+		}},
+	})
+}
+
 // injectHypervisorSetup adds libvirt/KVM packages and runcmd entries to a
 // cloud-config YAML string so the machine boots as a ready hypervisor.
-func injectHypervisorSetup(cloudConfig, pxeBaseURL, hypervisorName, registrationToken string) string {
+func injectHypervisorSetup(cloudConfig, pxeBaseURL, hypervisorName, registrationToken string, osFamily string) string {
 	trimmed := strings.TrimSpace(cloudConfig)
 	if trimmed == "" {
 		trimmed = "#cloud-config\n{}"
@@ -415,32 +465,15 @@ func injectHypervisorSetup(cloudConfig, pxeBaseURL, hypervisorName, registration
 		return cloudConfig
 	}
 
-	hvPackages := []any{
-		"libvirt-daemon-system",
-		"libvirt-clients",
-		"qemu-system",
-		"virtinst",
-		"cloud-image-utils",
-		"curl",
-		"jq",
-		"zstd",
-		"xz-utils",
-	}
-	hvRuncmds := []any{
-		libvirtTCPAuthNoneCommand(),
-		"systemctl enable libvirtd-tcp.socket || true",
-		"systemctl stop libvirtd.service || true",
-		"systemctl start libvirtd-tcp.socket || true",
-		`sh -c 'virsh pool-define-as default dir --target /var/lib/libvirt/images && virsh pool-build default && virsh pool-start default && virsh pool-autostart default || true'`,
-		"mkdir -p /var/lib/gomi/data/images",
-	}
+	hvPackages := hypervisorSetupPackages(osFamily)
+	hvRuncmds := hypervisorSetupRuncmds(osFamily)
 
 	serverBase := ""
 	if base := strings.TrimRight(strings.TrimSpace(pxeBaseURL), "/"); base != "" {
 		serverBase = strings.TrimSuffix(base, "/pxe")
 		filesBase := serverBase + "/files"
 		hvRuncmds = append(hvRuncmds,
-			fmt.Sprintf(`sh -c 'ARCH=$(dpkg --print-architecture); curl -sfL -o /usr/bin/gomi-hypervisor "%s/gomi-hypervisor-linux-${ARCH}" && chmod +x /usr/bin/gomi-hypervisor || true'`, filesBase),
+			fmt.Sprintf(`sh -c '%s; curl -sfL -o /usr/bin/gomi-hypervisor "%s/gomi-hypervisor-linux-${ARCH}" && chmod +x /usr/bin/gomi-hypervisor || true'`, gomiArchShellSnippet(), filesBase),
 		)
 	}
 	if serverBase != "" && strings.TrimSpace(registrationToken) != "" {
@@ -464,7 +497,12 @@ func injectHypervisorSetup(cloudConfig, pxeBaseURL, hypervisorName, registration
 	if existing, ok := cfg["packages"].([]any); ok {
 		pkgList = existing
 	}
-	cfg["packages"] = append(pkgList, hvPackages...)
+	pkgList = append(pkgList, hvPackages...)
+	if len(pkgList) > 0 {
+		cfg["packages"] = pkgList
+	} else {
+		delete(cfg, "packages")
+	}
 
 	// Append runcmd.
 	var runList []any
@@ -480,8 +518,59 @@ func injectHypervisorSetup(cloudConfig, pxeBaseURL, hypervisorName, registration
 	return "#cloud-config\n" + string(raw)
 }
 
+func hypervisorSetupPackages(osFamily string) []any {
+	switch strings.ToLower(strings.TrimSpace(osFamily)) {
+	case "fedora", "rhel", "redhat", "centos", "rocky", "almalinux":
+		return nil
+	default:
+		return []any{
+			"libvirt-daemon-system",
+			"libvirt-clients",
+			"qemu-system",
+			"virtinst",
+			"cloud-image-utils",
+			"curl",
+			"jq",
+			"zstd",
+			"xz-utils",
+		}
+	}
+}
+
+func hypervisorSetupRuncmds(osFamily string) []any {
+	switch strings.ToLower(strings.TrimSpace(osFamily)) {
+	case "fedora", "rhel", "redhat", "centos", "rocky", "almalinux":
+		return []any{
+			"mkdir -p /var/lib/gomi/data/images",
+		}
+	default:
+		return []any{
+			configureLibvirtBridgeNetfilterCommand(),
+			libvirtTCPAuthNoneCommand(),
+			"systemctl enable libvirtd-tcp.socket || true",
+			"systemctl stop libvirtd.service || true",
+			"systemctl start libvirtd-tcp.socket || true",
+			`sh -c 'virsh pool-define-as default dir --target /var/lib/libvirt/images && virsh pool-build default && virsh pool-start default && virsh pool-autostart default || true'`,
+			"mkdir -p /var/lib/gomi/data/images",
+		}
+	}
+}
+
+func gomiArchShellSnippet() string {
+	return `ARCH=$(uname -m); case "${ARCH}" in x86_64|amd64) ARCH="amd64" ;; aarch64|arm64) ARCH="arm64" ;; *) echo "Unsupported architecture: ${ARCH}"; exit 1 ;; esac`
+}
+
 func libvirtTCPAuthNoneCommand() string {
 	return `sh -c 'conf=/etc/libvirt/libvirtd.conf; if grep -qE '\''^[[:space:]]*#?[[:space:]]*auth_tcp[[:space:]]*='\'' "$conf"; then sed -i -E '\''s|^[[:space:]]*#?[[:space:]]*auth_tcp[[:space:]]*=.*|auth_tcp = "none"|'\'' "$conf"; else printf '\''\nauth_tcp = "none"\n'\'' >> "$conf"; fi'`
+}
+
+func configureLibvirtBridgeNetfilterCommand() string {
+	return `sh -c 'modprobe br_netfilter 2>/dev/null || true; cat > /etc/sysctl.d/99-gomi-libvirt-bridge.conf <<EOF
+net.bridge.bridge-nf-call-iptables = 0
+net.bridge.bridge-nf-call-ip6tables = 0
+net.bridge.bridge-nf-call-arptables = 0
+EOF
+sysctl -p /etc/sysctl.d/99-gomi-libvirt-bridge.conf >/dev/null 2>&1 || true'`
 }
 
 func hypervisorRegistrationToken(m *machine.Machine) string {
@@ -1050,7 +1139,10 @@ func RenderNoCloudLineConfig(base string, installType vm.InstallConfigType, mac 
 
 func renderPXELocalBootScript(_ string) string {
 	return `#!ipxe
-iseq ${platform} efi && exit 1 ||
+iseq ${platform} efi && goto local_efi || goto local_bios
+:local_efi
+sanboot --no-describe --drive 0 || exit 1
+:local_bios
 sanboot --no-describe --drive 0x80 || exit
 `
 }
@@ -1458,7 +1550,7 @@ func preseedInstallCompleteCommand(completeURL string) string {
 	escaped := strings.ReplaceAll(completeURL, `"`, `\"`)
 	tokenVal, typeVal := parseTokenAndTypeFromURL(completeURL)
 	return fmt.Sprintf(
-		`in-target /bin/sh -c 'IP=$(hostname -I 2>/dev/null | awk "{print \$1}"); DEV=$(ip -o route get 1 2>/dev/null | awk "{for(i=1;i<=NF;i++){if(\$i==\"dev\"){print \$(i+1);exit}}}"); MAC=$(cat /sys/class/net/${DEV}/address 2>/dev/null); curl -fsS -X POST -H "Content-Type: application/json" -d "{\"token\":\"%s\",\"type\":\"%s\",\"ip\":\"${IP}\",\"mac\":\"${MAC}\"}" "%s" || curl -fsS -X POST "%s" || true'`,
+		`in-target /bin/sh -c 'IP=$(hostname -I 2>/dev/null | awk "{print \$1}"); DEV=$(ip -o route get 1 2>/dev/null | awk "{for(i=1;i<=NF;i++){if(\$i==\"dev\"){print \$(i+1);exit}}}"); MAC=$(cat /sys/class/net/${DEV}/address 2>/dev/null); curl -fsS --connect-timeout 5 --max-time 15 -X POST -H "Content-Type: application/json" -d "{\"token\":\"%s\",\"type\":\"%s\",\"ip\":\"${IP}\",\"mac\":\"${MAC}\"}" "%s" || curl -fsS --connect-timeout 5 --max-time 15 -X POST "%s" || true'`,
 		tokenVal, typeVal, escaped, escaped,
 	)
 }
@@ -1511,7 +1603,7 @@ func buildAutoinstallUserData(inlineCloudConfig, hostname, completeURL string) s
 		escaped := strings.ReplaceAll(completeURL, `"`, `\"`)
 		tokenVal, typeVal := parseTokenAndTypeFromURL(completeURL)
 		callback := fmt.Sprintf(
-			`curtin in-target -- sh -c 'IP=$(hostname -I 2>/dev/null | awk "{print \$1}"); DEV=$(ip -o route get 1 2>/dev/null | awk "{for(i=1;i<=NF;i++){if(\$i==\"dev\"){print \$(i+1);exit}}}"); MAC=$(cat /sys/class/net/${DEV}/address 2>/dev/null); curl -fsS -X POST -H "Content-Type: application/json" -d "{\"token\":\"%s\",\"type\":\"%s\",\"ip\":\"${IP}\",\"mac\":\"${MAC}\"}" "%s" || curl -fsS -X POST "%s" || true'`,
+			`curtin in-target -- sh -c 'IP=$(hostname -I 2>/dev/null | awk "{print \$1}"); DEV=$(ip -o route get 1 2>/dev/null | awk "{for(i=1;i<=NF;i++){if(\$i==\"dev\"){print \$(i+1);exit}}}"); MAC=$(cat /sys/class/net/${DEV}/address 2>/dev/null); curl -fsS --connect-timeout 5 --max-time 15 -X POST -H "Content-Type: application/json" -d "{\"token\":\"%s\",\"type\":\"%s\",\"ip\":\"${IP}\",\"mac\":\"${MAC}\"}" "%s" || curl -fsS --connect-timeout 5 --max-time 15 -X POST "%s" || true'`,
 			tokenVal, typeVal, escaped, escaped,
 		)
 		lateCommands = append(lateCommands, callback)
@@ -1557,7 +1649,7 @@ func injectCloudConfigCompletion(content, completeURL, hostname string, complete
 		}
 		escaped := strings.ReplaceAll(completeURL, `"`, `\"`)
 		callback := fmt.Sprintf(
-			`sh -c 'for i in $(seq 1 %d); do IP=$(hostname -I 2>/dev/null | awk "{print \$1}"); DEV=$(ip -o route get 1 2>/dev/null | awk "{for(i=1;i<=NF;i++){if(\$i==\"dev\"){print \$(i+1);exit}}}"); MAC=$(cat /sys/class/net/${DEV}/address 2>/dev/null); curl -fsS -X POST -H "Content-Type: application/json" -d "{\"token\":\"%s\",\"type\":\"%s\",\"ip\":\"${IP}\",\"mac\":\"${MAC}\"}" "%s" && exit 0; curl -fsS -X POST "%s" && exit 0; sleep 2; done; true'`,
+			`sh -c 'for i in $(seq 1 %d); do IP=$(hostname -I 2>/dev/null | awk "{print \$1}"); DEV=$(ip -o route get 1 2>/dev/null | awk "{for(i=1;i<=NF;i++){if(\$i==\"dev\"){print \$(i+1);exit}}}"); MAC=$(cat /sys/class/net/${DEV}/address 2>/dev/null); curl -fsS --connect-timeout 5 --max-time 15 -X POST -H "Content-Type: application/json" -d "{\"token\":\"%s\",\"type\":\"%s\",\"ip\":\"${IP}\",\"mac\":\"${MAC}\"}" "%s" && exit 0; curl -fsS --connect-timeout 5 --max-time 15 -X POST "%s" && exit 0; sleep 2; done; true'`,
 			completeRetries, "__TOKEN__", "__TYPE__", escaped, escaped,
 		)
 		// Replace token/type placeholders with actual values parsed from completeURL.
@@ -2151,6 +2243,9 @@ func injectHostNetworkConfig(cloudConfig string, h node.Node, osFamily, pxeBaseU
 	if isNetworkManagerOSFamily(osFamily) {
 		return injectNetworkManagerConfigForHost(cloudConfig, h, osFamily, spec)
 	}
+	if _, ok := h.(*vm.VirtualMachine); ok && isDebianOSFamily(osFamily) {
+		return injectDebianIfupdownConfigForHost(cloudConfig, h, spec)
+	}
 	return injectNetplanConfigForHost(cloudConfig, h, osFamily, pxeBaseURL, spec)
 }
 
@@ -2164,6 +2259,118 @@ func injectBridgedHostNetworkConfig(cloudConfig string, m *machine.Machine, osFa
 type networkManagerConnectionFile struct {
 	path    string
 	content string
+}
+
+func injectDebianIfupdownConfigForHost(cloudConfig string, h node.Node, spec *subnet.SubnetSpec) string {
+	if h == nil {
+		return cloudConfig
+	}
+	ip := ""
+	if h.GetIPAssignment() == resource.IPAssignmentStatic {
+		ip = h.StaticIP()
+	}
+	mac := strings.TrimSpace(h.PrimaryMAC())
+	if ip == "" && mac == "" {
+		return cloudConfig
+	}
+	trimmed := strings.TrimSpace(cloudConfig)
+	if trimmed == "" {
+		trimmed = "#cloud-config\n{}"
+	}
+	cfg := map[string]any{}
+	if err := yaml.Unmarshal([]byte(trimmed), &cfg); err != nil {
+		return cloudConfig
+	}
+
+	writeFiles := []any{}
+	if existing, ok := cfg["write_files"].([]any); ok {
+		writeFiles = existing
+	}
+	writeFiles = append(writeFiles, map[string]any{
+		"path":        "/usr/local/sbin/gomi-apply-debian-ifupdown",
+		"content":     debianIfupdownApplyScript(mac, ip, spec),
+		"permissions": "0755",
+	})
+	cfg["write_files"] = writeFiles
+
+	runCmd := []any{}
+	if existing, ok := cfg["runcmd"].([]any); ok {
+		runCmd = existing
+	}
+	runCmd = append([]any{"/usr/local/sbin/gomi-apply-debian-ifupdown"}, runCmd...)
+	cfg["runcmd"] = runCmd
+
+	raw, err := yaml.Marshal(cfg)
+	if err != nil {
+		return cloudConfig
+	}
+	return "#cloud-config\n" + string(raw)
+}
+
+func debianIfupdownApplyScript(mac, ip string, spec *subnet.SubnetSpec) string {
+	prefixLen := subnetPrefixLen(spec)
+	gateway := subnetGateway(spec)
+	nameservers := strings.Join(subnetNameServers(spec), " ")
+	return fmt.Sprintf(`#!/bin/sh
+set -eu
+
+target_mac=%s
+target_ip=%s
+prefix_len=%s
+gateway=%s
+nameservers=%s
+
+iface=""
+for path in /sys/class/net/*; do
+	[ -e "$path/address" ] || continue
+	if [ "$(tr '[:upper:]' '[:lower:]' < "$path/address")" = "$target_mac" ]; then
+		iface=${path##*/}
+		break
+	fi
+done
+[ -n "$iface" ] || exit 1
+
+mkdir -p /etc/network/interfaces.d
+if [ -n "$target_ip" ]; then
+	cat >/etc/network/interfaces.d/99-gomi.cfg <<EOF
+auto $iface
+allow-hotplug $iface
+iface $iface inet static
+    address $target_ip/$prefix_len
+EOF
+	if [ -n "$gateway" ]; then
+		printf '    gateway %%s\n' "$gateway" >>/etc/network/interfaces.d/99-gomi.cfg
+	fi
+	if [ -n "$nameservers" ]; then
+		printf '    dns-nameservers %%s\n' "$nameservers" >>/etc/network/interfaces.d/99-gomi.cfg
+		: >/etc/resolv.conf
+		for ns in $nameservers; do
+			printf 'nameserver %%s\n' "$ns" >>/etc/resolv.conf
+		done
+	fi
+	ip link set "$iface" up
+	ip addr flush dev "$iface" || true
+	ip addr add "$target_ip/$prefix_len" dev "$iface"
+	if [ -n "$gateway" ]; then
+		ip route replace default via "$gateway" dev "$iface"
+	fi
+else
+	cat >/etc/network/interfaces.d/99-gomi.cfg <<EOF
+auto $iface
+allow-hotplug $iface
+iface $iface inet dhcp
+EOF
+	if command -v dhclient >/dev/null 2>&1; then
+		dhclient -v "$iface" || true
+	fi
+fi
+
+systemctl unmask networking.service 2>/dev/null || true
+systemctl enable networking.service 2>/dev/null || true
+systemctl restart networking.service 2>/dev/null || true
+ip addr show "$iface" || true
+ip route show || true
+`, shellQuote(strings.ToLower(strings.TrimSpace(mac))), shellQuote(strings.TrimSpace(ip)), shellQuote(fmt.Sprint(prefixLen)), shellQuote(gateway), shellQuote(nameservers))
 }
 
 func injectNetworkManagerConfigForHost(cloudConfig string, h node.Node, osFamily string, spec *subnet.SubnetSpec) string {
@@ -2379,14 +2586,25 @@ func netplanActivationCommands(osFamily string) []any {
 	if isDebianOSFamily(osFamily) {
 		return append(cmds, "/usr/local/sbin/gomi-apply-netplan-networkd")
 	}
+	if isUbuntuOSFamily(osFamily) {
+		cmds = append(cmds,
+			"systemctl enable --now systemd-networkd.service systemd-networkd.socket",
+			"netplan apply",
+		)
+	} else {
+		cmds = append(cmds, "netplan apply")
+	}
 	return append(cmds,
-		"netplan apply",
 		"systemctl disable --now systemd-networkd-wait-online.service 2>/dev/null || true; systemctl reset-failed systemd-networkd-wait-online.service 2>/dev/null || true",
 	)
 }
 
 func isDebianOSFamily(osFamily string) bool {
 	return strings.EqualFold(strings.TrimSpace(osFamily), "debian")
+}
+
+func isUbuntuOSFamily(osFamily string) bool {
+	return strings.EqualFold(strings.TrimSpace(osFamily), "ubuntu")
 }
 
 func supportsNetplanOSFamily(osFamily string) bool {

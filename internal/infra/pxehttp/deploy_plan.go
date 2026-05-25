@@ -831,6 +831,8 @@ func (h *Handler) buildDiskImageDeployResponse(base, token, attemptID string, m 
 	deploy := &diskImageDeployResponse{
 		ImageURL:            appendProvisionQuery(imageURL, token, attemptID),
 		Format:              string(osimage.FormatQCOW2),
+		OSFamily:            img.OSFamily,
+		OSVersion:           img.OSVersion,
 		TargetDisk:          selectedDisk.Path,
 		RootPartitionNumber: img.Manifest.Root.RootPartition.Number,
 		SeedURL:             fmt.Sprintf("%s/nocloud/%s", strings.TrimRight(base, "/"), macToken(m.MAC)),
