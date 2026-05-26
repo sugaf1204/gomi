@@ -310,3 +310,61 @@ func TestBuildCurtinInstallConfigRejectsNotReadyManifestImage(t *testing.T) {
 		t.Fatalf("expected not-ready error for manifest image, got %v", err)
 	}
 }
+
+func TestBuildCurtinInstallConfigRejectsUnsupportedOSFamily(t *testing.T) {
+	now := time.Now().UTC()
+	img := osimage.OSImage{
+		Name:      "rocky-9-amd64-baremetal",
+		OSFamily:  "rocky",
+		OSVersion: "9",
+		Arch:      "amd64",
+		Format:    osimage.FormatSquashFS,
+		Source:    osimage.SourceURL,
+		Ready:     true,
+		Manifest: &osimage.Manifest{
+			Root: osimage.RootArtifact{
+				Format: osimage.FormatSquashFS,
+				Path:   "rootfs.squashfs",
+			},
+		},
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	target := &machine.Machine{
+		Name:     "bm-rocky-squashfs-plan",
+		Hostname: "bm-rocky-squashfs-plan",
+		MAC:      "52:54:00:aa:bb:15",
+		Arch:     "amd64",
+		Firmware: machine.FirmwareUEFI,
+		Phase:    machine.PhaseProvisioning,
+		Provision: &machine.ProvisionProgress{
+			Active:          true,
+			AttemptID:       "attempt-rocky-squashfs-plan",
+			CompletionToken: "token-rocky-squashfs-plan",
+		},
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	info := &hwinfo.HardwareInfo{
+		MachineName: target.Name,
+		AttemptID:   "attempt-rocky-squashfs-plan",
+		Disks: []hwinfo.DiskInfo{
+			{
+				Name:   "vda",
+				Path:   "/dev/vda",
+				Type:   "disk",
+				SizeMB: 32768,
+			},
+		},
+	}
+	e := echo.New()
+	req := httptest.NewRequest(http.MethodGet, "/pxe/curtin-config?token=token-rocky-squashfs-plan&attempt_id=attempt-rocky-squashfs-plan", nil)
+	req.Host = "192.168.2.254:8080"
+	c := e.NewContext(req, httptest.NewRecorder())
+
+	h := &Handler{}
+	_, err := h.buildCurtinInstallConfig(context.Background(), c, target, img, info)
+	if err == nil || !strings.Contains(err.Error(), "unsupported OS family for squashfs curtin deploy: rocky") {
+		t.Fatalf("expected unsupported OS family error for rocky, got %v", err)
+	}
+}

@@ -25,7 +25,7 @@ type osInstallCapability struct {
 	SkipUEFIGrubInstall  bool
 }
 
-func installCapabilityForOSFamily(osFamily string) osInstallCapability {
+func installCapabilityForOSFamily(osFamily string) (osInstallCapability, error) {
 	family := strings.ToLower(strings.TrimSpace(osFamily))
 	switch family {
 	case "fedora":
@@ -43,7 +43,7 @@ func installCapabilityForOSFamily(osFamily string) osInstallCapability {
 			CopyEFIToFallback:    true,
 			EmbedBIOSBootstrap:   true,
 			SkipUEFIGrubInstall:  true,
-		}
+		}, nil
 	case "debian", "ubuntu":
 		return osInstallCapability{
 			Family:              family,
@@ -53,21 +53,11 @@ func installCapabilityForOSFamily(osFamily string) osInstallCapability {
 			GrubConfigPath:      "/boot/grub/grub.cfg",
 			BootloaderID:        family,
 			InstallRemovableEFI: true,
-		}
+		}, nil
+	case "":
+		return osInstallCapability{}, fmt.Errorf("osFamily is required for squashfs curtin deploy")
 	default:
-		id := family
-		if id == "" {
-			id = "linux"
-		}
-		return osInstallCapability{
-			Family:              family,
-			RootFilesystem:      "ext4",
-			GrubInstallCommand:  "grub-install",
-			GrubMkconfigCommand: "grub-mkconfig",
-			GrubConfigPath:      "/boot/grub/grub.cfg",
-			BootloaderID:        id,
-			InstallRemovableEFI: true,
-		}
+		return osInstallCapability{}, fmt.Errorf("unsupported OS family for squashfs curtin deploy: %s", family)
 	}
 }
 

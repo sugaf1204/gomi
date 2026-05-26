@@ -101,7 +101,10 @@ func (h *Handler) buildCurtinInstallConfig(ctx context.Context, c echo.Context, 
 
 	var storageConfig *curtinStorage
 	stages := []string{"early", "partitioning", "network", "extract", "late"}
-	capability := installCapabilityForOSFamily(img.OSFamily)
+	capability, err := installCapabilityForOSFamily(img.OSFamily)
+	if err != nil {
+		return "", err
+	}
 	rootFilesystem, err := rootFilesystemForImage(img, capability)
 	if err != nil {
 		return "", err
