@@ -72,10 +72,10 @@ func (b *Backend) HypervisorTokens() *RegTokenStore {
 	return &RegTokenStore{b: b}
 }
 func (b *Backend) AgentTokens() *AgentTokenStore { return &AgentTokenStore{b: b} }
-func (b *Backend) VMs() *VMStore             { return &VMStore{b: b} }
-func (b *Backend) CloudInits() *CloudInitStore { return &CloudInitStore{b: b} }
-func (b *Backend) OSImages() *OSImageStore     { return &OSImageStore{b: b} }
-func (b *Backend) DHCPLeases() *DHCPLeaseStore { return &DHCPLeaseStore{b: b} }
+func (b *Backend) VMs() *VMStore                 { return &VMStore{b: b} }
+func (b *Backend) CloudInits() *CloudInitStore   { return &CloudInitStore{b: b} }
+func (b *Backend) OSImages() *OSImageStore       { return &OSImageStore{b: b} }
+func (b *Backend) DHCPLeases() *DHCPLeaseStore   { return &DHCPLeaseStore{b: b} }
 
 // Query helpers that apply dialect-specific placeholder rebinding.
 
