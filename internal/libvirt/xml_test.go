@@ -133,8 +133,11 @@ func TestGenerateDomainXML_SATADisk(t *testing.T) {
 	if !strings.Contains(xmlStr, `dev="sda"`) {
 		t.Error("expected sda disk target for sata root disk")
 	}
-	if !strings.Contains(xmlStr, `dev="sdb"`) {
-		t.Error("expected cloud-init cdrom to avoid sata root disk target")
+	if !strings.Contains(xmlStr, `dev="vdb"`) || !strings.Contains(xmlStr, `bus="virtio"`) {
+		t.Error("expected cloud-init seed to be attached as virtio vdb")
+	}
+	if !strings.Contains(xmlStr, `<readonly>`) {
+		t.Error("expected cloud-init seed disk to be read-only")
 	}
 }
 

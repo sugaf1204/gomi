@@ -83,6 +83,7 @@ type xmlDevices struct {
 	Controllers []xmlController `xml:"controller,omitempty"`
 	Disks       []xmlDisk       `xml:"disk"`
 	Interfaces  []xmlInterface  `xml:"interface"`
+	Serial      *xmlSerial      `xml:"serial,omitempty"`
 	Console     *xmlConsole     `xml:"console,omitempty"`
 	Graphics    xmlGraphics     `xml:"graphics"`
 }
@@ -93,11 +94,12 @@ type xmlController struct {
 }
 
 type xmlDisk struct {
-	Type   string        `xml:"type,attr"`
-	Device string        `xml:"device,attr"`
-	Driver xmlDriver     `xml:"driver"`
-	Source xmlDiskSource `xml:"source"`
-	Target xmlDiskTarget `xml:"target"`
+	Type     string        `xml:"type,attr"`
+	Device   string        `xml:"device,attr"`
+	Driver   xmlDriver     `xml:"driver"`
+	Source   xmlDiskSource `xml:"source"`
+	Target   xmlDiskTarget `xml:"target"`
+	ReadOnly *struct{}     `xml:"readonly,omitempty"`
 }
 
 type xmlDriver struct {
@@ -141,7 +143,28 @@ type xmlModel struct {
 }
 
 type xmlConsole struct {
+	Type   string           `xml:"type,attr"`
+	Target xmlConsoleTarget `xml:"target"`
+}
+
+type xmlSerial struct {
+	Type   string          `xml:"type,attr"`
+	Target xmlSerialTarget `xml:"target"`
+}
+
+type xmlSerialTarget struct {
+	Type  string          `xml:"type,attr"`
+	Port  int             `xml:"port,attr"`
+	Model *xmlSerialModel `xml:"model,omitempty"`
+}
+
+type xmlSerialModel struct {
+	Name string `xml:"name,attr"`
+}
+
+type xmlConsoleTarget struct {
 	Type string `xml:"type,attr"`
+	Port int    `xml:"port,attr"`
 }
 
 type xmlGraphics struct {
@@ -245,16 +268,13 @@ func GenerateDomainXML(cfg DomainConfig) (string, error) {
 
 	// Cloud-init ISO (if provided).
 	if cfg.CloudInit != "" {
-		cloudInitTarget := "sda"
-		if diskTarget == "sda" {
-			cloudInitTarget = "sdb"
-		}
 		ciDisk := xmlDisk{
-			Type:   "file",
-			Device: "cdrom",
-			Driver: xmlDriver{Name: "qemu", Type: "raw"},
-			Source: xmlDiskSource{File: cfg.CloudInit},
-			Target: xmlDiskTarget{Dev: cloudInitTarget, Bus: "sata"},
+			Type:     "file",
+			Device:   "disk",
+			Driver:   xmlDriver{Name: "qemu", Type: "raw"},
+			Source:   xmlDiskSource{File: cfg.CloudInit},
+			Target:   xmlDiskTarget{Dev: "vdb", Bus: "virtio"},
+			ReadOnly: &struct{}{},
 		}
 		domain.Devices.Disks = append(domain.Devices.Disks, ciDisk)
 	}
@@ -280,6 +300,18 @@ func GenerateDomainXML(cfg DomainConfig) (string, error) {
 	}
 
 	// Graphics.
+	domain.Devices.Serial = &xmlSerial{
+		Type: "pty",
+		Target: xmlSerialTarget{
+			Type:  "isa-serial",
+			Port:  0,
+			Model: &xmlSerialModel{Name: "isa-serial"},
+		},
+	}
+	domain.Devices.Console = &xmlConsole{
+		Type:   "pty",
+		Target: xmlConsoleTarget{Type: "serial", Port: 0},
+	}
 	domain.Devices.Graphics = xmlGraphics{
 		Type:     "vnc",
 		Port:     "-1",

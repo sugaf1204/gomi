@@ -45,6 +45,27 @@ func TestGenerateDomainXML_BasicDomain(t *testing.T) {
 	if domain.VCPU != 2 {
 		t.Errorf("vcpu = %d, want %d", domain.VCPU, 2)
 	}
+	if domain.Devices.Serial == nil {
+		t.Fatalf("expected serial console device")
+	}
+	if domain.Devices.Serial.Type != "pty" {
+		t.Errorf("serial type = %q, want %q", domain.Devices.Serial.Type, "pty")
+	}
+	if domain.Devices.Serial.Target.Type != "isa-serial" || domain.Devices.Serial.Target.Port != 0 {
+		t.Errorf("serial target = %+v, want isa-serial port 0", domain.Devices.Serial.Target)
+	}
+	if domain.Devices.Serial.Target.Model == nil || domain.Devices.Serial.Target.Model.Name != "isa-serial" {
+		t.Errorf("serial model = %+v, want isa-serial", domain.Devices.Serial.Target.Model)
+	}
+	if domain.Devices.Console == nil {
+		t.Fatalf("expected console device")
+	}
+	if domain.Devices.Console.Type != "pty" {
+		t.Errorf("console type = %q, want %q", domain.Devices.Console.Type, "pty")
+	}
+	if domain.Devices.Console.Target.Type != "serial" || domain.Devices.Console.Target.Port != 0 {
+		t.Errorf("console target = %+v, want serial port 0", domain.Devices.Console.Target)
+	}
 
 	// Verify OS.
 	if domain.OS.Type.Value != "hvm" {
@@ -99,14 +120,20 @@ func TestGenerateDomainXML_WithCloudInit(t *testing.T) {
 		t.Fatalf("generated XML is not valid: %v", err)
 	}
 
-	// Should have 2 disks: OS image + cloud-init ISO.
+	// Should have 2 disks: OS image + read-only NoCloud seed disk.
 	if len(domain.Devices.Disks) != 2 {
 		t.Fatalf("expected 2 disks, got %d", len(domain.Devices.Disks))
 	}
 
 	ciDisk := domain.Devices.Disks[1]
-	if ciDisk.Device != "cdrom" {
-		t.Errorf("cloud-init disk device = %q, want %q", ciDisk.Device, "cdrom")
+	if ciDisk.Device != "disk" {
+		t.Errorf("cloud-init disk device = %q, want %q", ciDisk.Device, "disk")
+	}
+	if ciDisk.Target.Dev != "vdb" || ciDisk.Target.Bus != "virtio" {
+		t.Errorf("cloud-init target = %+v, want vdb virtio", ciDisk.Target)
+	}
+	if ciDisk.ReadOnly == nil {
+		t.Errorf("cloud-init seed disk must be read-only")
 	}
 	if ciDisk.Source.File != "/var/lib/libvirt/images/ci-vm-cidata.iso" {
 		t.Errorf("cloud-init source = %q, want %q", ciDisk.Source.File, "/var/lib/libvirt/images/ci-vm-cidata.iso")
@@ -378,9 +405,16 @@ func TestGenerateDomainXML_ContainsExpectedElements(t *testing.T) {
 		`dev="vda"`,
 		`bus="virtio"`,
 		`file="/images/cidata.iso"`,
-		`device="cdrom"`,
+		`device="disk"`,
+		`dev="vdb"`,
+		`<readonly>`,
 		`bridge="virbr0"`,
 		`address="52:54:00:de:ad:01"`,
+		`<serial type="pty">`,
+		`<target type="isa-serial" port="0">`,
+		`<model name="isa-serial">`,
+		`<console type="pty">`,
+		`<target type="serial" port="0">`,
 		`type="vnc"`,
 	}
 
@@ -388,9 +422,6 @@ func TestGenerateDomainXML_ContainsExpectedElements(t *testing.T) {
 		if !strings.Contains(xmlStr, frag) {
 			t.Errorf("XML does not contain expected fragment %q\nXML:\n%s", frag, xmlStr)
 		}
-	}
-	if strings.Contains(xmlStr, `<console`) || strings.Contains(xmlStr, `<serial`) {
-		t.Errorf("XML should not define PTY console or serial by default\nXML:\n%s", xmlStr)
 	}
 }
 

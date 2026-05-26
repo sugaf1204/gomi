@@ -229,13 +229,80 @@ func TestPXENocloudUserData_MachineLoginUserPasswordEnablesSSHPWAuth(t *testing.
 		"plain_text_passwd: gomi",
 		"lock_passwd: false",
 		"ssh_pwauth: true",
+		"chpasswd:",
+		"expire: false",
+		"name: gomi",
+		"password: gomi",
+		"type: text",
 	} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("expected %q in user-data, got: %s", want, body)
 		}
 	}
-	if strings.Contains(body, "chpasswd:") {
-		t.Fatalf("password login should use users.plain_text_passwd, not deprecated chpasswd.list: %s", body)
+}
+
+func TestPXENocloudUserData_PreservesTemplateChpasswdWithoutLoginPassword(t *testing.T) {
+	backend := memory.New()
+	vmSvc := vm.NewService(backend.VMs())
+	now := time.Now().UTC()
+	target := vm.VirtualMachine{
+		Name:          "vm-template-password",
+		HypervisorRef: "hv-01",
+		Resources:     vm.ResourceSpec{CPUCores: 2, MemoryMB: 2048, DiskGB: 20},
+		InstallCfg: &vm.InstallConfig{
+			Type: vm.InstallConfigCurtin,
+			Inline: `#cloud-config
+hostname: vm-template-password
+chpasswd:
+  expire: false
+  users:
+    - name: template-user
+      password: template-pass
+      type: text
+`,
+		},
+		Phase: vm.PhaseProvisioning,
+		Provisioning: vm.ProvisioningStatus{
+			Active:          true,
+			CompletionToken: "token-template-password",
+		},
+		NetworkInterfaces: []vm.NetworkInterfaceStatus{
+			{MAC: "52:54:00:aa:bb:ce"},
+		},
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	if err := backend.VMs().Upsert(context.Background(), target); err != nil {
+		t.Fatalf("upsert vm: %v", err)
+	}
+
+	e := echo.New()
+	req := httptest.NewRequest(http.MethodGet, "/pxe/nocloud/525400aabbce/user-data", nil)
+	req.Host = "192.168.2.254:8080"
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+	c.SetParamNames("mac")
+	c.SetParamValues("525400aabbce")
+
+	h := &Handler{vms: vmSvc}
+	if err := h.PXENocloudUserData(c); err != nil {
+		t.Fatalf("PXENocloudUserData: %v", err)
+	}
+	if rec.Code != http.StatusOK {
+		t.Fatalf("unexpected status: %d", rec.Code)
+	}
+	body := rec.Body.String()
+	for _, want := range []string{
+		"chpasswd:",
+		"expire: false",
+		"name: template-user",
+		"password: template-pass",
+		"type: text",
+		"ssh_pwauth: false",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("expected %q in user-data, got: %s", want, body)
+		}
 	}
 }
 
