@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"encoding/xml"
 	"fmt"
-	"strconv"
 )
 
 // xmlDomain represents a minimal libvirt domain XML structure.
@@ -294,38 +293,4 @@ func GenerateDomainXML(cfg DomainConfig) (string, error) {
 		return "", fmt.Errorf("xml encode: %w", err)
 	}
 	return buf.String(), nil
-}
-
-// graphicsXMLDesc is used to parse VNC/SPICE graphics information from domain XML.
-type graphicsXMLDesc struct {
-	Devices struct {
-		Graphics []struct {
-			Type   string `xml:"type,attr"`
-			Port   string `xml:"port,attr"`
-			Listen string `xml:"listen,attr"`
-		} `xml:"graphics"`
-	} `xml:"devices"`
-}
-
-// parseDomainGraphicsFromXML extracts VNC graphics connection info from a domain XML description.
-func parseDomainGraphicsFromXML(raw string) (*GraphicsInfo, error) {
-	var desc graphicsXMLDesc
-	if err := xml.Unmarshal([]byte(raw), &desc); err != nil {
-		return nil, fmt.Errorf("parse domain xml: %w", err)
-	}
-	for _, g := range desc.Devices.Graphics {
-		if g.Type != "vnc" {
-			continue
-		}
-		port, err := strconv.Atoi(g.Port)
-		if err != nil || port < 0 {
-			return nil, fmt.Errorf("invalid vnc port: %s", g.Port)
-		}
-		return &GraphicsInfo{
-			Type:   g.Type,
-			Port:   port,
-			Listen: g.Listen,
-		}, nil
-	}
-	return nil, fmt.Errorf("no vnc graphics found in domain xml")
 }
