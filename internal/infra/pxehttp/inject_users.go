@@ -74,6 +74,18 @@ func (h *Handler) injectSSHKeysAndLoginUser(ctx context.Context, cloudConfig str
 	}
 
 	cfg["ssh_pwauth"] = provision.LoginUserPasswordConfigured(loginUser)
+	if provision.LoginUserPasswordConfigured(loginUser) {
+		cfg["chpasswd"] = map[string]any{
+			"expire": false,
+			"users": []map[string]string{{
+				"name":     strings.TrimSpace(loginUser.Username),
+				"password": strings.TrimSpace(loginUser.Password),
+				"type":     "text",
+			}},
+		}
+	} else {
+		delete(cfg, "chpasswd")
+	}
 
 	if len(pubKeys) > 0 && !provision.LoginUserConfigured(loginUser) {
 		// Top-level ssh_authorized_keys is applied by cloud-init to the

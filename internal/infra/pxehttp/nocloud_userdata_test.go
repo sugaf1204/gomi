@@ -229,13 +229,15 @@ func TestPXENocloudUserData_MachineLoginUserPasswordEnablesSSHPWAuth(t *testing.
 		"plain_text_passwd: gomi",
 		"lock_passwd: false",
 		"ssh_pwauth: true",
+		"chpasswd:",
+		"expire: false",
+		"name: gomi",
+		"password: gomi",
+		"type: text",
 	} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("expected %q in user-data, got: %s", want, body)
 		}
-	}
-	if strings.Contains(body, "chpasswd:") {
-		t.Fatalf("password login should use users.plain_text_passwd, not deprecated chpasswd.list: %s", body)
 	}
 }
 
