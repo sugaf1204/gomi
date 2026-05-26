@@ -1,15 +1,34 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import clsx from 'clsx'
-import { api } from '../../api'
-import { formatDate, phaseClass } from '../../lib/formatters'
 import { supportsDeploymentTarget } from '../../lib/osImages'
 import { usePersistentStringState } from '../../hooks/usePersistentStringState'
-import { VMConsolePanel } from './VMConsolePanel'
 import type { CloudInitTemplate, Hypervisor, OSImage, SSHKey, Subnet, VirtualMachine } from '../../types'
-import { SSHAccessFieldset } from './SSHAccessFieldset'
-import { ModalOverlay } from '../ui/ModalOverlay'
-
-type CloudInitInputMode = 'none' | 'existing' | 'create'
+import { VMConfigFields } from './virtual-machines/VMConfigFields'
+import { VMActionDialogs } from './virtual-machines/VMActionDialogs'
+import { VMEditDialogs } from './virtual-machines/VMEditDialogs'
+import { VMQuickDeployDialog } from './virtual-machines/VMQuickDeployDialog'
+import { VMWorkspace } from './virtual-machines/VMWorkspace'
+import { useVirtualMachineOperations } from './virtual-machines/useVirtualMachineOperations'
+import {
+  initialBulkRedeployConfirm,
+  initialDeleteConfirm,
+  initialForm,
+  initialMigrateConfirm,
+  initialPowerConfirm,
+  initialReinstallForm,
+  QUICK_DEPLOY_STORAGE_KEY,
+  readQuickDeployPreset,
+  VM_SELECTION_STORAGE_KEY
+} from './virtual-machines/vmFormState'
+import type {
+  QuickDeployPreset,
+  VMConfigForm,
+  VMBulkRedeployConfirmState,
+  VMDeleteConfirmState,
+  VMMigrateConfirmState,
+  VMPowerConfirmState,
+  VMReinstallForm,
+  UpdateVMConfigForm
+} from './virtual-machines/vmFormState'
 
 export type VirtualMachinesViewProps = {
   virtualMachines: VirtualMachine[]
@@ -23,310 +42,6 @@ export type VirtualMachinesViewProps = {
   routeSelectedVM: string
   onRouteSelectedVMChange: (value: string) => void
   onRefresh: () => void | Promise<void>
-}
-
-type VMConfigForm = {
-  hypervisorRef: string
-  cpuCores: string
-  memoryMB: string
-  diskGB: string
-  osImageRef: string
-  cloudInitMode: CloudInitInputMode
-  cloudInitExistingRef: string
-  cloudInitTemplateName: string
-  cloudInitUserData: string
-  cpuMode: '' | 'host-passthrough' | 'host-model' | 'maximum'
-  diskDriver: string
-  diskFormat: string
-  ioThreads: string
-  netMultiqueue: string
-  cpuPinning: string
-  subnetRef: string
-  domain: string
-  ipAssignment: 'dhcp' | 'static'
-  staticIP: string
-  bridge: string
-  sshKeyRefs: string[]
-  loginUserUsername: string
-  loginUserPassword: string
-  loginUserPasswordTouched: boolean
-}
-
-type VMForm = VMConfigForm & {
-  name: string
-  count: string
-}
-
-type VMReinstallForm = VMConfigForm
-
-type QuickDeployPreset = {
-  name: string
-  count: string
-  hypervisorRef: string
-  cpuCores: string
-  memoryMB: string
-  diskGB: string
-  osImageRef: string
-  subnetRef: string
-  bridge: string
-  ipAssignment: 'dhcp'
-  cloudInitRefs: string[]
-  sshKeyRefs: string[]
-  loginUserUsername: string
-  loginUserPassword: string
-}
-
-type UpdateVMConfigForm = (updater: (current: VMConfigForm) => VMConfigForm) => void
-
-type VMPowerAction = 'power-on' | 'power-off'
-type VMPrimaryAction = 'console' | 'power-on' | 'power-off' | 'redeploy' | 'migrate' | 'delete'
-
-type VMPowerConfirmState = {
-  open: boolean
-  action: VMPowerAction
-  targets: string[]
-  running: boolean
-}
-
-type VMDeleteConfirmState = {
-  open: boolean
-  targets: string[]
-  running: boolean
-}
-
-type VMBulkRedeployConfirmState = {
-  open: boolean
-  targets: string[]
-  activeTarget: string
-  forms: Record<string, VMReinstallForm>
-  advancedOpen: Record<string, boolean>
-  status: Record<string, { state: VMBulkRedeployTargetStatus; error?: string }>
-  running: boolean
-}
-
-type VMBulkRedeployTargetStatus = 'pending' | 'running' | 'succeeded' | 'failed'
-
-type VMMigrateConfirmState = {
-  open: boolean
-  vmName: string
-  targetHypervisor: string
-  running: boolean
-}
-
-const VM_SELECTION_STORAGE_KEY = 'gomi.virtual-machines.selected'
-const QUICK_DEPLOY_STORAGE_KEY = 'gomi.virtual-machines.quick-deploy-preset'
-
-const initialVMConfigForm: VMConfigForm = {
-  hypervisorRef: '',
-  cpuCores: '2',
-  memoryMB: '2048',
-  diskGB: '20',
-  osImageRef: '',
-  cloudInitMode: 'none',
-  cloudInitExistingRef: '',
-  cloudInitTemplateName: '',
-  cloudInitUserData: '',
-  cpuMode: '',
-  diskDriver: '',
-  diskFormat: '',
-  ioThreads: '',
-  netMultiqueue: '',
-  cpuPinning: '',
-  subnetRef: '',
-  domain: '',
-  ipAssignment: 'dhcp',
-  staticIP: '',
-  bridge: '',
-  sshKeyRefs: [],
-  loginUserUsername: '',
-  loginUserPassword: '',
-  loginUserPasswordTouched: false
-}
-
-const initialForm: VMForm = {
-  name: '',
-  count: '1',
-  ...initialVMConfigForm
-}
-
-const initialReinstallForm: VMReinstallForm = { ...initialVMConfigForm }
-
-const initialQuickDeployPreset: QuickDeployPreset = {
-  name: '',
-  count: '1',
-  hypervisorRef: '',
-  cpuCores: '2',
-  memoryMB: '2048',
-  diskGB: '20',
-  osImageRef: '',
-  subnetRef: '',
-  bridge: '',
-  ipAssignment: 'dhcp',
-  cloudInitRefs: [],
-  sshKeyRefs: [],
-  loginUserUsername: '',
-  loginUserPassword: ''
-}
-
-const initialPowerConfirm: VMPowerConfirmState = {
-  open: false,
-  action: 'power-on',
-  targets: [],
-  running: false
-}
-
-const initialDeleteConfirm: VMDeleteConfirmState = {
-  open: false,
-  targets: [],
-  running: false
-}
-
-const initialBulkRedeployConfirm: VMBulkRedeployConfirmState = {
-  open: false,
-  targets: [],
-  activeTarget: '',
-  forms: {},
-  advancedOpen: {},
-  status: {},
-  running: false
-}
-
-const initialMigrateConfirm: VMMigrateConfirmState = {
-  open: false,
-  vmName: '',
-  targetHypervisor: '',
-  running: false
-}
-
-function readQuickDeployPreset(): QuickDeployPreset {
-  if (typeof window === 'undefined') return initialQuickDeployPreset
-  try {
-    const raw = localStorage.getItem(QUICK_DEPLOY_STORAGE_KEY)
-    if (!raw) return initialQuickDeployPreset
-    const parsed = JSON.parse(raw) as Partial<QuickDeployPreset & { count: number }>
-    return {
-      ...initialQuickDeployPreset,
-      ...parsed,
-      name: typeof parsed.name === 'string' ? parsed.name : '',
-      count: String(parsed.count ?? '1'),
-      ipAssignment: 'dhcp',
-      loginUserPassword: '',
-      cloudInitRefs: Array.isArray(parsed.cloudInitRefs) ? parsed.cloudInitRefs.filter((ref): ref is string => typeof ref === 'string') : [],
-      sshKeyRefs: Array.isArray(parsed.sshKeyRefs) ? parsed.sshKeyRefs.filter((ref): ref is string => typeof ref === 'string') : []
-    }
-  } catch {
-    return initialQuickDeployPreset
-  }
-}
-
-function formatCPUPinning(cpuPinning?: Record<number, string>) {
-  if (!cpuPinning) return ''
-  return Object.entries(cpuPinning)
-    .sort(([left], [right]) => Number(left) - Number(right))
-    .map(([vcpu, cpuset]) => `${vcpu}:${cpuset}`)
-    .join(',')
-}
-
-function primaryCloudInitRef(vm: VirtualMachine): string {
-  if (vm.lastDeployedCloudInitRef && vm.lastDeployedCloudInitRef.trim().length > 0) {
-    return vm.lastDeployedCloudInitRef
-  }
-  return vm.cloudInitRefs?.[0] ?? vm.cloudInitRef ?? ''
-}
-
-function currentVMCloudInitRefs(vm?: VirtualMachine) {
-  const refs = vm?.cloudInitRefs?.map((ref) => ref.trim()).filter(Boolean) ?? []
-  const legacyRef = vm?.cloudInitRef?.trim() ?? ''
-  const primaryRef = vm ? primaryCloudInitRef(vm).trim() : ''
-  const ordered = primaryRef ? [primaryRef, ...refs] : refs
-  if (legacyRef) ordered.push(legacyRef)
-  return Array.from(new Set(ordered.filter(Boolean)))
-}
-
-function mergeSelectedCloudInitRef(selectedRef: string, currentRefs: string[]) {
-  const trimmedRef = selectedRef.trim()
-  if (!trimmedRef) return currentRefs
-  return [trimmedRef, ...currentRefs.filter((ref) => ref !== trimmedRef)]
-}
-
-function toReinstallForm(vm: VirtualMachine): VMReinstallForm {
-  const nic = vm.network?.[0]
-  const cloudInitRef = primaryCloudInitRef(vm)
-  return {
-    hypervisorRef: vm.hypervisorRef || '',
-    cpuCores: String(vm.resources.cpuCores || 2),
-    memoryMB: String(vm.resources.memoryMB || 2048),
-    diskGB: String(vm.resources.diskGB || 20),
-    osImageRef: vm.osImageRef || '',
-    cloudInitMode: cloudInitRef ? 'existing' : 'none',
-    cloudInitExistingRef: cloudInitRef,
-    cloudInitTemplateName: '',
-    cloudInitUserData: '',
-    cpuMode: vm.advancedOptions?.cpuMode || '',
-    diskDriver: vm.advancedOptions?.diskDriver || '',
-    diskFormat: vm.advancedOptions?.diskFormat || '',
-    ioThreads: vm.advancedOptions?.ioThreads ? String(vm.advancedOptions.ioThreads) : '',
-    netMultiqueue: vm.advancedOptions?.netMultiqueue ? String(vm.advancedOptions.netMultiqueue) : '',
-    cpuPinning: formatCPUPinning(vm.advancedOptions?.cpuPinning),
-    subnetRef: vm.subnetRef || nic?.network || '',
-    domain: vm.domain || '',
-    ipAssignment: vm.ipAssignment === 'static' ? 'static' : 'dhcp',
-    staticIP: nic?.ipAddress || '',
-    bridge: nic?.bridge || '',
-    sshKeyRefs: vm.sshKeyRefs ?? [],
-    loginUserUsername: vm.loginUser?.username || '',
-    loginUserPassword: '',
-    loginUserPasswordTouched: false
-  }
-}
-
-function parseCPUPinning(raw: string): Record<number, string> | undefined {
-  const trimmed = raw.trim()
-  if (!trimmed) return undefined
-  const result: Record<number, string> = {}
-  for (const pair of trimmed.split(',')) {
-    const [vcpu, cpuset] = pair.split(':').map((s) => s.trim())
-    const vcpuNum = Number(vcpu)
-    if (Number.isNaN(vcpuNum) || !cpuset) continue
-    result[vcpuNum] = cpuset
-  }
-  return Object.keys(result).length > 0 ? result : undefined
-}
-
-function buildAdvancedOptions(form: Pick<VMConfigForm, 'cpuMode' | 'diskDriver' | 'diskFormat' | 'ioThreads' | 'netMultiqueue' | 'cpuPinning'>): VirtualMachine['advancedOptions'] {
-  const cpuMode = form.cpuMode as '' | 'host-passthrough' | 'host-model' | 'maximum'
-  const diskDriver = form.diskDriver as 'virtio' | 'scsi' | ''
-  const diskFormat = form.diskFormat as 'qcow2' | ''
-  const ioThreads = Number(form.ioThreads) || 0
-  const netMultiqueue = Number(form.netMultiqueue) || 0
-  const cpuPinning = parseCPUPinning(form.cpuPinning)
-
-  if (!cpuMode && !diskDriver && !diskFormat && !ioThreads && !netMultiqueue && !cpuPinning) {
-    return undefined
-  }
-
-  return {
-    ...(cpuMode ? { cpuMode } : {}),
-    ...(diskDriver ? { diskDriver } : {}),
-    ...(diskFormat ? { diskFormat } : {}),
-    ...(ioThreads > 0 ? { ioThreads } : {}),
-    ...(netMultiqueue > 0 ? { netMultiqueue } : {}),
-    ...(cpuPinning ? { cpuPinning } : {})
-  }
-}
-
-function buildVMLoginUserPayload(
-  formState: Pick<VMConfigForm, 'loginUserUsername' | 'loginUserPassword' | 'loginUserPasswordTouched'>,
-  currentLoginUser?: VirtualMachine['loginUser']
-): VirtualMachine['loginUser'] | undefined {
-  const username = formState.loginUserUsername.trim()
-  const password = formState.loginUserPassword.trim()
-  if (!username) return undefined
-  if (currentLoginUser?.username === username && !password && !formState.loginUserPasswordTouched) return undefined
-  return {
-    username,
-    ...(password ? { password } : {})
-  }
 }
 
 export function VirtualMachinesView({
@@ -371,9 +86,62 @@ export function VirtualMachinesView({
   )
   const selectedVM = virtualMachines.find((vm) => vm.name === selected) ?? null
 
-  function notifyError(message: string) {
-    window.dispatchEvent(new CustomEvent('gomi:toast', { detail: { tone: 'error', message } }))
-  }
+  const {
+    quickDeployVMName,
+    quickDeployPresetReady,
+    handleCreate,
+    handleQuickDeploy,
+    handleDeleteConfirm,
+    handlePowerConfirm,
+    handleRedeploy,
+    updateBulkRedeployForm,
+    setBulkRedeployAdvancedOpen,
+    vmRedeployFormReady,
+    handleBulkRedeployConfirm,
+    handleMigrateConfirm,
+    runPrimaryAction,
+    toggleQuickDeployCloudInitRef,
+    toggleQuickDeploySSHKeyRef,
+    bridgePlaceholder
+  } = useVirtualMachineOperations({
+    form,
+    setForm,
+    setFormOpen,
+    setCreating,
+    quickDeployPreset,
+    setQuickDeployPreset,
+    setQuickDeploySettingsOpen,
+    setQuickDeploying,
+    reinstallForm,
+    setReinstallForm,
+    setReinstallOpen,
+    setReinstalling,
+    setReinstallAdvancedOpen,
+    powerConfirm,
+    setPowerConfirm,
+    deleteConfirm,
+    setDeleteConfirm,
+    bulkRedeployConfirm,
+    setBulkRedeployConfirm,
+    migrateConfirm,
+    setMigrateConfirm,
+    setAdvancedOpen,
+    setCheckedVMs,
+    selected,
+    setSelected,
+    selectedVM,
+    checkedNames,
+    virtualMachines,
+    vmOSImages,
+    osImages,
+    hypervisors,
+    subnets,
+    onVirtualMachineUpsert,
+    onRouteSelectedVMChange,
+    onRefresh,
+    setVMSelection,
+    setConsoleVM
+  })
 
   function setVMSelection(name: string) {
     setSelected(name)
@@ -392,17 +160,6 @@ export function VirtualMachinesView({
     const refs = vm.cloudInitRefs?.filter((ref) => ref.trim().length > 0) ?? []
     if (refs.length > 0) return refs.join(', ')
     return vm.cloudInitRef || '-'
-  }
-
-  function quickDeployVMName(preset: QuickDeployPreset): string {
-    return `${preset.name.trim()}-${Math.max(1, Number(preset.count) || 1)}`
-  }
-
-  function quickDeployPresetReady(preset: QuickDeployPreset): boolean {
-    if (!preset.name.trim()) return false
-    if ((Number(preset.count) || 0) < 1) return false
-    if (!preset.osImageRef.trim()) return false
-    return osImages.some((img) => img.name === preset.osImageRef)
   }
 
   function openQuickDeploySettings() {
@@ -475,161 +232,6 @@ export function VirtualMachinesView({
     }
   }, [actionsMenuOpen])
 
-  async function createInlineCloudInitTemplate(templateName: string, userData: string, description: string) {
-    const created = await api.createCloudInitTemplate({
-      name: templateName,
-      description,
-      userData
-    })
-    return created.name
-  }
-
-  async function resolveCloudInitRefs(formState: VMConfigForm, description: string, currentRefs: string[] = []) {
-    if (formState.cloudInitMode === 'none') return [] as string[]
-    if (formState.cloudInitMode === 'existing') {
-      const ref = formState.cloudInitExistingRef.trim()
-      return mergeSelectedCloudInitRef(ref, currentRefs)
-    }
-    const templateName = formState.cloudInitTemplateName.trim()
-    const userData = formState.cloudInitUserData.trim()
-    if (!templateName || !userData) {
-      throw new Error('Cloud-Init inline creation requires both template name and user-data')
-    }
-    const createdName = await createInlineCloudInitTemplate(
-      templateName,
-      userData,
-      description
-    )
-    return mergeSelectedCloudInitRef(createdName, currentRefs)
-  }
-
-  async function handleCreate(e: React.FormEvent) {
-    e.preventDefault()
-    if (!form.osImageRef) {
-      notifyError('qcow2 OS Image is required for VM deployment')
-      return
-    }
-    if (!vmOSImages.some((img) => img.name === form.osImageRef)) {
-      notifyError('VM deployment requires a vm-capable qcow2 OS Image')
-      return
-    }
-
-    setCreating(true)
-    try {
-      const count = Math.max(1, Math.min(50, Number(form.count) || 1))
-      const deployErrors: string[] = []
-      const cloudInitRefs = await resolveCloudInitRefs(form, 'Auto-generated from Create Virtual Machine dialog')
-
-      const vmNetwork = (form.bridge || form.staticIP || form.subnetRef)
-        ? [{ name: 'default', bridge: form.bridge || undefined, network: form.subnetRef || undefined, ipAddress: (form.ipAssignment === 'static' && form.staticIP) ? form.staticIP : undefined }]
-        : undefined
-
-      for (let i = 0; i < count; i++) {
-        const vmName = count === 1 ? form.name : `${form.name}-${i + 1}`
-        const advancedOptions = buildAdvancedOptions(form)
-        const result = await api.createVirtualMachine({
-          name: vmName,
-          hypervisorRef: form.hypervisorRef || '',
-          resources: {
-            cpuCores: Number(form.cpuCores) || 2,
-            memoryMB: Number(form.memoryMB) || 2048,
-            diskGB: Number(form.diskGB) || 20
-          },
-          osImageRef: form.osImageRef,
-          cloudInitRefs: cloudInitRefs.length > 0 ? cloudInitRefs : undefined,
-          powerControlMethod: 'libvirt',
-          ...(advancedOptions ? { advancedOptions } : {}),
-          ...(vmNetwork ? { network: vmNetwork } : {}),
-          ...(form.ipAssignment === 'static' ? { ipAssignment: 'static' as const } : {}),
-          ...(form.subnetRef ? { subnetRef: form.subnetRef } : {}),
-          ...(form.domain.trim() ? { domain: form.domain.trim() } : {}),
-          sshKeyRefs: form.sshKeyRefs,
-          ...(form.loginUserUsername.trim()
-            ? {
-                loginUser: {
-                  username: form.loginUserUsername.trim(),
-                  ...(form.loginUserPassword.trim() ? { password: form.loginUserPassword.trim() } : {})
-                }
-              }
-            : {})
-        })
-        if (result.phase === 'Error') {
-          deployErrors.push(`${vmName}: ${result.lastError || 'deploy failed'}`)
-        }
-      }
-
-      setForm({ ...initialForm })
-      setAdvancedOpen(false)
-      setFormOpen(false)
-      if (count === 1) {
-        setVMSelection(form.name)
-      }
-      void onRefresh()
-      if (deployErrors.length > 0) {
-        notifyError(`VM created but deploy failed: ${deployErrors.join('; ')}`)
-      }
-    } catch (err) {
-      notifyError(err instanceof Error ? err.message : 'Failed to create VM')
-    } finally {
-      setCreating(false)
-    }
-  }
-
-  async function handleQuickDeploy() {
-    const preset = quickDeployPreset
-    if (!quickDeployPresetReady(preset)) {
-      openQuickDeploySettings()
-      return
-    }
-
-    const vmName = quickDeployVMName(preset)
-    const vmNetwork = (preset.bridge || preset.subnetRef)
-      ? [{ name: 'default', bridge: preset.bridge || undefined, network: preset.subnetRef || undefined }]
-      : undefined
-
-    setQuickDeploying(true)
-    try {
-      const result = await api.createVirtualMachine({
-        name: vmName,
-        hypervisorRef: preset.hypervisorRef || '',
-        resources: {
-          cpuCores: Number(preset.cpuCores) || 2,
-          memoryMB: Number(preset.memoryMB) || 2048,
-          diskGB: Number(preset.diskGB) || 20
-        },
-        osImageRef: preset.osImageRef,
-        cloudInitRefs: preset.cloudInitRefs.length > 0 ? preset.cloudInitRefs : undefined,
-        powerControlMethod: 'libvirt',
-        ...(vmNetwork ? { network: vmNetwork } : {}),
-        ipAssignment: preset.ipAssignment,
-        ...(preset.subnetRef ? { subnetRef: preset.subnetRef } : {}),
-        sshKeyRefs: preset.sshKeyRefs,
-        ...(preset.loginUserUsername.trim()
-          ? {
-              loginUser: {
-                username: preset.loginUserUsername.trim(),
-                ...(preset.loginUserPassword.trim() ? { password: preset.loginUserPassword.trim() } : {})
-              }
-            }
-          : {})
-      })
-      onVirtualMachineUpsert(result)
-      setVMSelection(vmName)
-      setQuickDeployPreset((current) => ({
-        ...current,
-        count: String(Math.max(1, Number(current.count) || 1) + 1)
-      }))
-      void onRefresh()
-      if (result.phase === 'Error') {
-        notifyError(`VM created but deploy failed: ${result.lastError || 'deploy failed'}`)
-      }
-    } catch (err) {
-      notifyError(err instanceof Error ? err.message : 'Failed to quick deploy VM')
-    } finally {
-      setQuickDeploying(false)
-    }
-  }
-
   function toggleChecked(name: string) {
     setCheckedVMs((prev) => {
       const next = new Set(prev)
@@ -650,354 +252,6 @@ export function VirtualMachinesView({
     }
   }
 
-  function openDeleteDialog(targets: string[]) {
-    setDeleteConfirm({
-      open: true,
-      targets,
-      running: false
-    })
-  }
-
-  async function handleDeleteConfirm() {
-    if (deleteConfirm.targets.length === 0) return
-    const targets = [...deleteConfirm.targets]
-    setDeleteConfirm(initialDeleteConfirm)
-    try {
-      for (const target of targets) {
-        await api.deleteVirtualMachine(target)
-      }
-      if (targets.includes(selected)) {
-        setSelected('')
-        onRouteSelectedVMChange('')
-      }
-      setCheckedVMs((prev) => {
-        const next = new Set(prev)
-        for (const t of targets) next.delete(t)
-        return next
-      })
-      void onRefresh()
-    } catch (err) {
-      notifyError(err instanceof Error ? err.message : 'Failed to delete VM')
-    }
-  }
-
-  function openPowerConfirm(action: VMPowerAction, targets: string[]) {
-    setPowerConfirm({
-      open: true,
-      action,
-      targets,
-      running: false
-    })
-  }
-
-  async function handlePowerConfirm() {
-    if (powerConfirm.targets.length === 0) return
-    const action = powerConfirm.action
-    const targets = [...powerConfirm.targets]
-    setPowerConfirm(initialPowerConfirm)
-    try {
-      for (const target of targets) {
-        if (action === 'power-on') {
-          await api.vmPowerOn(target)
-        } else {
-          await api.vmPowerOff(target)
-        }
-      }
-      void onRefresh()
-    } catch (err) {
-      notifyError(err instanceof Error ? err.message : `Failed to ${action === 'power-on' ? 'power on' : 'power off'} VM`)
-    }
-  }
-
-  function openReinstallDialog(target: VirtualMachine) {
-    setReinstallForm(toReinstallForm(target))
-    setReinstallAdvancedOpen(Boolean(target.advancedOptions))
-    setReinstallOpen(true)
-  }
-
-  function buildVMNetworkPayload(formState: VMConfigForm, currentVM?: VirtualMachine): VirtualMachine['network'] | undefined {
-    const primaryNetwork = {
-      ...(currentVM?.network?.[0] ?? {}),
-      name: currentVM?.network?.[0]?.name || 'default',
-      bridge: formState.bridge || undefined,
-      network: formState.subnetRef || undefined,
-      ipAddress: formState.ipAssignment === 'static' && formState.staticIP ? formState.staticIP : undefined
-    }
-    if (currentVM?.network && currentVM.network.length > 0) {
-      return [primaryNetwork, ...currentVM.network.slice(1)]
-    }
-    if (formState.bridge || formState.staticIP || formState.subnetRef) {
-      return [primaryNetwork]
-    }
-    return undefined
-  }
-
-  async function buildVMRedeployPayload(formState: VMConfigForm, description: string, currentVM?: VirtualMachine) {
-    if (!formState.osImageRef) {
-      throw new Error('OS Image is required for redeploy')
-    }
-    if (formState.ipAssignment === 'static' && !formState.staticIP.trim()) {
-      throw new Error('Static IP is required when static assignment is selected')
-    }
-    if (!vmOSImages.some((img) => img.name === reinstallForm.osImageRef)) {
-      notifyError('VM deployment requires a vm-capable qcow2 OS Image')
-      return
-    }
-
-    const cloudInitRefs = await resolveCloudInitRefs(formState, description, currentVMCloudInitRefs(currentVM))
-    const vmNetwork = buildVMNetworkPayload(formState, currentVM)
-    const advancedOptions = buildAdvancedOptions(formState) ?? {}
-    const loginUser = buildVMLoginUserPayload(formState, currentVM?.loginUser)
-    const redeployPayload: Parameters<typeof api.vmRedeploy>[1] = {
-      hypervisorRef: formState.hypervisorRef || '',
-      resources: {
-        cpuCores: Number(formState.cpuCores) || 2,
-        memoryMB: Number(formState.memoryMB) || 2048,
-        diskGB: Number(formState.diskGB) || 20
-      },
-      osImageRef: formState.osImageRef,
-      cloudInitRefs,
-      ...(vmNetwork ? { network: vmNetwork } : {}),
-      ...(formState.subnetRef ? { subnetRef: formState.subnetRef } : { subnetRef: '' }),
-      domain: formState.domain.trim() || undefined,
-      advancedOptions,
-      ipAssignment: formState.ipAssignment,
-      ...(formState.ipAssignment === 'static' && formState.staticIP ? { ip: formState.staticIP } : { ip: '' }),
-      sshKeyRefs: formState.sshKeyRefs,
-      ...(loginUser ? { loginUser } : {})
-    }
-    return redeployPayload
-  }
-
-  async function handleRedeploy() {
-    if (!selectedVM) return
-
-    setReinstalling(true)
-    try {
-      const redeployPayload = await buildVMRedeployPayload(reinstallForm, 'Auto-generated from Redeploy Virtual Machine dialog', selectedVM)
-      const updated = await api.vmRedeploy(selectedVM.name, redeployPayload)
-      onVirtualMachineUpsert(updated)
-      setReinstallOpen(false)
-      void onRefresh()
-    } catch (err) {
-      notifyError(err instanceof Error ? err.message : 'Failed to redeploy VM')
-    } finally {
-      setReinstalling(false)
-    }
-  }
-
-  function openBulkRedeployDialog(targets: string[]) {
-    const sortedTargets = [...targets].sort()
-    if (sortedTargets.length === 0) return
-    const forms: Record<string, VMReinstallForm> = {}
-    const advancedState: Record<string, boolean> = {}
-    const status: VMBulkRedeployConfirmState['status'] = {}
-    for (const target of sortedTargets) {
-      const vm = virtualMachines.find((item) => item.name === target)
-      if (!vm) continue
-      forms[target] = toReinstallForm(vm)
-      advancedState[target] = Boolean(vm.advancedOptions)
-      status[target] = { state: 'pending' }
-    }
-    const availableTargets = sortedTargets.filter((target) => forms[target])
-    if (availableTargets.length === 0) return
-    setBulkRedeployConfirm({
-      open: true,
-      targets: availableTargets,
-      activeTarget: availableTargets[0],
-      forms,
-      advancedOpen: advancedState,
-      status,
-      running: false
-    })
-  }
-
-  function updateBulkRedeployForm(target: string, updater: (current: VMConfigForm) => VMConfigForm) {
-    setBulkRedeployConfirm((current) => {
-      const currentForm = current.forms[target]
-      if (!currentForm) return current
-      return {
-        ...current,
-        forms: {
-          ...current.forms,
-          [target]: updater(currentForm)
-        },
-        status: {
-          ...current.status,
-          [target]: { state: 'pending' }
-        }
-      }
-    })
-  }
-
-  function setBulkRedeployAdvancedOpen(target: string, value: boolean | ((current: boolean) => boolean)) {
-    setBulkRedeployConfirm((current) => {
-      const currentValue = current.advancedOpen[target] ?? false
-      return {
-        ...current,
-        advancedOpen: {
-          ...current.advancedOpen,
-          [target]: typeof value === 'function' ? value(currentValue) : value
-        }
-      }
-    })
-  }
-
-  function vmRedeployFormReady(formState: VMConfigForm) {
-    const cpuCores = Number(formState.cpuCores)
-    const memoryMB = Number(formState.memoryMB)
-    const diskGB = Number(formState.diskGB)
-
-    return Boolean(
-      formState.osImageRef
-      && Number.isFinite(cpuCores)
-      && cpuCores >= 1
-      && Number.isFinite(memoryMB)
-      && memoryMB > 0
-      && Number.isFinite(diskGB)
-      && diskGB >= 1
-      && (formState.ipAssignment !== 'static' || formState.staticIP.trim())
-      && (formState.cloudInitMode !== 'create' || (formState.cloudInitTemplateName.trim() && formState.cloudInitUserData.trim()))
-    )
-  }
-
-  async function handleBulkRedeployConfirm() {
-    if (bulkRedeployConfirm.targets.length === 0) return
-
-    const targets = [...bulkRedeployConfirm.targets]
-    const forms = bulkRedeployConfirm.forms
-    const failures: string[] = []
-
-    setBulkRedeployConfirm((current) => ({
-      ...current,
-      running: true,
-      status: Object.fromEntries(targets.map((target) => [target, { state: 'pending' as const }]))
-    }))
-
-    for (const target of targets) {
-      const formState = forms[target]
-      if (!formState || !vmRedeployFormReady(formState)) {
-        failures.push(target)
-        setBulkRedeployConfirm((current) => ({
-          ...current,
-          activeTarget: target,
-          status: {
-            ...current.status,
-            [target]: { state: 'failed', error: 'Required redeploy fields are missing' }
-          }
-        }))
-        continue
-      }
-
-      setBulkRedeployConfirm((current) => ({
-        ...current,
-        activeTarget: target,
-        status: {
-          ...current.status,
-          [target]: { state: 'running' }
-        }
-      }))
-
-      try {
-        const currentVM = virtualMachines.find((vm) => vm.name === target)
-        const redeployPayload = await buildVMRedeployPayload(formState, 'Auto-generated from Bulk Redeploy Virtual Machine dialog', currentVM)
-        const updated = await api.vmRedeploy(target, redeployPayload)
-        onVirtualMachineUpsert(updated)
-        setBulkRedeployConfirm((current) => ({
-          ...current,
-          status: {
-            ...current.status,
-            [target]: { state: 'succeeded' }
-          }
-        }))
-      } catch (err) {
-        failures.push(target)
-        setBulkRedeployConfirm((current) => ({
-          ...current,
-          status: {
-            ...current.status,
-            [target]: { state: 'failed', error: err instanceof Error ? err.message : 'Redeploy failed' }
-          }
-        }))
-      }
-    }
-
-    void onRefresh()
-
-    if (failures.length > 0) {
-      setCheckedVMs(new Set(failures))
-      setBulkRedeployConfirm((current) => ({
-        ...current,
-        targets: failures,
-        activeTarget: failures[0],
-        running: false
-      }))
-      notifyError(`Failed to redeploy VM: ${failures.join(', ')}`)
-      return
-    }
-
-    setCheckedVMs(new Set())
-    setBulkRedeployConfirm(initialBulkRedeployConfirm)
-  }
-
-  async function handleMigrateConfirm() {
-    if (!migrateConfirm.vmName) return
-    setMigrateConfirm(prev => ({ ...prev, running: true }))
-    try {
-      const payload: { targetHypervisor?: string } = {}
-      if (migrateConfirm.targetHypervisor) {
-        payload.targetHypervisor = migrateConfirm.targetHypervisor
-      }
-      await api.vmMigrate(migrateConfirm.vmName, payload)
-      setMigrateConfirm(initialMigrateConfirm)
-      void onRefresh()
-    } catch (err) {
-      notifyError(err instanceof Error ? err.message : 'Failed to migrate VM')
-      setMigrateConfirm(prev => ({ ...prev, running: false }))
-    }
-  }
-
-  function runPrimaryAction(action: VMPrimaryAction) {
-    const targets = checkedNames.length > 0 ? checkedNames : (selectedVM ? [selectedVM.name] : [])
-    if (targets.length === 0) return
-
-    switch (action) {
-      case 'console':
-        if (selectedVM && (selectedVM.phase === 'Running' || selectedVM.phase === 'Provisioning')) {
-          setConsoleVM(selectedVM.name)
-        }
-        break
-      case 'power-on':
-        openPowerConfirm('power-on', targets)
-        break
-      case 'power-off':
-        openPowerConfirm('power-off', targets)
-        break
-      case 'redeploy':
-        if (checkedNames.length > 0) {
-          openBulkRedeployDialog(targets)
-        } else if (selectedVM) {
-          openReinstallDialog(selectedVM)
-        }
-        break
-      case 'migrate':
-        if (selectedVM && selectedVM.phase === 'Running') {
-          setMigrateConfirm({
-            open: true,
-            vmName: selectedVM.name,
-            targetHypervisor: '',
-            running: false
-          })
-        }
-        break
-      case 'delete':
-        openDeleteDialog(targets)
-        break
-      default:
-        break
-    }
-  }
-
   const updateCreateConfigForm: UpdateVMConfigForm = (updater) => {
     setForm((current) => ({
       ...current,
@@ -1009,35 +263,6 @@ export function VirtualMachinesView({
     setReinstallForm((current) => updater(current))
   }
 
-  function toggleQuickDeployCloudInitRef(ref: string) {
-    setQuickDeployPreset((current) => {
-      const refs = current.cloudInitRefs.includes(ref)
-        ? current.cloudInitRefs.filter((item) => item !== ref)
-        : [...current.cloudInitRefs, ref]
-      return { ...current, cloudInitRefs: refs }
-    })
-  }
-
-  function toggleQuickDeploySSHKeyRef(ref: string) {
-    setQuickDeployPreset((current) => {
-      const refs = current.sshKeyRefs.includes(ref)
-        ? current.sshKeyRefs.filter((item) => item !== ref)
-        : [...current.sshKeyRefs, ref]
-      return { ...current, sshKeyRefs: refs }
-    })
-  }
-
-  function bridgePlaceholder(formState: VMConfigForm): string {
-    const hypervisor = hypervisors.find((item) => item.name === formState.hypervisorRef)
-    if (hypervisor?.bridgeName) {
-      return hypervisor.bridgeName
-    }
-    if (formState.subnetRef) {
-      return subnets.find((item) => item.name === formState.subnetRef)?.spec.pxeInterface || 'virbr0'
-    }
-    return 'virbr0'
-  }
-
   function renderVMSpecFields(
     formState: VMConfigForm,
     updateForm: UpdateVMConfigForm,
@@ -1045,1007 +270,112 @@ export function VirtualMachinesView({
     setAdvancedExpanded: (value: boolean | ((current: boolean) => boolean)) => void,
     radioNamePrefix: string
   ) {
-    const selectedOSImage = formState.osImageRef ? osImageByName.get(formState.osImageRef) : undefined
-    const hasUnsupportedSelectedOSImage = Boolean(selectedOSImage && !supportsDeploymentTarget(selectedOSImage, 'vm'))
     return (
-      <>
-        <label className="text-[0.84rem]">
-          Hypervisor
-          <select value={formState.hypervisorRef} onChange={(e) => {
-            const hvName = e.target.value
-            const hv = hypervisors.find((item) => item.name === hvName)
-            updateForm((current) => ({ ...current, hypervisorRef: hvName, bridge: hv?.bridgeName || current.bridge }))
-          }}>
-            <option value="">Auto (lowest usage)</option>
-            {hypervisors.map((hv) => (
-              <option key={hv.name} value={hv.name}>{hv.name} ({hv.connection.host}){hv.bridgeName ? ` [${hv.bridgeName}]` : ''}</option>
-            ))}
-          </select>
-        </label>
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-[0.45rem]">
-          <label className="text-[0.84rem] min-w-0">
-            CPU Cores
-            <input type="number" required min="1" value={formState.cpuCores} onChange={(e) => updateForm((current) => ({ ...current, cpuCores: e.target.value }))} />
-          </label>
-          <label className="text-[0.84rem] min-w-0">
-            Memory (MB)
-            <input type="number" required min="256" value={formState.memoryMB} onChange={(e) => updateForm((current) => ({ ...current, memoryMB: e.target.value }))} />
-          </label>
-          <label className="text-[0.84rem] min-w-0">
-            Disk (GB)
-            <input type="number" required min="1" value={formState.diskGB} onChange={(e) => updateForm((current) => ({ ...current, diskGB: e.target.value }))} />
-          </label>
-        </div>
-        <label className="text-[0.84rem]">
-          OS Image
-          <select required value={formState.osImageRef} onChange={(e) => updateForm((current) => ({ ...current, osImageRef: e.target.value }))}>
-            <option value="">Select...</option>
-            {hasUnsupportedSelectedOSImage && selectedOSImage && (
-              <option value={selectedOSImage.name} disabled>
-                {selectedOSImage.name} ({selectedOSImage.osFamily} {selectedOSImage.osVersion}{selectedOSImage.variant ? ` ${selectedOSImage.variant}` : ''}, unsupported for VM)
-              </option>
-            )}
-            {vmOSImages.map((img) => (
-              <option key={img.name} value={img.name}>{img.name} ({img.osFamily} {img.osVersion}{img.variant ? ` ${img.variant}` : ''})</option>
-            ))}
-          </select>
-        </label>
-        <label className="text-[0.84rem]">
-          Cloud-Init
-          <select value={formState.cloudInitMode} onChange={(e) => updateForm((current) => ({ ...current, cloudInitMode: e.target.value as CloudInitInputMode }))}>
-            <option value="none">None</option>
-            <option value="existing">Use existing template</option>
-            <option value="create">Create template inline</option>
-          </select>
-        </label>
-        {formState.cloudInitMode === 'existing' && (
-          <label className="text-[0.84rem]">
-            Existing Cloud-Init Template
-            <select value={formState.cloudInitExistingRef} onChange={(e) => updateForm((current) => ({ ...current, cloudInitExistingRef: e.target.value }))}>
-              <option value="">None</option>
-              {cloudInits.map((ci) => (
-                <option key={ci.name} value={ci.name}>{ci.name}</option>
-              ))}
-            </select>
-          </label>
-        )}
-        {formState.cloudInitMode === 'existing' && cloudInits.length === 0 && (
-          <p className="m-0 text-[0.78rem] text-ink-soft">No Cloud-Init templates available. Switch mode to create one inline.</p>
-        )}
-        {formState.cloudInitMode === 'create' && (
-          <>
-            <label className="text-[0.84rem]">
-              Cloud-Init Template Name
-              <input
-                value={formState.cloudInitTemplateName}
-                onChange={(e) => updateForm((current) => ({ ...current, cloudInitTemplateName: e.target.value }))}
-                placeholder="e.g. vm-inline-template"
-              />
-            </label>
-            <label className="text-[0.84rem]">
-              Cloud-Init User Data
-              <textarea
-                className="min-h-[140px] font-mono text-[0.78rem]"
-                value={formState.cloudInitUserData}
-                onChange={(e) => updateForm((current) => ({ ...current, cloudInitUserData: e.target.value }))}
-                placeholder="#cloud-config\nusers:\n  - default"
-              />
-            </label>
-          </>
-        )}
-        <SSHAccessFieldset
-          sshKeys={sshKeys}
-          value={formState}
-          onChange={(updater) => updateForm((current) => ({ ...current, ...updater(current) }))}
-          onRefresh={onRefresh}
-        />
-        <fieldset className="border border-line rounded p-0 m-0">
-          <legend className="text-[0.84rem] font-medium px-[0.4rem] ml-[0.3rem]">Network</legend>
-          <div className="grid gap-[0.45rem] p-[0.7rem]">
-            <label className="text-[0.84rem]">
-              Subnet
-              <select value={formState.subnetRef} onChange={(e) => {
-                const subnetName = e.target.value
-                const subnet = subnets.find((item) => item.name === subnetName)
-                updateForm((current) => ({
-                  ...current,
-                  subnetRef: subnetName,
-                  bridge: subnet?.spec.pxeInterface || ''
-                }))
-              }}>
-                <option value="">None (use default)</option>
-                {subnets.map((subnet) => (
-                  <option key={subnet.name} value={subnet.name}>{subnet.name} ({subnet.spec.cidr})</option>
-                ))}
-              </select>
-            </label>
-            <div className="flex items-center gap-[0.8rem] text-[0.84rem]">
-              <span>IP Assignment:</span>
-              <label className="flex items-center gap-1 cursor-pointer">
-                <input type="radio" name={`${radioNamePrefix}-ip-assignment`} checked={formState.ipAssignment === 'dhcp'} onChange={() => updateForm((current) => ({ ...current, ipAssignment: 'dhcp' }))} />
-                DHCP
-              </label>
-              <label className="flex items-center gap-1 cursor-pointer">
-                <input type="radio" name={`${radioNamePrefix}-ip-assignment`} checked={formState.ipAssignment === 'static'} onChange={() => updateForm((current) => ({ ...current, ipAssignment: 'static' }))} />
-                Static
-              </label>
-            </div>
-            {formState.ipAssignment === 'static' && (
-              <label className="text-[0.84rem]">
-                Static IP
-                <input value={formState.staticIP} onChange={(e) => updateForm((current) => ({ ...current, staticIP: e.target.value }))} placeholder="e.g. 192.168.1.100" />
-              </label>
-            )}
-            <label className="text-[0.84rem]">
-              Bridge
-              <input value={formState.bridge} onChange={(e) => updateForm((current) => ({ ...current, bridge: e.target.value }))} placeholder={bridgePlaceholder(formState)} />
-            </label>
-            <label className="text-[0.84rem]">
-              Domain
-              <input value={formState.domain} onChange={(e) => updateForm((current) => ({ ...current, domain: e.target.value }))} placeholder="e.g. example.local" />
-            </label>
-          </div>
-        </fieldset>
-        <div className="border border-line rounded">
-          <button
-            type="button"
-            className="w-full text-left border-0 shadow-none rounded-none px-[0.7rem] py-[0.5rem] text-[0.84rem] font-medium bg-[#f9f7f4] hover:bg-[#f3efe8]"
-            onClick={() => setAdvancedExpanded((current) => !current)}
-          >
-            {advancedExpanded ? '▾' : '▸'} Advanced Options
-          </button>
-          {advancedExpanded && (
-            <div className="grid gap-[0.45rem] p-[0.7rem] border-t border-line">
-              <label className="text-[0.84rem] min-w-0">
-                CPU Mode
-                <select value={formState.cpuMode} onChange={(e) => updateForm((current) => ({ ...current, cpuMode: e.target.value as VMConfigForm['cpuMode'] }))}>
-                  <option value="">Default</option>
-                  <option value="host-passthrough">host-passthrough</option>
-                  <option value="host-model">host-model</option>
-                  <option value="maximum">maximum</option>
-                </select>
-              </label>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-[0.45rem]">
-                <label className="text-[0.84rem] min-w-0">
-                  Disk Driver
-                  <select value={formState.diskDriver} onChange={(e) => updateForm((current) => ({ ...current, diskDriver: e.target.value }))}>
-                    <option value="">Default (virtio)</option>
-                    <option value="virtio">virtio</option>
-                    <option value="scsi">scsi (virtio-scsi)</option>
-                  </select>
-                </label>
-                <label className="text-[0.84rem] min-w-0">
-                  Disk Format
-                  <select value={formState.diskFormat} onChange={(e) => updateForm((current) => ({ ...current, diskFormat: e.target.value }))}>
-                    <option value="">Default (qcow2)</option>
-                    <option value="qcow2">qcow2</option>
-                  </select>
-                </label>
-              </div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-[0.45rem]">
-                <label className="text-[0.84rem] min-w-0">
-                  IO Threads
-                  <input type="number" min="0" max="16" value={formState.ioThreads} onChange={(e) => updateForm((current) => ({ ...current, ioThreads: e.target.value }))} placeholder="0 (disabled)" />
-                </label>
-                <label className="text-[0.84rem] min-w-0">
-                  Net Multiqueue
-                  <input type="number" min="0" max="16" value={formState.netMultiqueue} onChange={(e) => updateForm((current) => ({ ...current, netMultiqueue: e.target.value }))} placeholder="0 (disabled)" />
-                </label>
-              </div>
-              <label className="text-[0.84rem]">
-                CPU Pinning
-                <input value={formState.cpuPinning} onChange={(e) => updateForm((current) => ({ ...current, cpuPinning: e.target.value }))} placeholder="e.g. 0:0,1:2,2:4 (vcpu:cpuset)" />
-              </label>
-            </div>
-          )}
-        </div>
-      </>
+      <VMConfigFields
+        formState={formState}
+        updateForm={updateForm}
+        advancedExpanded={advancedExpanded}
+        setAdvancedExpanded={setAdvancedExpanded}
+        radioNamePrefix={radioNamePrefix}
+        hypervisors={hypervisors}
+        vmOSImages={vmOSImages}
+        cloudInits={cloudInits}
+        sshKeys={sshKeys}
+        subnets={subnets}
+        osImageByName={osImageByName}
+        onRefresh={onRefresh}
+        bridgePlaceholder={bridgePlaceholder}
+      />
     )
   }
 
   return (
     <>
-      {quickDeploySettingsOpen && (
-        <ModalOverlay onBackdropClick={() => { if (!quickDeploying) setQuickDeploySettingsOpen(false) }}>
-          <div className="w-[min(680px,100%)] bg-white border border-line-strong shadow-[0_20px_45px_rgba(52,43,34,0.2)] p-[1.1rem] grid gap-[0.65rem] max-h-[90vh] overflow-auto">
-            <div className="flex justify-between items-center">
-              <div>
-                <h3 className="text-[1.2rem]">Quick Deploy Preset</h3>
-                <p className="m-0 text-ink-soft text-[0.82rem]">Next VM: <code>{quickDeployPreset.name.trim() ? quickDeployVMName(quickDeployPreset) : '-'}</code></p>
-              </div>
-              <button
-                aria-label="Close"
-                className="border-0 bg-transparent shadow-none p-0 w-[1.8rem] h-[1.8rem] flex items-center justify-center text-[1.4rem] leading-none text-ink-soft hover:text-ink hover:shadow-none!"
-                disabled={quickDeploying}
-                onClick={() => setQuickDeploySettingsOpen(false)}
-              >x</button>
-            </div>
+      <VMQuickDeployDialog
+        open={quickDeploySettingsOpen}
+        preset={quickDeployPreset}
+        setPreset={setQuickDeployPreset}
+        quickDeploying={quickDeploying}
+        hypervisors={hypervisors}
+        osImages={osImages}
+        cloudInits={cloudInits}
+        sshKeys={sshKeys}
+        subnets={subnets}
+        nextName={quickDeployVMName}
+        isReady={quickDeployPresetReady}
+        onClose={() => setQuickDeploySettingsOpen(false)}
+        onDeploy={() => void handleQuickDeploy()}
+        onToggleCloudInitRef={toggleQuickDeployCloudInitRef}
+        onToggleSSHKeyRef={toggleQuickDeploySSHKeyRef}
+      />
 
-            <div className="grid gap-[0.55rem]">
-              <div className="grid grid-cols-1 sm:grid-cols-[minmax(0,1fr)_130px] gap-[0.55rem]">
-                <label className="text-[0.84rem] min-w-0">
-                  Name
-                  <input
-                    required
-                    value={quickDeployPreset.name}
-                    onChange={(e) => setQuickDeployPreset((current) => ({ ...current, name: e.target.value }))}
-                    placeholder="e.g. devvm"
-                  />
-                </label>
-                <label className="text-[0.84rem] min-w-0">
-                  Count
-                  <input
-                    type="number"
-                    min="1"
-                    value={quickDeployPreset.count}
-                    onChange={(e) => setQuickDeployPreset((current) => ({ ...current, count: e.target.value }))}
-                  />
-                </label>
-              </div>
+      <VMEditDialogs
+        formOpen={formOpen}
+        creating={creating}
+        form={form}
+        setForm={setForm}
+        advancedOpen={advancedOpen}
+        setAdvancedOpen={setAdvancedOpen}
+        onCloseCreate={() => setFormOpen(false)}
+        onCreate={(e) => void handleCreate(e)}
+        reinstallOpen={reinstallOpen}
+        selectedVM={selectedVM}
+        reinstalling={reinstalling}
+        reinstallForm={reinstallForm}
+        updateReinstallConfigForm={updateReinstallConfigForm}
+        reinstallAdvancedOpen={reinstallAdvancedOpen}
+        setReinstallAdvancedOpen={setReinstallAdvancedOpen}
+        onCloseReinstall={() => setReinstallOpen(false)}
+        onRedeploy={() => void handleRedeploy()}
+        renderFields={renderVMSpecFields}
+      />
 
-              <label className="text-[0.84rem]">
-                Hypervisor
-                <select value={quickDeployPreset.hypervisorRef} onChange={(e) => {
-                  const hvName = e.target.value
-                  const hv = hypervisors.find((item) => item.name === hvName)
-                  setQuickDeployPreset((current) => ({ ...current, hypervisorRef: hvName, bridge: hv?.bridgeName || current.bridge }))
-                }}>
-                  <option value="">Auto (lowest usage)</option>
-                  {hypervisors.map((hv) => (
-                    <option key={hv.name} value={hv.name}>{hv.name} ({hv.connection.host}){hv.bridgeName ? ` [${hv.bridgeName}]` : ''}</option>
-                  ))}
-                </select>
-              </label>
+      <VMActionDialogs
+        deleteConfirm={deleteConfirm}
+        setDeleteConfirm={setDeleteConfirm}
+        onDeleteConfirm={() => void handleDeleteConfirm()}
+        bulkRedeployConfirm={bulkRedeployConfirm}
+        setBulkRedeployConfirm={setBulkRedeployConfirm}
+        setBulkRedeployAdvancedOpen={setBulkRedeployAdvancedOpen}
+        updateBulkRedeployForm={updateBulkRedeployForm}
+        vmRedeployFormReady={vmRedeployFormReady}
+        onBulkRedeployConfirm={() => void handleBulkRedeployConfirm()}
+        powerConfirm={powerConfirm}
+        setPowerConfirm={setPowerConfirm}
+        onPowerConfirm={() => void handlePowerConfirm()}
+        migrateConfirm={migrateConfirm}
+        setMigrateConfirm={setMigrateConfirm}
+        onMigrateConfirm={() => void handleMigrateConfirm()}
+        virtualMachines={virtualMachines}
+        hypervisors={hypervisors}
+        renderFields={renderVMSpecFields}
+      />
 
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-[0.45rem]">
-                <label className="text-[0.84rem] min-w-0">
-                  CPU Cores
-                  <input type="number" min="1" value={quickDeployPreset.cpuCores} onChange={(e) => setQuickDeployPreset((current) => ({ ...current, cpuCores: e.target.value }))} />
-                </label>
-                <label className="text-[0.84rem] min-w-0">
-                  Memory (MB)
-                  <input type="number" min="256" value={quickDeployPreset.memoryMB} onChange={(e) => setQuickDeployPreset((current) => ({ ...current, memoryMB: e.target.value }))} />
-                </label>
-                <label className="text-[0.84rem] min-w-0">
-                  Disk (GB)
-                  <input type="number" min="1" value={quickDeployPreset.diskGB} onChange={(e) => setQuickDeployPreset((current) => ({ ...current, diskGB: e.target.value }))} />
-                </label>
-              </div>
-
-              <label className="text-[0.84rem]">
-                OS Image
-                <select required value={quickDeployPreset.osImageRef} onChange={(e) => setQuickDeployPreset((current) => ({ ...current, osImageRef: e.target.value }))}>
-                  <option value="">Select...</option>
-                  {osImages.map((img) => (
-                    <option key={img.name} value={img.name}>{img.name} ({img.osFamily} {img.osVersion}{img.variant ? ` ${img.variant}` : ''})</option>
-                  ))}
-                </select>
-              </label>
-
-              <fieldset className="border border-line rounded p-0 m-0">
-                <legend className="text-[0.84rem] font-medium px-[0.4rem] ml-[0.3rem]">Network</legend>
-                <div className="grid gap-[0.45rem] p-[0.7rem]">
-                  <label className="text-[0.84rem]">
-                    Subnet
-                    <select value={quickDeployPreset.subnetRef} onChange={(e) => {
-                      const subnetName = e.target.value
-                      const subnet = subnets.find((item) => item.name === subnetName)
-                      setQuickDeployPreset((current) => ({
-                        ...current,
-                        subnetRef: subnetName,
-                        bridge: subnet?.spec.pxeInterface || ''
-                      }))
-                    }}>
-                      <option value="">None (use default)</option>
-                      {subnets.map((subnet) => (
-                        <option key={subnet.name} value={subnet.name}>{subnet.name} ({subnet.spec.cidr})</option>
-                      ))}
-                    </select>
-                  </label>
-                  <label className="text-[0.84rem]">
-                    Bridge
-                    <input
-                      value={quickDeployPreset.bridge}
-                      onChange={(e) => setQuickDeployPreset((current) => ({ ...current, bridge: e.target.value }))}
-                      placeholder="virbr0"
-                    />
-                  </label>
-                  <p className="m-0 text-[0.78rem] text-ink-soft">Quick Deploy always uses DHCP. Use Create for static IPs.</p>
-                </div>
-              </fieldset>
-
-              <fieldset className="border border-line rounded p-0 m-0">
-                <legend className="text-[0.84rem] font-medium px-[0.4rem] ml-[0.3rem]">Cloud-Init</legend>
-                <div className="grid gap-[0.35rem] p-[0.7rem]">
-                  {cloudInits.length === 0 && <p className="m-0 text-[0.78rem] text-ink-soft">No Cloud-Init templates available.</p>}
-                  {cloudInits.map((ci) => (
-                    <label key={ci.name} className="flex items-center gap-[0.45rem] text-[0.84rem] cursor-pointer">
-                      <input
-                        type="checkbox"
-                        className="w-[0.95rem] h-[0.95rem] m-0 accent-[#2b7a78]"
-                        checked={quickDeployPreset.cloudInitRefs.includes(ci.name)}
-                        onChange={() => toggleQuickDeployCloudInitRef(ci.name)}
-                      />
-                      {ci.name}
-                    </label>
-                  ))}
-                </div>
-              </fieldset>
-
-              <fieldset className="border border-line rounded p-0 m-0">
-                <legend className="text-[0.84rem] font-medium px-[0.4rem] ml-[0.3rem]">SSH Access</legend>
-                <div className="grid gap-[0.45rem] p-[0.7rem]">
-                  {sshKeys.length === 0 && <p className="m-0 text-[0.78rem] text-ink-soft">No SSH keys available.</p>}
-                  {sshKeys.map((key) => (
-                    <label key={key.name} className="flex items-center gap-[0.45rem] text-[0.84rem] cursor-pointer">
-                      <input
-                        type="checkbox"
-                        className="w-[0.95rem] h-[0.95rem] m-0 accent-[#2b7a78]"
-                        checked={quickDeployPreset.sshKeyRefs.includes(key.name)}
-                        onChange={() => toggleQuickDeploySSHKeyRef(key.name)}
-                      />
-                      {key.name}
-                    </label>
-                  ))}
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-[0.45rem]">
-                    <label className="text-[0.84rem] min-w-0">
-                      Login Username
-                      <input value={quickDeployPreset.loginUserUsername} onChange={(e) => setQuickDeployPreset((current) => ({ ...current, loginUserUsername: e.target.value }))} placeholder="e.g. ubuntu" />
-                    </label>
-                    <label className="text-[0.84rem] min-w-0">
-                      Login Password
-                      <input type="password" value={quickDeployPreset.loginUserPassword} onChange={(e) => setQuickDeployPreset((current) => ({ ...current, loginUserPassword: e.target.value }))} />
-                    </label>
-                  </div>
-                </div>
-              </fieldset>
-
-              <div className="flex justify-between gap-[0.45rem] pt-[0.2rem]">
-                <button
-                  type="button"
-                  onClick={() => setQuickDeployPreset((current) => ({ ...current, count: '1' }))}
-                  disabled={quickDeploying}
-                >
-                  Reset Count
-                </button>
-                <div className="flex justify-end gap-[0.45rem]">
-                  <button type="button" onClick={() => setQuickDeploySettingsOpen(false)} disabled={quickDeploying}>Close</button>
-                  <button
-                    type="button"
-                    className="bg-brand border-brand-strong text-white"
-                    disabled={quickDeploying || !quickDeployPresetReady(quickDeployPreset)}
-                    onClick={() => {
-                      setQuickDeploySettingsOpen(false)
-                      void handleQuickDeploy()
-                    }}
-                  >
-                    {quickDeploying ? 'Deploying...' : 'Deploy Now'}
-                  </button>
-                </div>
-              </div>
-            </div>
-          </div>
-        </ModalOverlay>
-      )}
-
-      {formOpen && (
-        <ModalOverlay onBackdropClick={() => { if (!creating) { setFormOpen(false) } }}>
-          <div className="w-[min(760px,100%)] bg-white border border-line-strong shadow-[0_20px_45px_rgba(52,43,34,0.2)] p-[1.1rem] grid gap-[0.65rem] max-h-[90vh] overflow-auto">
-            <div className="flex justify-between items-center">
-              <h3 className="text-[1.2rem]">Create Virtual Machine</h3>
-              <button
-                aria-label="Close"
-                className="border-0 bg-transparent shadow-none p-0 w-[1.8rem] h-[1.8rem] flex items-center justify-center text-[1.4rem] leading-none text-ink-soft hover:text-ink hover:shadow-none!"
-                disabled={creating}
-                onClick={() => { setFormOpen(false) }}
-              >×</button>
-            </div>
-            <form className="grid gap-[0.55rem]" onSubmit={(e) => void handleCreate(e)}>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-[0.55rem]">
-                <label className="text-[0.84rem] min-w-0">
-                  Name
-                  <input required value={form.name} onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))} placeholder="e.g. vm-web-01" />
-                </label>
-                <label className="text-[0.84rem] min-w-0">
-                  Count
-                  <input type="number" min="1" max="50" value={form.count} onChange={(e) => setForm((f) => ({ ...f, count: e.target.value }))} />
-                </label>
-              </div>
-              {Number(form.count) > 1 && form.name && (
-                <p className="m-0 text-ink-soft text-[0.82rem]">
-                  Will create: {Array.from({ length: Math.min(Number(form.count) || 1, 5) }, (_, i) => `${form.name}-${i + 1}`).join(', ')}
-                  {Number(form.count) > 5 && `, ... (${form.count} total)`}
-                </p>
-              )}
-              {renderVMSpecFields(form, updateCreateConfigForm, advancedOpen, setAdvancedOpen, 'vm-create')}
-              <div className="flex justify-end gap-[0.45rem] pt-[0.2rem]">
-                <button type="button" onClick={() => { setFormOpen(false) }} disabled={creating}>Cancel</button>
-                <button
-                  type="submit"
-                  disabled={
-                    creating
-                    || !form.name.trim()
-                    || !form.osImageRef
-                    || (form.ipAssignment === 'static' && !form.staticIP.trim())
-                    || (form.cloudInitMode === 'create' && (!form.cloudInitTemplateName.trim() || !form.cloudInitUserData.trim()))
-                  }
-                  className="bg-brand border-brand-strong text-white"
-                >
-                  {creating ? 'Creating...' : 'Create'}
-                </button>
-              </div>
-            </form>
-          </div>
-        </ModalOverlay>
-      )}
-
-      {reinstallOpen && selectedVM && (
-        <ModalOverlay onBackdropClick={() => { if (!reinstalling) { setReinstallOpen(false) } }}>
-          <div className="w-[min(760px,100%)] bg-white border border-line-strong shadow-[0_20px_45px_rgba(52,43,34,0.2)] p-[1.1rem] grid gap-[0.65rem] max-h-[90vh] overflow-auto">
-            <div className="flex justify-between items-center">
-              <h3 className="text-[1.2rem]">Redeploy VM: {selectedVM.name}</h3>
-              <button
-                aria-label="Close"
-                className="border-0 bg-transparent shadow-none p-0 w-[1.8rem] h-[1.8rem] flex items-center justify-center text-[1.4rem] leading-none text-ink-soft hover:text-ink hover:shadow-none!"
-                disabled={reinstalling}
-                onClick={() => { setReinstallOpen(false) }}
-              >×</button>
-            </div>
-            <p className="m-0 text-ink-soft text-[0.84rem]">Current VM spec is pre-filled. You can redeploy as-is or update values before execution.</p>
-            <div className="grid gap-[0.55rem]">
-              {renderVMSpecFields(reinstallForm, updateReinstallConfigForm, reinstallAdvancedOpen, setReinstallAdvancedOpen, 'vm-redeploy')}
-              <div className="flex justify-end gap-[0.45rem] pt-[0.2rem]">
-                <button type="button" onClick={() => { setReinstallOpen(false) }}>Cancel</button>
-                <button
-                  type="button"
-                  disabled={
-                    reinstalling
-                    || !reinstallForm.osImageRef
-                    || (reinstallForm.ipAssignment === 'static' && !reinstallForm.staticIP.trim())
-                    || (reinstallForm.cloudInitMode === 'create' && (!reinstallForm.cloudInitTemplateName.trim() || !reinstallForm.cloudInitUserData.trim()))
-                  }
-                  className="bg-brand border-brand-strong text-white"
-                  onClick={() => void handleRedeploy()}
-                >
-                  {reinstalling ? 'Redeploying...' : 'Redeploy'}
-                </button>
-              </div>
-            </div>
-          </div>
-        </ModalOverlay>
-      )}
-
-      {deleteConfirm.open && (
-        <ModalOverlay onBackdropClick={() => {
-          if (!deleteConfirm.running) {
-            setDeleteConfirm(initialDeleteConfirm)
-          }
-        }}>
-          <div className="w-[min(520px,100%)] bg-white border border-line-strong shadow-[0_20px_45px_rgba(52,43,34,0.2)] p-[1.1rem] grid gap-[0.65rem]">
-            <div className="flex justify-between items-center">
-              <h3 className="text-[1.2rem] text-[#9b2d2d]">Delete Virtual Machine{deleteConfirm.targets.length > 1 ? 's' : ''}</h3>
-              <button
-                aria-label="Close"
-                className="border-0 bg-transparent shadow-none p-0 w-[1.8rem] h-[1.8rem] flex items-center justify-center text-[1.4rem] leading-none text-ink-soft hover:text-ink hover:shadow-none!"
-                disabled={deleteConfirm.running}
-                onClick={() => { setDeleteConfirm(initialDeleteConfirm) }}
-              >×</button>
-            </div>
-            <p className="m-0 text-ink-soft text-[0.84rem]">This action permanently removes runtime resources and cannot be undone.</p>
-            <div className="max-h-[180px] overflow-auto border border-line p-[0.55rem] bg-[#f9f7f4]">
-              <ul className="m-0 pl-[1.1rem]">
-                {deleteConfirm.targets.map((target) => (
-                  <li key={target}><code>{target}</code></li>
-                ))}
-              </ul>
-            </div>
-            <div className="flex justify-end gap-[0.45rem] pt-[0.2rem]">
-              <button type="button" onClick={() => setDeleteConfirm(initialDeleteConfirm)} disabled={deleteConfirm.running}>Cancel</button>
-              <button
-                type="button"
-                disabled={deleteConfirm.running}
-                className="bg-[#d86b6b] border-[#be5252] text-white"
-                onClick={() => void handleDeleteConfirm()}
-              >
-                {deleteConfirm.running ? 'Deleting...' : `Delete (${deleteConfirm.targets.length})`}
-              </button>
-            </div>
-          </div>
-        </ModalOverlay>
-      )}
-
-      {bulkRedeployConfirm.open && (() => {
-        const activeTarget = bulkRedeployConfirm.activeTarget || bulkRedeployConfirm.targets[0]
-        const activeForm = bulkRedeployConfirm.forms[activeTarget]
-        const invalidTargets = bulkRedeployConfirm.targets.filter((target) => !vmRedeployFormReady(bulkRedeployConfirm.forms[target]))
-        return (
-          <ModalOverlay onBackdropClick={() => {
-            if (!bulkRedeployConfirm.running) {
-              setBulkRedeployConfirm(initialBulkRedeployConfirm)
-            }
-          }}>
-            <div className="w-[min(1040px,100%)] bg-white border border-line-strong shadow-[0_20px_45px_rgba(52,43,34,0.2)] p-[1.1rem] grid gap-[0.8rem] max-h-[90vh] overflow-auto">
-              <div className="flex justify-between items-center gap-[0.8rem]">
-                <div>
-                  <h3 className="text-[1.2rem]">Bulk Redeploy Virtual Machines</h3>
-                  <p className="m-0 text-ink-soft text-[0.84rem]">Edit each VM before running redeploy sequentially.</p>
-                </div>
-                <button
-                  aria-label="Close"
-                  className="border-0 bg-transparent shadow-none p-0 w-[1.8rem] h-[1.8rem] flex items-center justify-center text-[1.4rem] leading-none text-ink-soft hover:text-ink hover:shadow-none!"
-                  disabled={bulkRedeployConfirm.running}
-                  onClick={() => setBulkRedeployConfirm(initialBulkRedeployConfirm)}
-                >×</button>
-              </div>
-              <div className="grid grid-cols-[250px_minmax(0,1fr)] gap-[0.85rem] max-md:grid-cols-1">
-                <div className="border border-line bg-[#f9f7f4] p-[0.55rem] max-h-[68vh] overflow-auto">
-                  <p className="m-0 mb-[0.45rem] text-ink-soft text-[0.78rem]">Targets ({bulkRedeployConfirm.targets.length})</p>
-                  <div className="grid gap-[0.35rem]">
-                    {bulkRedeployConfirm.targets.map((target) => {
-                      const status = bulkRedeployConfirm.status[target]?.state ?? 'pending'
-                      return (
-                        <button
-                          key={target}
-                          type="button"
-                          className={clsx(
-                            'w-full text-left border border-line shadow-none px-[0.55rem] py-[0.48rem] bg-white hover:bg-[#f3efe8]',
-                            activeTarget === target && 'border-brand bg-[rgba(43,122,120,0.08)]'
-                          )}
-                          onClick={() => setBulkRedeployConfirm((current) => ({ ...current, activeTarget: target }))}
-                        >
-                          <span className="block font-medium break-anywhere">{target}</span>
-                          <span className={clsx(
-                            'mt-[0.18rem] inline-flex text-[0.68rem] font-medium px-[0.35rem] py-[0.05rem] rounded-sm border',
-                            status === 'succeeded' && 'bg-[#e9f6ec] text-[#25633a] border-[#b8dec3]',
-                            status === 'failed' && 'bg-[#fff0ee] text-[#9b2d2d] border-[#ecc1ba]',
-                            status === 'running' && 'bg-[#eef5ff] text-[#265f9b] border-[#bfd5ee]',
-                            status === 'pending' && 'bg-[#f3f0ea] text-ink-soft border-[#e0dbd2]'
-                          )}>{status}</span>
-                          {bulkRedeployConfirm.status[target]?.error && (
-                            <span className="block mt-[0.2rem] text-[#9b2d2d] text-[0.72rem] leading-tight">{bulkRedeployConfirm.status[target]?.error}</span>
-                          )}
-                        </button>
-                      )
-                    })}
-                  </div>
-                </div>
-                <div className="min-w-0 grid gap-[0.55rem]">
-                  {activeForm && (
-                    <>
-                      <div className="bg-[#f9f7f4] border border-line p-[0.6rem] text-[0.84rem]">
-                        <p className="m-0 text-ink-soft">Editing <strong className="text-ink">{activeTarget}</strong></p>
-                        {invalidTargets.includes(activeTarget) && (
-                          <p className="m-0 mt-[0.2rem] text-[#9b2d2d] font-medium">Required fields are missing for this target.</p>
-                        )}
-                      </div>
-                      <fieldset disabled={bulkRedeployConfirm.running} className="grid gap-[0.55rem] border-0 p-0 m-0 min-w-0 disabled:opacity-80">
-                        {renderVMSpecFields(
-                          activeForm,
-                          (updater) => updateBulkRedeployForm(activeTarget, updater),
-                          bulkRedeployConfirm.advancedOpen[activeTarget] ?? false,
-                          (value) => setBulkRedeployAdvancedOpen(activeTarget, value),
-                          `vm-bulk-${activeTarget}`
-                        )}
-                      </fieldset>
-                    </>
-                  )}
-                </div>
-              </div>
-              <div className="flex justify-end gap-[0.45rem] pt-[0.2rem]">
-                <button type="button" onClick={() => setBulkRedeployConfirm(initialBulkRedeployConfirm)} disabled={bulkRedeployConfirm.running}>Cancel</button>
-                <button
-                  type="button"
-                  disabled={bulkRedeployConfirm.running || invalidTargets.length > 0}
-                  className="bg-brand border-brand-strong text-white"
-                  onClick={() => void handleBulkRedeployConfirm()}
-                >
-                  {bulkRedeployConfirm.running ? 'Redeploying...' : `Redeploy all (${bulkRedeployConfirm.targets.length})`}
-                </button>
-              </div>
-            </div>
-          </ModalOverlay>
-        )
-      })()}
-
-      {powerConfirm.open && (
-        <ModalOverlay onBackdropClick={() => {
-          if (!powerConfirm.running) {
-            setPowerConfirm(initialPowerConfirm)
-          }
-        }}>
-          <div className="w-[min(520px,100%)] bg-white border border-line-strong shadow-[0_20px_45px_rgba(52,43,34,0.2)] p-[1.1rem] grid gap-[0.65rem]">
-            <h3 className="text-[1.2rem]">{powerConfirm.action === 'power-on' ? 'Confirm Power On' : 'Confirm Power Off'}</h3>
-            <p className="m-0 text-ink-soft text-[0.84rem]">
-              Target virtual machines ({powerConfirm.targets.length}):
-            </p>
-            <div className="max-h-[180px] overflow-auto border border-line p-[0.55rem] bg-[#f9f7f4]">
-              <ul className="m-0 pl-[1.1rem]">
-                {powerConfirm.targets.map((target) => (
-                  <li key={target}><code>{target}</code></li>
-                ))}
-              </ul>
-            </div>
-            <div className="flex justify-end gap-[0.45rem] pt-[0.2rem]">
-              <button type="button" onClick={() => setPowerConfirm(initialPowerConfirm)} disabled={powerConfirm.running}>Cancel</button>
-              <button
-                type="button"
-                disabled={powerConfirm.running}
-                className={clsx(
-                  'text-white',
-                  powerConfirm.action === 'power-on' ? 'bg-brand border-brand-strong' : 'bg-[#d86b6b] border-[#be5252]'
-                )}
-                onClick={() => void handlePowerConfirm()}
-              >
-                {powerConfirm.running
-                  ? (powerConfirm.action === 'power-on' ? 'Powering On...' : 'Powering Off...')
-                  : (powerConfirm.action === 'power-on' ? 'Power On' : 'Power Off')}
-              </button>
-            </div>
-          </div>
-        </ModalOverlay>
-      )}
-
-      {migrateConfirm.open && (() => {
-        const migrateVM = virtualMachines.find((v) => v.name === migrateConfirm.vmName)
-        const currentHV = migrateVM?.hypervisorName || migrateVM?.hypervisorRef || ''
-        const otherHVs = hypervisors.filter((hv) => hv.name !== currentHV)
-        return (
-          <ModalOverlay onBackdropClick={() => {
-            if (!migrateConfirm.running) {
-              setMigrateConfirm(initialMigrateConfirm)
-            }
-          }}>
-            <div className="w-[min(520px,100%)] bg-white border border-line-strong shadow-[0_20px_45px_rgba(52,43,34,0.2)] p-[1.1rem] grid gap-[0.65rem]">
-              <div className="flex justify-between items-center">
-                <h3 className="text-[1.2rem]">Migrate VM: {migrateConfirm.vmName}</h3>
-                <button
-                  aria-label="Close"
-                  className="border-0 bg-transparent shadow-none p-0 w-[1.8rem] h-[1.8rem] flex items-center justify-center text-[1.4rem] leading-none text-ink-soft hover:text-ink hover:shadow-none!"
-                  disabled={migrateConfirm.running}
-                  onClick={() => setMigrateConfirm(initialMigrateConfirm)}
-                >×</button>
-              </div>
-              <p className="m-0 text-ink-soft text-[0.84rem]">
-                Live-migrate the running VM to another hypervisor. The VM will remain online during migration.
-              </p>
-              <dl className="m-0 grid grid-cols-[130px_minmax(0,1fr)] gap-x-[0.65rem] gap-y-[0.34rem]">
-                <dt className="text-ink-soft text-[0.84rem]">Source Hypervisor</dt>
-                <dd className="m-0 font-medium">{currentHV || 'Unknown'}</dd>
-              </dl>
-              <label className="text-[0.84rem]">
-                Target Hypervisor
-                <select
-                  value={migrateConfirm.targetHypervisor}
-                  onChange={(e) => setMigrateConfirm((prev) => ({ ...prev, targetHypervisor: e.target.value }))}
-                  disabled={migrateConfirm.running}
-                >
-                  <option value="">Auto (best available)</option>
-                  {otherHVs.map((hv) => (
-                    <option key={hv.name} value={hv.name}>
-                      {hv.name} ({hv.connection.host})
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <div className="flex justify-end gap-[0.45rem] pt-[0.2rem]">
-                <button type="button" onClick={() => setMigrateConfirm(initialMigrateConfirm)} disabled={migrateConfirm.running}>Cancel</button>
-                <button
-                  type="button"
-                  disabled={migrateConfirm.running}
-                  className="bg-brand border-brand-strong text-white"
-                  onClick={() => void handleMigrateConfirm()}
-                >
-                  {migrateConfirm.running ? 'Migrating...' : 'Migrate'}
-                </button>
-              </div>
-            </div>
-          </ModalOverlay>
-        )
-      })()}
-
-      <section className="min-h-0 grid grid-cols-1 md:grid-cols-[310px_minmax(0,1fr)] gap-[0.9rem]">
-        <div className="min-h-0 grid grid-rows-[auto_minmax(0,1fr)] gap-[0.6rem]">
-          <div className="grid gap-[0.45rem]">
-            <div className="flex justify-between items-center gap-2">
-              <h2 className="text-[1.4rem]">Virtual Machines</h2>
-              <div className="flex items-center justify-end flex-wrap gap-[0.35rem]">
-                <button
-                  className="bg-brand border-brand-strong text-white py-[0.35rem] px-[0.55rem] text-[0.82rem]"
-                  disabled={quickDeploying}
-                  onClick={() => void handleQuickDeploy()}
-                >
-                  {quickDeploying ? 'Deploying...' : 'Quick Deploy'}
-                </button>
-                <button
-                  className="py-[0.35rem] px-[0.55rem] text-[0.82rem]"
-                  disabled={quickDeploying}
-                  onClick={openQuickDeploySettings}
-                >
-                  Preset
-                </button>
-                <button
-                  className="py-[0.35rem] px-[0.55rem] text-[0.82rem]"
-                  onClick={() => {
-                    setForm({ ...initialForm })
-                    setAdvancedOpen(false)
-                    setFormOpen(true)
-                  }}
-                >
-                  Create
-                </button>
-              </div>
-            </div>
-          </div>
-
-          <div className="overflow-auto border-t border-line pr-[0.1rem]">
-            {dataLoading && virtualMachines.length === 0 && (
-              <div className="grid place-items-center py-[2.4rem] text-center text-ink-soft gap-[0.55rem]">
-                <div className="loading-spinner" aria-hidden="true" />
-                <p className="m-0 text-[0.84rem]">Loading virtual machines...</p>
-              </div>
-            )}
-            {virtualMachines.length > 0 && (
-              <div className="flex items-center gap-[0.45rem] py-[0.35rem] pl-[0.55rem] border-b border-line bg-[#f9f7f4]">
-                <input
-                  type="checkbox"
-                  className="w-[0.95rem] h-[0.95rem] m-0 shrink-0 accent-[#2b7a78] cursor-pointer"
-                  checked={checkedVMs.size === virtualMachines.length && virtualMachines.length > 0}
-                  onChange={toggleAllChecked}
-                />
-                <span className="text-[0.78rem] text-ink-soft">Select All</span>
-              </div>
-            )}
-            {virtualMachines.map((vm) => (
-              <div
-                key={vm.name}
-                className={clsx(
-                  'flex items-start border-0 border-b border-line border-l-[3px] border-l-transparent',
-                  selected === vm.name && '!border-l-brand bg-[rgba(43,122,120,0.06)]'
-                )}
-              >
-                <div className="flex items-center pl-[0.55rem] pt-[0.72rem] shrink-0">
-                  <input
-                    type="checkbox"
-                    className="w-[0.95rem] h-[0.95rem] m-0 accent-[#2b7a78] cursor-pointer"
-                    checked={checkedVMs.has(vm.name)}
-                    onChange={() => toggleChecked(vm.name)}
-                  />
-                </div>
-                <button
-                  className="text-left flex-1 min-w-0 border-0 bg-transparent flex justify-between items-start gap-[0.75rem] py-[0.62rem] pl-[0.45rem] pr-[0.1rem] shadow-none hover:transform-none!"
-                  onClick={() => setVMSelection(vm.name)}
-                >
-                  <div className="min-w-0">
-                    <p className="m-0 font-ui font-medium tracking-normal truncate">{vm.name}</p>
-                    <p className="m-0 text-ink-soft text-[0.82rem]">{vm.hypervisorRef || 'Auto-placed'} - {vm.resources.cpuCores}CPU - {vm.resources.memoryMB}MB</p>
-                    {vm.phase === 'Error' && vm.lastError && (
-                      <p className="m-0 text-[#7f2727] text-[0.76rem] mt-[0.15rem] leading-tight">{vm.lastError}</p>
-                    )}
-                  </div>
-                  <span className={clsx(phaseClass(vm.phase), 'shrink-0')}>{vm.phase}</span>
-                </button>
-              </div>
-            ))}
-            {!dataLoading && virtualMachines.length === 0 && <p className="m-0 text-ink-soft">No virtual machines found</p>}
-          </div>
-        </div>
-
-        <div className="min-h-0 grid content-start gap-[0.85rem]">
-          {!selectedVM && checkedNames.length === 0 && (
-            <section className="bg-transparent border-0 border-t border-line shadow-none pt-[0.85rem] grid gap-[0.45rem]">
-              <h2>Select a virtual machine</h2>
-              <p>Choose a VM from the list to view details and actions.</p>
-            </section>
-          )}
-
-          {(selectedVM || checkedNames.length > 0) && (
-            <>
-              <section className="bg-transparent border-0 border-t border-line shadow-none pt-[0.85rem] flex justify-between items-start gap-4">
-                <div>
-                  <p className="m-0 font-ui font-medium text-[0.72rem] uppercase tracking-[0.08em] text-ink-soft">Virtual Machine</p>
-                  {checkedNames.length > 0 ? (
-                    <h2 className="mt-[0.22rem] text-[1.8rem]">{checkedNames.length} selected</h2>
-                  ) : selectedVM && (
-                    <>
-                      <h2 className="mt-[0.22rem] text-[1.8rem]">{selectedVM.name}</h2>
-                      <p className="m-0 text-ink-soft">
-                        {selectedVM.hypervisorRef
-                          ? selectedVM.hypervisorRef
-                          : selectedVM.hypervisorName
-                            ? `Auto-placed on: ${selectedVM.hypervisorName}`
-                            : 'Auto-placement (pending)'}
-                        {' - '}PXE
-                      </p>
-                    </>
-                  )}
-                </div>
-                <div className="flex flex-col items-end gap-[0.55rem]">
-                  {checkedNames.length === 0 && selectedVM && (
-                    <span className={phaseClass(selectedVM.phase)}>{selectedVM.phase}</span>
-                  )}
-                  <div className="flex justify-end items-center flex-wrap gap-[0.35rem]" ref={actionsMenuRef}>
-                    <div className="relative">
-                      <button
-                        className="py-[0.45rem] px-[0.72rem]"
-                        disabled={checkedNames.length === 0 && !selectedVM}
-                        onClick={() => setActionsMenuOpen((current) => !current)}
-                      >
-                        Actions
-                      </button>
-                      {actionsMenuOpen && (
-                        <div className="absolute right-0 mt-1 min-w-[180px] bg-white border border-line shadow-[0_10px_24px_rgba(52,43,34,0.16)] z-10">
-                          {([
-                            { value: 'console', label: 'Console' },
-                            { value: 'power-on', label: 'Power On' },
-                            { value: 'power-off', label: 'Power Off' },
-                            { value: 'redeploy', label: 'Redeploy' },
-                            { value: 'migrate', label: 'Migrate' },
-                            { value: 'delete', label: 'Delete' }
-                          ] as Array<{ value: VMPrimaryAction, label: string }>).map((item) => (
-                            <button
-                              key={item.value}
-                              className={clsx(
-                                'w-full text-left border-0 shadow-none rounded-none px-[0.7rem] py-[0.5rem]',
-                                item.value === 'power-off' || item.value === 'delete'
-                                  ? 'text-[#9b2d2d] hover:bg-[#fff3f2]'
-                                  : 'text-ink hover:bg-[#f7f3ed]'
-                              )}
-                              onClick={() => {
-                                setActionsMenuOpen(false)
-                                runPrimaryAction(item.value)
-                              }}
-                            >
-                              {item.label}
-                            </button>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                </div>
-              </section>
-            </>
-          )}
-
-          {consoleVM && (() => {
-            const cvmObj = virtualMachines.find((v) => v.name === consoleVM)
-            return cvmObj ? (
-              <VMConsolePanel vm={cvmObj} onClose={() => setConsoleVM(null)} />
-            ) : null
-          })()}
-
-          {selectedVM && (
-            <>
-              <section className="grid grid-cols-1 lg:grid-cols-2 gap-[0.85rem]">
-                <article className="bg-transparent border-0 border-t border-line shadow-none pt-[0.85rem]">
-                  <h3 className="mb-[0.58rem] text-[1.05rem]">Resources</h3>
-                  <dl className="m-0 grid grid-cols-[130px_minmax(0,1fr)] gap-x-[0.65rem] gap-y-[0.34rem]">
-                    <dt className="text-ink-soft text-[0.84rem]">CPU Cores</dt><dd className="m-0">{selectedVM.resources.cpuCores}</dd>
-                    <dt className="text-ink-soft text-[0.84rem]">Memory (MB)</dt><dd className="m-0">{selectedVM.resources.memoryMB}</dd>
-                    <dt className="text-ink-soft text-[0.84rem]">Disk (GB)</dt><dd className="m-0">{selectedVM.resources.diskGB}</dd>
-                    <dt className="text-ink-soft text-[0.84rem]">Power Control</dt><dd className="m-0">{selectedVM.powerControlMethod}</dd>
-                  </dl>
-                </article>
-
-                <article className="bg-transparent border-0 border-t border-line shadow-none pt-[0.85rem]">
-                  <h3 className="mb-[0.58rem] text-[1.05rem]">Status</h3>
-                  <dl className="m-0 grid grid-cols-[130px_minmax(0,1fr)] gap-x-[0.65rem] gap-y-[0.34rem]">
-                    <dt className="text-ink-soft text-[0.84rem]">Phase</dt>
-                    <dd className="m-0">
-                      <span className={phaseClass(selectedVM.phase)}>{selectedVM.phase}</span>
-                    </dd>
-                    <dt className="text-ink-soft text-[0.84rem]">Hypervisor</dt><dd className="m-0">{selectedVM.hypervisorName || '-'}</dd>
-                    <dt className="text-ink-soft text-[0.84rem]">Domain</dt><dd className="m-0"><code className="text-[0.82rem]">{selectedVM.libvirtDomain || '-'}</code></dd>
-                    <dt className="text-ink-soft text-[0.84rem]">IP Addresses</dt>
-                    <dd className="m-0 flex items-center gap-[0.4rem] flex-wrap">
-                      <span>{selectedVM.ipAddresses?.join(', ') || '-'}</span>
-                      <span className={clsx(
-                        'text-[0.68rem] font-medium px-[0.35rem] py-[0.05rem] rounded-sm border',
-                        selectedVM.ipAssignment === 'static'
-                          ? 'bg-[#e8f4f3] text-[#1a6360] border-[#b8dbd9]'
-                          : 'bg-[#f3f0ea] text-ink-soft border-[#e0dbd2]'
-                      )}>
-                        {selectedVM.ipAssignment === 'static' ? 'Static' : 'DHCP'}
-                      </span>
-                    </dd>
-                    <dt className="text-ink-soft text-[0.84rem]">MAC Addresses</dt>
-                    <dd className="m-0">
-                      {selectedVM.networkInterfaces
-                        ?.map((nic) => nic.mac)
-                        .filter((mac): mac is string => Boolean(mac))
-                        .join(', ') || '-'}
-                    </dd>
-                    <dt className="text-ink-soft text-[0.84rem]">Created On Host</dt><dd className="m-0">{selectedVM.createdOnHost || '-'}</dd>
-                    <dt className="text-ink-soft text-[0.84rem]">Last Power Action</dt><dd className="m-0">{selectedVM.lastPowerAction || '-'}</dd>
-                    <dt className="text-ink-soft text-[0.84rem]">Last Error</dt><dd className="m-0 text-error">{selectedVM.lastError || '-'}</dd>
-                  </dl>
-                </article>
-              </section>
-
-              <section className="grid grid-cols-1 lg:grid-cols-2 gap-[0.85rem]">
-                <article className="bg-transparent border-0 border-t border-line shadow-none pt-[0.85rem]">
-                  <h3 className="mb-[0.58rem] text-[1.05rem]">Provisioning</h3>
-                  <dl className="m-0 grid grid-cols-[130px_minmax(0,1fr)] gap-x-[0.65rem] gap-y-[0.34rem]">
-                    <dt className="text-ink-soft text-[0.84rem]">Active</dt><dd className="m-0">{selectedVM.provisioning?.active ? 'Yes' : 'No'}</dd>
-                    <dt className="text-ink-soft text-[0.84rem]">Started</dt><dd className="m-0">{formatDate(selectedVM.provisioning?.startedAt)}</dd>
-                    <dt className="text-ink-soft text-[0.84rem]">Deadline</dt><dd className="m-0">{formatDate(selectedVM.provisioning?.deadlineAt)}</dd>
-                    <dt className="text-ink-soft text-[0.84rem]">Completed</dt><dd className="m-0">{formatDate(selectedVM.provisioning?.completedAt)}</dd>
-                    <dt className="text-ink-soft text-[0.84rem]">Completion Source</dt><dd className="m-0">{selectedVM.provisioning?.completionSource || '-'}</dd>
-                    <dt className="text-ink-soft text-[0.84rem]">Last Signal</dt><dd className="m-0">{formatDate(selectedVM.provisioning?.lastSignalAt)}</dd>
-                  </dl>
-                </article>
-
-                <article className="bg-transparent border-0 border-t border-line shadow-none pt-[0.85rem]">
-                  <h3 className="mb-[0.58rem] text-[1.05rem]">References</h3>
-                  <dl className="m-0 grid grid-cols-[130px_minmax(0,1fr)] gap-x-[0.65rem] gap-y-[0.34rem]">
-                    <dt className="text-ink-soft text-[0.84rem]">Hypervisor</dt><dd className="m-0">{selectedVM.hypervisorRef || 'Auto (scheduled by server)'}</dd>
-                    <dt className="text-ink-soft text-[0.84rem]">Subnet</dt><dd className="m-0">{selectedVM.subnetRef || '-'}</dd>
-                    <dt className="text-ink-soft text-[0.84rem]">DNS Domain</dt><dd className="m-0">{selectedVM.domain || '-'}</dd>
-                    <dt className="text-ink-soft text-[0.84rem]">OS Image</dt><dd className="m-0">{formatOSImageReference(selectedVM.osImageRef)}</dd>
-                    <dt className="text-ink-soft text-[0.84rem]">Cloud-Init</dt><dd className="m-0">{formatCloudInitReferences(selectedVM)}</dd>
-                    <dt className="text-ink-soft text-[0.84rem]">Install Config</dt><dd className="m-0">{selectedVM.installCfg?.type || '-'}</dd>
-                    <dt className="text-ink-soft text-[0.84rem]">Last Deployed Cloud-Init</dt><dd className="m-0">{selectedVM.lastDeployedCloudInitRef || '-'}</dd>
-                    <dt className="text-ink-soft text-[0.84rem]">Created</dt><dd className="m-0">{formatDate(selectedVM.createdAt)}</dd>
-                    <dt className="text-ink-soft text-[0.84rem]">Updated</dt><dd className="m-0">{formatDate(selectedVM.updatedAt)}</dd>
-                  </dl>
-                </article>
-              </section>
-
-              {selectedVM.advancedOptions && (
-                <section className="bg-transparent border-0 border-t border-line shadow-none pt-[0.85rem]">
-                  <h3 className="mb-[0.58rem] text-[1.05rem]">Advanced Options</h3>
-                  <dl className="m-0 grid grid-cols-[150px_minmax(0,1fr)] gap-x-[0.65rem] gap-y-[0.34rem]">
-                    {selectedVM.advancedOptions.cpuMode && (
-                      <><dt className="text-ink-soft text-[0.84rem]">CPU Mode</dt><dd className="m-0">{selectedVM.advancedOptions.cpuMode}</dd></>
-                    )}
-                    {selectedVM.advancedOptions.diskDriver && (
-                      <><dt className="text-ink-soft text-[0.84rem]">Disk Driver</dt><dd className="m-0">{selectedVM.advancedOptions.diskDriver}</dd></>
-                    )}
-                    {selectedVM.advancedOptions.diskFormat && (
-                      <><dt className="text-ink-soft text-[0.84rem]">Disk Format</dt><dd className="m-0">{selectedVM.advancedOptions.diskFormat}</dd></>
-                    )}
-                    {(selectedVM.advancedOptions.ioThreads ?? 0) > 0 && (
-                      <><dt className="text-ink-soft text-[0.84rem]">IO Threads</dt><dd className="m-0">{selectedVM.advancedOptions.ioThreads}</dd></>
-                    )}
-                    {(selectedVM.advancedOptions.netMultiqueue ?? 0) > 0 && (
-                      <><dt className="text-ink-soft text-[0.84rem]">Net Multiqueue</dt><dd className="m-0">{selectedVM.advancedOptions.netMultiqueue}</dd></>
-                    )}
-                    {selectedVM.advancedOptions.cpuPinning && Object.keys(selectedVM.advancedOptions.cpuPinning).length > 0 && (
-                      <><dt className="text-ink-soft text-[0.84rem]">CPU Pinning</dt><dd className="m-0"><code className="text-[0.82rem]">{Object.entries(selectedVM.advancedOptions.cpuPinning).map(([v, c]) => `${v}:${c}`).join(', ')}</code></dd></>
-                    )}
-                  </dl>
-                </section>
-              )}
-
-              {selectedVM.networkInterfaces && selectedVM.networkInterfaces.length > 0 && (
-                <section className="bg-transparent border-0 border-t border-line shadow-none pt-[0.85rem]">
-                  <h3 className="mb-[0.58rem] text-[1.05rem]">Runtime Network Interfaces</h3>
-                  <div className="overflow-auto">
-                    <table>
-                      <thead>
-                        <tr>
-                          <th>Name</th>
-                          <th>MAC</th>
-                          <th>IP Addresses</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {selectedVM.networkInterfaces.map((nic, i) => (
-                          <tr key={`${nic.name || 'nic'}-${i}`}>
-                            <td>{nic.name || '-'}</td>
-                            <td><code className="text-[0.82rem]">{nic.mac || '-'}</code></td>
-                            <td>{nic.ipAddresses && nic.ipAddresses.length > 0 ? nic.ipAddresses.join(', ') : '-'}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                </section>
-              )}
-            </>
-          )}
-        </div>
-      </section>
+      <VMWorkspace
+        virtualMachines={virtualMachines}
+        dataLoading={dataLoading}
+        quickDeploying={quickDeploying}
+        onQuickDeploy={() => void handleQuickDeploy()}
+        onOpenQuickDeploySettings={openQuickDeploySettings}
+        setForm={setForm}
+        setAdvancedOpen={setAdvancedOpen}
+        setFormOpen={setFormOpen}
+        checkedVMs={checkedVMs}
+        checkedNames={checkedNames}
+        selected={selected}
+        selectedVM={selectedVM}
+        toggleChecked={toggleChecked}
+        toggleAllChecked={toggleAllChecked}
+        setVMSelection={setVMSelection}
+        actionsMenuRef={actionsMenuRef}
+        actionsMenuOpen={actionsMenuOpen}
+        setActionsMenuOpen={setActionsMenuOpen}
+        runPrimaryAction={runPrimaryAction}
+        consoleVM={consoleVM}
+        setConsoleVM={setConsoleVM}
+        formatOSImageReference={formatOSImageReference}
+        formatCloudInitReferences={formatCloudInitReferences}
+      />
     </>
   )
 }
