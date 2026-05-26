@@ -83,8 +83,6 @@ func (h *Handler) injectSSHKeysAndLoginUser(ctx context.Context, cloudConfig str
 				"type":     "text",
 			}},
 		}
-	} else {
-		delete(cfg, "chpasswd")
 	}
 
 	if len(pubKeys) > 0 && !provision.LoginUserConfigured(loginUser) {
