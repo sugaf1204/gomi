@@ -6,6 +6,7 @@ import type { AuditEvent, Hypervisor, Machine, PowerConfig, Subnet } from '../..
 import { ActivityTab } from '../machine-tabs/ActivityTab'
 import { ConfigurationTab } from '../machine-tabs/ConfigurationTab'
 import { ConsoleTab } from '../machine-tabs/ConsoleTab'
+import { DeployTab } from '../machine-tabs/DeployTab'
 import { DetailTab } from '../machine-tabs/DetailTab'
 import { InfoTab } from '../machine-tabs/InfoTab'
 import { MachineTabBar } from '../machine-tabs/MachineTabBar'
@@ -220,6 +221,7 @@ function MachineTabs(props: MachinesWorkspaceProps & { selectedMachine: Machine 
     <>
       <MachineTabBar activeTab={machineTab} onTabChange={props.onMachineTabChange} />
       {machineTab === 'info' && <InfoTab machine={selectedMachine} />}
+      {machineTab === 'deploy' && <DeployTab machine={selectedMachine} />}
       {machineTab === 'detail' && <DetailTab machine={selectedMachine} />}
       {machineTab === 'network' && <NetworkTab machine={selectedMachine} subnets={props.subnets} onRefresh={props.onRefresh} />}
       {machineTab === 'console' && <ConsoleTab machine={selectedMachine} />}
