@@ -16,11 +16,15 @@ func (s *Server) ListSSHKeys(c echo.Context) error {
 	if err != nil {
 		return c.JSON(gohttp.StatusInternalServerError, jsonErrorErr(err))
 	}
-	// Sanitize: never return private key material in list responses.
-	for i := range keys {
-		keys[i].PrivateKey = ""
+	p, err := parsePagination(c, len(keys))
+	if err != nil {
+		return c.JSON(gohttp.StatusBadRequest, jsonErrorErr(err))
 	}
-	return c.JSON(gohttp.StatusOK, itemsResponse[sshkey.SSHKey]{Items: keys})
+	return c.JSON(gohttp.StatusOK, ListSSHKeysResponse{
+		SSHKeys:       sshKeyResponses(paginate(keys, p)),
+		NextPageToken: p.nextPageToken,
+		TotalSize:     p.totalSize,
+	})
 }
 
 func (s *Server) GetSSHKey(c echo.Context) error {
@@ -32,9 +36,7 @@ func (s *Server) GetSSHKey(c echo.Context) error {
 		}
 		return c.JSON(gohttp.StatusInternalServerError, jsonErrorErr(err))
 	}
-	// Sanitize: never return private key material in get responses.
-	k.PrivateKey = ""
-	return c.JSON(gohttp.StatusOK, k)
+	return c.JSON(gohttp.StatusOK, sshKeyResponse(k))
 }
 
 func (s *Server) CreateSSHKey(c echo.Context) error {
@@ -42,12 +44,13 @@ func (s *Server) CreateSSHKey(c echo.Context) error {
 	if err := c.Bind(&k); err != nil {
 		return c.JSON(gohttp.StatusBadRequest, jsonError("invalid body"))
 	}
+	k.Name = resourceID("sshKeys", k.Name)
 	created, err := s.sshkeys.Create(c.Request().Context(), k)
 	if err != nil {
 		return c.JSON(gohttp.StatusBadRequest, jsonErrorErr(err))
 	}
 	httputil.CreateAudit(c, s.authStore, "", "create-ssh-key", "success", "ssh key created: "+created.Name, nil)
-	return c.JSON(gohttp.StatusCreated, created)
+	return c.JSON(gohttp.StatusCreated, sshKeyResponse(created))
 }
 
 func (s *Server) DeleteSSHKey(c echo.Context) error {

@@ -104,29 +104,31 @@ func (s *AuthStore) CreateAuditEvent(ctx context.Context, event auth.AuditEvent)
 }
 
 func (s *AuthStore) ListAuditEvents(ctx context.Context, machineName string, limit int) ([]auth.AuditEvent, error) {
-	query := `SELECT id, machine, action, actor, result, message, COALESCE(details, ''), created_at FROM audit_events`
-	var args []any
-	var conditions []string
+	events, _, err := s.listAuditEvents(ctx, machineName, 0, limit)
+	return events, err
+}
 
-	if machineName != "" {
-		conditions = append(conditions, "LOWER(machine) = LOWER(?)")
-		args = append(args, machineName)
+func (s *AuthStore) ListAuditEventsPage(ctx context.Context, machineName string, offset, limit int) ([]auth.AuditEvent, int, error) {
+	return s.listAuditEvents(ctx, machineName, offset, limit)
+}
+
+func (s *AuthStore) listAuditEvents(ctx context.Context, machineName string, offset, limit int) ([]auth.AuditEvent, int, error) {
+	where, args := auditEventWhere(machineName)
+	var total int
+	countQuery := `SELECT COUNT(*) FROM audit_events` + where
+	if err := s.b.queryRow(ctx, countQuery, args...).Scan(&total); err != nil {
+		return nil, 0, err
 	}
 
-	if len(conditions) > 0 {
-		query += " WHERE " + strings.Join(conditions, " AND ")
-	}
-
-	query += " ORDER BY created_at DESC"
-
+	query := `SELECT id, machine, action, actor, result, message, COALESCE(details, ''), created_at FROM audit_events` + where + ` ORDER BY created_at DESC`
+	queryArgs := append([]any{}, args...)
 	if limit > 0 {
-		query += " LIMIT ?"
-		args = append(args, limit)
+		query += " LIMIT ? OFFSET ?"
+		queryArgs = append(queryArgs, limit, offset)
 	}
-
-	rows, err := s.b.query(ctx, query, args...)
+	rows, err := s.b.query(ctx, query, queryArgs...)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	defer rows.Close()
 
@@ -140,12 +142,25 @@ func (s *AuthStore) ListAuditEvents(ctx context.Context, machineName string, lim
 			&e.Message, &detailsJSON, &e.CreatedAt,
 		)
 		if err != nil {
-			return nil, err
+			return nil, 0, err
 		}
 		if detailsJSON != "" {
 			_ = json.Unmarshal([]byte(detailsJSON), &e.Details)
 		}
 		out = append(out, e)
 	}
-	return out, rows.Err()
+	return out, total, rows.Err()
+}
+
+func auditEventWhere(machineName string) (string, []any) {
+	var args []any
+	var conditions []string
+	if machineName != "" {
+		conditions = append(conditions, "LOWER(machine) = LOWER(?)")
+		args = append(args, machineName)
+	}
+	if len(conditions) == 0 {
+		return "", args
+	}
+	return " WHERE " + strings.Join(conditions, " AND "), args
 }

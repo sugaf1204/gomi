@@ -188,6 +188,7 @@ export type Hypervisor = {
     type: 'tcp'
     host: string
     port?: number
+    keyRef?: string
   }
   labels?: Record<string, string>
   machineRef?: string

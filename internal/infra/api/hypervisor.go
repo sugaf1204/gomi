@@ -16,12 +16,15 @@ func (s *Server) CreateHypervisor(c echo.Context) error {
 	if err := c.Bind(&h); err != nil {
 		return c.JSON(gohttp.StatusBadRequest, jsonError("invalid body"))
 	}
+	h.Name = resourceID("hypervisors", h.Name)
+	h.MachineRef = resourceID("machines", h.MachineRef)
+	h.Connection.KeyRef = resourceID("sshKeys", h.Connection.KeyRef)
 	created, err := s.hypervisors.Create(c.Request().Context(), h)
 	if err != nil {
 		return c.JSON(gohttp.StatusBadRequest, jsonErrorErr(err))
 	}
 	httputil.CreateAudit(c, s.authStore, created.Name, "create-hypervisor", "success", "hypervisor created", nil)
-	return c.JSON(gohttp.StatusCreated, created)
+	return c.JSON(gohttp.StatusCreated, hypervisorResponse(created))
 }
 
 func (s *Server) ListHypervisors(c echo.Context) error {
@@ -29,7 +32,15 @@ func (s *Server) ListHypervisors(c echo.Context) error {
 	if err != nil {
 		return c.JSON(gohttp.StatusInternalServerError, jsonErrorErr(err))
 	}
-	return c.JSON(gohttp.StatusOK, itemsResponse[hypervisor.Hypervisor]{Items: items})
+	p, err := parsePagination(c, len(items))
+	if err != nil {
+		return c.JSON(gohttp.StatusBadRequest, jsonErrorErr(err))
+	}
+	return c.JSON(gohttp.StatusOK, ListHypervisorsResponse{
+		Hypervisors:   hypervisorResponses(paginate(items, p)),
+		NextPageToken: p.nextPageToken,
+		TotalSize:     p.totalSize,
+	})
 }
 
 func (s *Server) GetHypervisor(c echo.Context) error {
@@ -41,7 +52,7 @@ func (s *Server) GetHypervisor(c echo.Context) error {
 		}
 		return c.JSON(gohttp.StatusInternalServerError, jsonErrorErr(err))
 	}
-	return c.JSON(gohttp.StatusOK, h)
+	return c.JSON(gohttp.StatusOK, hypervisorResponse(h))
 }
 
 func (s *Server) DeleteHypervisor(c echo.Context) error {
@@ -76,7 +87,13 @@ func (s *Server) RegisterHypervisor(c echo.Context) error {
 		return c.JSON(gohttp.StatusBadRequest, jsonErrorErr(err))
 	}
 
-	return c.JSON(gohttp.StatusCreated, hypervisor.RegisterResponse{Hypervisor: h, AgentToken: agentToken})
+	return c.JSON(gohttp.StatusCreated, struct {
+		Hypervisor HypervisorResponse `json:"hypervisor"`
+		AgentToken string             `json:"agentToken"`
+	}{
+		Hypervisor: hypervisorResponse(h),
+		AgentToken: agentToken,
+	})
 }
 
 func (s *Server) CreateAgentToken(c echo.Context) error {

@@ -21,7 +21,7 @@ func TestHypervisorCRUD(t *testing.T) {
 	rec := doRequest(env.echo, http.MethodPost, "/api/v1/hypervisors", hvBody, env.token)
 	requireStatus(t, rec, http.StatusCreated)
 	created := parseBody(t, rec)
-	if created["name"] != "hv-01" {
+	if created["name"] != "hypervisors/hv-01" {
 		t.Fatalf("expected name hv-01, got %v", created["name"])
 	}
 
@@ -29,16 +29,16 @@ func TestHypervisorCRUD(t *testing.T) {
 	rec = doRequest(env.echo, http.MethodGet, "/api/v1/hypervisors", nil, env.token)
 	requireStatus(t, rec, http.StatusOK)
 	body := parseBody(t, rec)
-	items, ok := body["items"].([]any)
-	if !ok || len(items) != 1 {
-		t.Fatalf("expected 1 hypervisor, got %v", body["items"])
+	items := listValues(t, body)
+	if len(items) != 1 {
+		t.Fatalf("expected 1 hypervisor, got %v", body)
 	}
 
 	// GET /api/v1/hypervisors/hv-01 - Get
 	rec = doRequest(env.echo, http.MethodGet, "/api/v1/hypervisors/hv-01", nil, env.token)
 	requireStatus(t, rec, http.StatusOK)
 	got := parseBody(t, rec)
-	if got["name"] != "hv-01" {
+	if got["name"] != "hypervisors/hv-01" {
 		t.Fatalf("expected name hv-01, got %v", got["name"])
 	}
 
@@ -85,7 +85,7 @@ func TestHypervisorRegistration(t *testing.T) {
 	requireStatus(t, rec, http.StatusCreated)
 	registered := parseBody(t, rec)
 	regHV, _ := registered["hypervisor"].(map[string]any)
-	if regHV["name"] != "hv-registered-01" {
+	if regHV["name"] != "hypervisors/hv-registered-01" {
 		t.Fatalf("expected name hv-registered-01, got %v", regHV["name"])
 	}
 
@@ -148,7 +148,7 @@ func TestVirtualMachineCRUD(t *testing.T) {
 	rec = doRequest(env.echo, http.MethodPost, "/api/v1/virtual-machines", vmBody, env.token)
 	requireStatus(t, rec, http.StatusCreated)
 	created := parseBody(t, rec)
-	if created["name"] != "vm-01" {
+	if created["name"] != "virtualMachines/vm-01" {
 		t.Fatalf("expected name vm-01, got %v", created["name"])
 	}
 	installCfg, _ := created["installConfig"].(map[string]any)
@@ -159,8 +159,8 @@ func TestVirtualMachineCRUD(t *testing.T) {
 	if active, _ := provisioning["active"].(bool); !active {
 		t.Fatalf("expected provisioning.active=true, got %v", provisioning["active"])
 	}
-	if token, _ := provisioning["completionToken"].(string); strings.TrimSpace(token) == "" {
-		t.Fatalf("expected provisioning.completionToken to be set, got %v", provisioning["completionToken"])
+	if _, ok := provisioning["completionToken"]; ok {
+		t.Fatalf("expected provisioning.completionToken to be redacted, got %v", provisioning)
 	}
 
 	unsupportedBody := map[string]any{
@@ -233,36 +233,36 @@ func TestVirtualMachineCRUD(t *testing.T) {
 	rec = doRequest(env.echo, http.MethodGet, "/api/v1/virtual-machines", nil, env.token)
 	requireStatus(t, rec, http.StatusOK)
 	body := parseBody(t, rec)
-	items, ok := body["items"].([]any)
-	if !ok || len(items) != 1 {
-		t.Fatalf("expected 1 vm, got %v", body["items"])
+	items := listValues(t, body)
+	if len(items) != 1 {
+		t.Fatalf("expected 1 vm, got %v", body)
 	}
 
 	// GET /api/v1/virtual-machines/vm-01 - Get
 	rec = doRequest(env.echo, http.MethodGet, "/api/v1/virtual-machines/vm-01", nil, env.token)
 	requireStatus(t, rec, http.StatusOK)
 	got := parseBody(t, rec)
-	if got["name"] != "vm-01" {
+	if got["name"] != "virtualMachines/vm-01" {
 		t.Fatalf("expected name vm-01, got %v", got["name"])
 	}
 
-	// POST /api/v1/virtual-machines/vm-01/actions/power-on - Power action
+	// POST /api/v1/virtual-machines/vm-01:powerOn - Power action
 	// This will fail at the libvirt level (no real hypervisor), but should not 403
 	// and should not panic. Expect an internal server error since there's no SSH key.
-	rec = doRequest(env.echo, http.MethodPost, "/api/v1/virtual-machines/vm-01/actions/power-on", nil, env.token)
+	rec = doRequest(env.echo, http.MethodPost, "/api/v1/virtual-machines/vm-01:powerOn", nil, env.token)
 	// Accept 500 (libvirt/SSH failure) but NOT 403/401
 	if rec.Code == http.StatusForbidden || rec.Code == http.StatusUnauthorized {
 		t.Fatalf("authenticated user should be allowed for power-on, got status %d", rec.Code)
 	}
 
-	// POST /api/v1/virtual-machines/vm-01/actions/redeploy
-	rec = doRequest(env.echo, http.MethodPost, "/api/v1/virtual-machines/vm-01/actions/redeploy", map[string]any{"confirm": "vm-01"}, env.token)
+	// POST /api/v1/virtual-machines/vm-01:redeploy
+	rec = doRequest(env.echo, http.MethodPost, "/api/v1/virtual-machines/vm-01:redeploy", map[string]any{"confirm": "vm-01"}, env.token)
 	if rec.Code == http.StatusForbidden || rec.Code == http.StatusUnauthorized || rec.Code == http.StatusNotFound {
 		t.Fatalf("redeploy route should be reachable, got status %d", rec.Code)
 	}
 
-	// POST /api/v1/virtual-machines/vm-01/actions/reinstall - legacy route should remain compatible
-	rec = doRequest(env.echo, http.MethodPost, "/api/v1/virtual-machines/vm-01/actions/reinstall", map[string]any{"confirm": "vm-01"}, env.token)
+	// POST /api/v1/virtual-machines/vm-01:reinstall
+	rec = doRequest(env.echo, http.MethodPost, "/api/v1/virtual-machines/vm-01:reinstall", map[string]any{"confirm": "vm-01"}, env.token)
 	if rec.Code == http.StatusForbidden || rec.Code == http.StatusUnauthorized || rec.Code == http.StatusNotFound {
 		t.Fatalf("reinstall route should be reachable, got status %d", rec.Code)
 	}

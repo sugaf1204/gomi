@@ -4,14 +4,15 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	gohttp "net/http"
+	"strings"
+	"time"
+
 	"github.com/labstack/echo/v4"
 	"github.com/sugaf1204/gomi/internal/infra/httputil"
 	"github.com/sugaf1204/gomi/internal/machine"
 	"github.com/sugaf1204/gomi/internal/power"
 	"github.com/sugaf1204/gomi/internal/resource"
-	gohttp "net/http"
-	"strings"
-	"time"
 )
 
 type redeployReq struct {
@@ -51,6 +52,7 @@ func (s *Server) RedeployMachine(c echo.Context) error {
 			return c.JSON(gohttp.StatusBadRequest, jsonError("invalid body"))
 		}
 	}
+	normalizeMachineRedeployRequestRefs(&req)
 	if strings.TrimSpace(req.Confirm) != "" && strings.TrimSpace(req.Confirm) != name {
 		return c.JSON(gohttp.StatusBadRequest, jsonError("confirm must match machine name"))
 	}
@@ -188,6 +190,31 @@ func (s *Server) RedeployMachine(c echo.Context) error {
 	httputil.CreateAudit(c, s.authStore, name, "redeploy", "success", "redeploy started", nil)
 	s.startRedeployPowerCycle(current, m, powerCycleFallbackIP)
 	return c.JSON(gohttp.StatusAccepted, machineResponse(m))
+}
+
+func normalizeMachineRedeployRequestRefs(req *redeployReq) {
+	if req == nil {
+		return
+	}
+	if req.OSPreset != nil {
+		req.OSPreset.ImageRef = resourceID("osImages", req.OSPreset.ImageRef)
+	}
+	if req.CloudInitRef != nil {
+		v := resourceID("cloudInitTemplates", *req.CloudInitRef)
+		req.CloudInitRef = &v
+	}
+	if req.CloudInitRefs != nil {
+		v := resourceIDs("cloudInitTemplates", *req.CloudInitRefs)
+		req.CloudInitRefs = &v
+	}
+	if req.SubnetRef != nil {
+		v := resourceID("subnets", *req.SubnetRef)
+		req.SubnetRef = &v
+	}
+	if req.SSHKeyRefs != nil {
+		v := resourceIDs("sshKeys", *req.SSHKeyRefs)
+		req.SSHKeyRefs = &v
+	}
 }
 
 func (s *Server) attachHypervisorRegistrationToken(ctx context.Context, m *machine.Machine) (bool, error) {

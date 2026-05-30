@@ -13,4 +13,5 @@ type Store interface {
 
 	CreateAuditEvent(ctx context.Context, event AuditEvent) error
 	ListAuditEvents(ctx context.Context, machine string, limit int) ([]AuditEvent, error)
+	ListAuditEventsPage(ctx context.Context, machine string, offset, limit int) ([]AuditEvent, int, error)
 }

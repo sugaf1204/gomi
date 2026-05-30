@@ -12,6 +12,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/labstack/echo/v4"
@@ -26,6 +27,7 @@ func (s *Server) CreateOSImage(c echo.Context) error {
 	if err := c.Bind(&img); err != nil {
 		return c.JSON(gohttp.StatusBadRequest, jsonError("invalid body"))
 	}
+	img.Name = resourceID("osImages", img.Name)
 	created, err := s.osimages.Create(c.Request().Context(), img)
 	if err != nil {
 		return c.JSON(gohttp.StatusBadRequest, jsonErrorErr(err))
@@ -34,7 +36,7 @@ func (s *Server) CreateOSImage(c echo.Context) error {
 		created = s.downloadURLImage(c, created)
 	}
 	httputil.CreateAudit(c, s.authStore, created.Name, "create-os-image", "success", "os image created", nil)
-	return c.JSON(gohttp.StatusCreated, created)
+	return c.JSON(gohttp.StatusCreated, osImageResponse(created))
 }
 
 func (s *Server) ListOSImages(c echo.Context) error {
@@ -42,7 +44,16 @@ func (s *Server) ListOSImages(c echo.Context) error {
 	if err != nil {
 		return c.JSON(gohttp.StatusInternalServerError, jsonErrorErr(err))
 	}
-	return c.JSON(gohttp.StatusOK, itemsResponse[osimage.OSImage]{Items: items})
+	items = filterOSImages(c, items)
+	p, err := parsePagination(c, len(items))
+	if err != nil {
+		return c.JSON(gohttp.StatusBadRequest, jsonErrorErr(err))
+	}
+	return c.JSON(gohttp.StatusOK, ListOSImagesResponse{
+		OSImages:      osImageResponses(paginate(items, p)),
+		NextPageToken: p.nextPageToken,
+		TotalSize:     p.totalSize,
+	})
 }
 
 func (s *Server) GetOSImage(c echo.Context) error {
@@ -54,7 +65,7 @@ func (s *Server) GetOSImage(c echo.Context) error {
 		}
 		return c.JSON(gohttp.StatusInternalServerError, jsonErrorErr(err))
 	}
-	return c.JSON(gohttp.StatusOK, img)
+	return c.JSON(gohttp.StatusOK, osImageResponse(img))
 }
 
 func (s *Server) UploadOSImage(c echo.Context) error {
@@ -113,7 +124,7 @@ func (s *Server) UploadOSImage(c echo.Context) error {
 		return c.JSON(gohttp.StatusInternalServerError, jsonErrorErr(err))
 	}
 	httputil.CreateAudit(c, s.authStore, name, "upload-os-image", "success", "os image uploaded", nil)
-	return c.JSON(gohttp.StatusOK, updated)
+	return c.JSON(gohttp.StatusOK, osImageResponse(updated))
 }
 
 func (s *Server) downloadURLImage(c echo.Context, img osimage.OSImage) osimage.OSImage {
@@ -327,7 +338,7 @@ func (s *Server) UpdateOSImageStatus(c echo.Context) error {
 		return c.JSON(gohttp.StatusInternalServerError, jsonErrorErr(err))
 	}
 	httputil.CreateAudit(c, s.authStore, name, "update-os-image-status", "success", "os image status updated", nil)
-	return c.JSON(gohttp.StatusOK, updated)
+	return c.JSON(gohttp.StatusOK, osImageResponse(updated))
 }
 
 func (s *Server) DownloadOSImage(c echo.Context) error {
@@ -364,4 +375,31 @@ func (s *Server) DeleteOSImage(c echo.Context) error {
 	}
 	httputil.CreateAudit(c, s.authStore, name, "delete-os-image", "success", "os image deleted", nil)
 	return c.NoContent(gohttp.StatusNoContent)
+}
+
+func filterOSImages(c echo.Context, items []osimage.OSImage) []osimage.OSImage {
+	family := stringFilter(c, "osFamily")
+	format := stringFilter(c, "format")
+	variant := stringFilter(c, "variant")
+	ready := stringFilter(c, "ready")
+	if family == "" && format == "" && variant == "" && ready == "" {
+		return items
+	}
+	out := make([]osimage.OSImage, 0, len(items))
+	for _, item := range items {
+		if !matchFilter(item.OSFamily, family) {
+			continue
+		}
+		if !matchFilter(string(item.Format), format) {
+			continue
+		}
+		if !matchFilter(string(item.Variant), variant) {
+			continue
+		}
+		if ready != "" && !matchFilter(strconv.FormatBool(item.Ready), ready) {
+			continue
+		}
+		out = append(out, item)
+	}
+	return out
 }

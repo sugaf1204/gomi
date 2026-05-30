@@ -63,14 +63,14 @@ func TestWorkflow_CrossResourceIntegrity(t *testing.T) {
 	rec = doRequest(env.echo, http.MethodGet, "/api/v1/virtual-machines/vm-x1", nil, env.token)
 	requireStatus(t, rec, http.StatusOK)
 	vm1 := parseBody(t, rec)
-	if vm1["hypervisorRef"] != "hv-x1" {
+	if vm1["hypervisorRef"] != "hypervisors/hv-x1" {
 		t.Fatalf("expected hypervisorRef hv-x1, got %v", vm1["hypervisorRef"])
 	}
 
 	rec = doRequest(env.echo, http.MethodGet, "/api/v1/virtual-machines/vm-x2", nil, env.token)
 	requireStatus(t, rec, http.StatusOK)
 	vm2 := parseBody(t, rec)
-	if vm2["hypervisorRef"] != "hv-x2" {
+	if vm2["hypervisorRef"] != "hypervisors/hv-x2" {
 		t.Fatalf("expected hypervisorRef hv-x2, got %v", vm2["hypervisorRef"])
 	}
 
@@ -157,8 +157,8 @@ func TestWorkflow_ResponseJSONStructure(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &listRaw); err != nil {
 		t.Fatalf("failed to parse list JSON: %v", err)
 	}
-	if _, ok := listRaw["items"]; !ok {
-		t.Fatal("list response missing 'items' key")
+	if _, ok := listRaw["virtualMachines"]; !ok {
+		t.Fatal("list response missing 'virtualMachines' key")
 	}
 
 	// Cleanup.

@@ -3,8 +3,15 @@ package api
 import (
 	"context"
 	crand "crypto/rand"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"log"
+	gohttp "net/http"
+	"strings"
+	"time"
+
 	"github.com/labstack/echo/v4"
 	"github.com/sugaf1204/gomi/internal/hypervisor"
 	"github.com/sugaf1204/gomi/internal/infra/httputil"
@@ -12,17 +19,35 @@ import (
 	"github.com/sugaf1204/gomi/internal/libvirt"
 	"github.com/sugaf1204/gomi/internal/resource"
 	"github.com/sugaf1204/gomi/internal/vm"
-	"log"
-	gohttp "net/http"
-	"strings"
-	"time"
 )
 
 const defaultVMBridge = "br-eth0"
 
+type createVirtualMachineRequest struct {
+	VirtualMachineID string                     `json:"virtualMachineId,omitempty"`
+	VirtualMachine   *virtualMachineSpecRequest `json:"virtualMachine"`
+}
+
+type virtualMachineSpecRequest struct {
+	HypervisorRef      string                `json:"hypervisorRef"`
+	Resources          vm.ResourceSpec       `json:"resources"`
+	OSImageRef         string                `json:"osImageRef,omitempty"`
+	CloudInitRef       string                `json:"cloudInitRef,omitempty"`
+	CloudInitRefs      []string              `json:"cloudInitRefs,omitempty"`
+	Network            []vm.NetworkInterface `json:"network,omitempty"`
+	IPAssignment       vm.IPAssignmentMode   `json:"ipAssignment,omitempty"`
+	SubnetRef          string                `json:"subnetRef,omitempty"`
+	Domain             string                `json:"domain,omitempty"`
+	InstallConfig      *vm.InstallConfig     `json:"installConfig,omitempty"`
+	PowerControlMethod vm.PowerControlMethod `json:"powerControlMethod"`
+	AdvancedOptions    *vm.AdvancedOptions   `json:"advancedOptions,omitempty"`
+	SSHKeyRefs         []string              `json:"sshKeyRefs,omitempty"`
+	LoginUser          *vm.LoginUserSpec     `json:"loginUser,omitempty"`
+}
+
 func (s *Server) CreateVirtualMachine(c echo.Context) error {
-	var v vm.VirtualMachine
-	if err := c.Bind(&v); err != nil {
+	v, err := bindCreateVirtualMachine(c)
+	if err != nil {
 		return c.JSON(gohttp.StatusBadRequest, jsonError("invalid body"))
 	}
 	ctx := c.Request().Context()
@@ -77,7 +102,7 @@ func (s *Server) CreateVirtualMachine(c echo.Context) error {
 	} else {
 		httputil.CreateAudit(c, s.authStore, created.Name, "create-vm", "success", "virtual machine created", nil)
 	}
-	return c.JSON(gohttp.StatusCreated, created)
+	return c.JSON(gohttp.StatusCreated, virtualMachineResponse(created))
 }
 
 func (s *Server) ListVirtualMachines(c echo.Context) error {
@@ -100,7 +125,16 @@ func (s *Server) ListVirtualMachines(c echo.Context) error {
 			items[i] = synced
 		}
 	}
-	return c.JSON(gohttp.StatusOK, itemsResponse[vm.VirtualMachine]{Items: items})
+	items = filterVirtualMachines(c, items)
+	p, err := parsePagination(c, len(items))
+	if err != nil {
+		return c.JSON(gohttp.StatusBadRequest, jsonErrorErr(err))
+	}
+	return c.JSON(gohttp.StatusOK, ListVirtualMachinesResponse{
+		VirtualMachines: virtualMachineResponses(paginate(items, p)),
+		NextPageToken:   p.nextPageToken,
+		TotalSize:       p.totalSize,
+	})
 }
 
 func (s *Server) GetVirtualMachine(c echo.Context) error {
@@ -124,7 +158,7 @@ func (s *Server) GetVirtualMachine(c echo.Context) error {
 			v = synced
 		}
 	}
-	return c.JSON(gohttp.StatusOK, v)
+	return c.JSON(gohttp.StatusOK, virtualMachineResponse(v))
 }
 
 func (s *Server) DeleteVirtualMachine(c echo.Context) error {
@@ -201,6 +235,92 @@ func ensureVMNetwork(v *vm.VirtualMachine) {
 			v.Network[i].MAC = generateKVMMAC()
 		}
 	}
+}
+
+func bindCreateVirtualMachine(c echo.Context) (vm.VirtualMachine, error) {
+	body, err := io.ReadAll(c.Request().Body)
+	if err != nil {
+		return vm.VirtualMachine{}, err
+	}
+	var req createVirtualMachineRequest
+	if err := json.Unmarshal(body, &req); err == nil && req.VirtualMachine != nil {
+		id := strings.TrimSpace(c.QueryParam("virtualMachineId"))
+		if id == "" {
+			id = strings.TrimSpace(req.VirtualMachineID)
+		}
+		if id == "" {
+			return vm.VirtualMachine{}, fmt.Errorf("virtualMachineId is required")
+		}
+		return req.VirtualMachine.toVirtualMachine(resourceID("virtualMachines", id)), nil
+	}
+	var v vm.VirtualMachine
+	if err := json.Unmarshal(body, &v); err != nil {
+		return vm.VirtualMachine{}, err
+	}
+	normalizeVirtualMachineRequestRefs(&v)
+	return v, nil
+}
+
+func (r virtualMachineSpecRequest) toVirtualMachine(id string) vm.VirtualMachine {
+	v := vm.VirtualMachine{
+		Name:               id,
+		HypervisorRef:      r.HypervisorRef,
+		Resources:          r.Resources,
+		OSImageRef:         r.OSImageRef,
+		CloudInitRef:       r.CloudInitRef,
+		CloudInitRefs:      r.CloudInitRefs,
+		Network:            r.Network,
+		IPAssignment:       r.IPAssignment,
+		SubnetRef:          r.SubnetRef,
+		Domain:             r.Domain,
+		InstallCfg:         r.InstallConfig,
+		PowerControlMethod: r.PowerControlMethod,
+		AdvancedOptions:    r.AdvancedOptions,
+		SSHKeyRefs:         r.SSHKeyRefs,
+		LoginUser:          r.LoginUser,
+	}
+	normalizeVirtualMachineRequestRefs(&v)
+	return v
+}
+
+func normalizeVirtualMachineRequestRefs(v *vm.VirtualMachine) {
+	if v == nil {
+		return
+	}
+	v.Name = resourceID("virtualMachines", v.Name)
+	v.HypervisorRef = resourceID("hypervisors", v.HypervisorRef)
+	v.OSImageRef = resourceID("osImages", v.OSImageRef)
+	v.CloudInitRef = resourceID("cloudInitTemplates", v.CloudInitRef)
+	v.CloudInitRefs = resourceIDs("cloudInitTemplates", v.CloudInitRefs)
+	v.SubnetRef = resourceID("subnets", v.SubnetRef)
+	v.SSHKeyRefs = resourceIDs("sshKeys", v.SSHKeyRefs)
+}
+
+func filterVirtualMachines(c echo.Context, items []vm.VirtualMachine) []vm.VirtualMachine {
+	phase := stringFilter(c, "phase")
+	hypervisorRef := resourceID("hypervisors", stringFilter(c, "hypervisorRef"))
+	subnetRef := resourceID("subnets", stringFilter(c, "subnetRef"))
+	ipAssignment := stringFilter(c, "ipAssignment")
+	if phase == "" && hypervisorRef == "" && subnetRef == "" && ipAssignment == "" {
+		return items
+	}
+	out := make([]vm.VirtualMachine, 0, len(items))
+	for _, item := range items {
+		if !matchFilter(string(item.Phase), phase) {
+			continue
+		}
+		if !matchFilter(item.HypervisorRef, hypervisorRef) {
+			continue
+		}
+		if !matchFilter(item.SubnetRef, subnetRef) {
+			continue
+		}
+		if !matchFilter(string(item.IPAssignment), ipAssignment) {
+			continue
+		}
+		out = append(out, item)
+	}
+	return out
 }
 
 // resolveVMBridgeFromHypervisor replaces default bridge names with the

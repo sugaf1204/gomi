@@ -52,13 +52,13 @@ func TestDNSRecordAPIManagesEmbeddedRecords(t *testing.T) {
 		t.Fatalf("expected 200, got %d body=%s", rec.Code, rec.Body.String())
 	}
 	var list struct {
-		Items []dns.DynamicRecord `json:"items"`
+		DNSRecords []dns.DynamicRecord `json:"dnsRecords"`
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &list); err != nil {
 		t.Fatal(err)
 	}
-	if len(list.Items) != 1 || list.Items[0].Name != "app.lab.local." || list.Items[0].Values[0] != "10.0.0.50" {
-		t.Fatalf("unexpected list response: %#v", list.Items)
+	if len(list.DNSRecords) != 1 || list.DNSRecords[0].Name != "app.lab.local." || list.DNSRecords[0].Values[0] != "10.0.0.50" {
+		t.Fatalf("unexpected list response: %#v", list.DNSRecords)
 	}
 
 	body = bytes.NewBufferString(`{"ttl":120,"values":["10.0.0.51"]}`)

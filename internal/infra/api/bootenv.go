@@ -7,22 +7,32 @@ import (
 
 	"github.com/labstack/echo/v4"
 
-	"github.com/sugaf1204/gomi/internal/bootenv"
 	"github.com/sugaf1204/gomi/internal/resource"
 )
 
 func (s *Server) ListBootEnvironments(c echo.Context) error {
+	var items []BootEnvironmentResponse
 	if s.bootenvs == nil {
-		return c.JSON(gohttp.StatusOK, itemsResponse[bootenv.Status]{Items: []bootenv.Status{}})
+		items = []BootEnvironmentResponse{}
+	} else {
+		items = bootEnvironmentResponses(s.bootenvs.List())
 	}
-	return c.JSON(gohttp.StatusOK, itemsResponse[bootenv.Status]{Items: s.bootenvs.List()})
+	p, err := parsePagination(c, len(items))
+	if err != nil {
+		return c.JSON(gohttp.StatusBadRequest, jsonErrorErr(err))
+	}
+	return c.JSON(gohttp.StatusOK, ListBootEnvironmentsResponse{
+		BootEnvironments: paginate(items, p),
+		NextPageToken:    p.nextPageToken,
+		TotalSize:        p.totalSize,
+	})
 }
 
 func (s *Server) RebuildBootEnvironment(c echo.Context) error {
 	if s.bootenvs == nil {
 		return c.JSON(gohttp.StatusServiceUnavailable, jsonError("boot environment manager is not configured"))
 	}
-	return c.JSON(gohttp.StatusAccepted, s.bootenvs.StartRebuild(c.Param("name")))
+	return c.JSON(gohttp.StatusAccepted, bootEnvironmentResponse(s.bootenvs.StartRebuild(c.Param("name"))))
 }
 
 func (s *Server) GetBootEnvironmentLogs(c echo.Context) error {

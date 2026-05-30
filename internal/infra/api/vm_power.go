@@ -84,7 +84,7 @@ func (s *Server) runVMPowerAction(c echo.Context, action string) error {
 	}
 
 	httputil.CreateAudit(c, s.authStore, name, action, "success", "vm power action complete", nil)
-	return c.JSON(gohttp.StatusOK, updated)
+	return c.JSON(gohttp.StatusOK, virtualMachineResponse(updated))
 }
 
 func (s *Server) executeLibvirtPowerAction(ctx context.Context, hv hypervisor.Hypervisor, v vm.VirtualMachine, action string) error {

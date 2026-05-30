@@ -89,7 +89,7 @@ func syncOnce(ctx context.Context, cfg Config, client *apiClient) error {
 		// Check if file already exists with correct checksum
 		if needsDownload(destPath, img.Checksum) {
 			log.Printf("gomi-hypervisor: downloading %s", filename)
-			if err := client.downloadImage(ctx, img.Name, destPath); err != nil {
+			if err := client.downloadImage(ctx, osImageID(img), destPath); err != nil {
 				log.Printf("gomi-hypervisor: download %s failed: %v", filename, err)
 				continue
 			}

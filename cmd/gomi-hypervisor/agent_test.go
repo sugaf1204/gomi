@@ -21,9 +21,9 @@ func TestSyncOnce_DownloadsReadyImages(t *testing.T) {
 		switch r.URL.Path {
 		case "/api/v1/os-images":
 			resp := map[string]any{
-				"items": []OSImage{
-					{Name: "ubuntu-22.04", Format: "qcow2", Ready: true},
-					{Name: "not-ready", Format: "iso", Ready: false},
+				"osImages": []OSImage{
+					{Name: "osImages/ubuntu-22.04", OSImageID: "ubuntu-22.04", Format: "qcow2", Ready: true},
+					{Name: "osImages/not-ready", OSImageID: "not-ready", Format: "iso", Ready: false},
 				},
 			}
 			json.NewEncoder(w).Encode(resp)
@@ -60,6 +60,57 @@ func TestSyncOnce_DownloadsReadyImages(t *testing.T) {
 	}
 }
 
+func TestSyncOnce_FollowsOSImagePagesBeforeCleanup(t *testing.T) {
+	imageContent := []byte("paged-qcow2-data")
+	var sawSecondPage bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v1/os-images":
+			switch r.URL.Query().Get("pageToken") {
+			case "":
+				resp := map[string]any{
+					"osImages": []OSImage{
+						{Name: "osImages/first-page", OSImageID: "first-page", Format: "qcow2", Ready: true},
+					},
+					"nextPageToken": "second",
+				}
+				json.NewEncoder(w).Encode(resp)
+			case "second":
+				sawSecondPage = true
+				resp := map[string]any{
+					"osImages": []OSImage{
+						{Name: "osImages/second-page", OSImageID: "second-page", Format: "qcow2", Ready: true},
+					},
+				}
+				json.NewEncoder(w).Encode(resp)
+			default:
+				http.NotFound(w, r)
+			}
+		case "/api/v1/os-images/first-page/download", "/api/v1/os-images/second-page/download":
+			w.Write(imageContent)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "second-page.qcow2"), []byte("already-here"), 0o644)
+	os.WriteFile(filepath.Join(dir, "second-page.qcow2"+managedMarkerSuffix), []byte("gomi-hypervisor\n"), 0o644)
+	cfg := Config{ServerURL: srv.URL, Interval: time.Minute, ImageDir: dir}
+	client := newAPIClient(srv.URL, "")
+
+	if err := syncOnce(context.Background(), cfg, client); err != nil {
+		t.Fatalf("syncOnce: %v", err)
+	}
+	if !sawSecondPage {
+		t.Fatal("expected agent to request the second OS image page")
+	}
+	if _, err := os.Stat(filepath.Join(dir, "second-page.qcow2")); err != nil {
+		t.Fatalf("expected later-page managed image to be kept: %v", err)
+	}
+}
+
 func TestSyncOnce_DownloadsArtifactRoot(t *testing.T) {
 	imageContent := []byte("qcow2-root-image")
 	sum := sha256.Sum256(imageContent)
@@ -70,7 +121,7 @@ func TestSyncOnce_DownloadsArtifactRoot(t *testing.T) {
 		switch r.URL.Path {
 		case "/api/v1/os-images":
 			resp := map[string]any{
-				"items": []OSImage{
+				"osImages": []OSImage{
 					{
 						Name:   "ubuntu-artifact",
 						Format: "qcow2",
@@ -132,7 +183,7 @@ func TestSyncOnce_DownloadsXZCompressedArtifactRoot(t *testing.T) {
 		switch r.URL.Path {
 		case "/api/v1/os-images":
 			resp := map[string]any{
-				"items": []OSImage{
+				"osImages": []OSImage{
 					{
 						Name:   "debian-artifact",
 						Format: "squashfs",
@@ -180,7 +231,7 @@ func TestSyncOnce_DownloadsSquashFSWithInternalXZCompression(t *testing.T) {
 		switch r.URL.Path {
 		case "/api/v1/os-images":
 			resp := map[string]any{
-				"items": []OSImage{
+				"osImages": []OSImage{
 					{
 						Name:   "fedora-artifact",
 						Format: "squashfs",
@@ -224,7 +275,7 @@ func TestSyncOnce_CleansUpStaleFiles(t *testing.T) {
 		switch r.URL.Path {
 		case "/api/v1/os-images":
 			resp := map[string]any{
-				"items": []OSImage{
+				"osImages": []OSImage{
 					{Name: "keep-me", Format: "qcow2", Ready: true},
 				},
 			}
@@ -270,7 +321,7 @@ func TestSyncOnce_SkipsExistingFileWithNoChecksum(t *testing.T) {
 		switch r.URL.Path {
 		case "/api/v1/os-images":
 			resp := map[string]any{
-				"items": []OSImage{
+				"osImages": []OSImage{
 					{Name: "existing", Format: "qcow2", Ready: true},
 				},
 			}

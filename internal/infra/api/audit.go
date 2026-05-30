@@ -2,25 +2,28 @@ package api
 
 import (
 	gohttp "net/http"
-	"strconv"
 	"strings"
 
 	"github.com/labstack/echo/v4"
-
-	"github.com/sugaf1204/gomi/internal/auth"
 )
 
 func (s *Server) ListAuditEvents(c echo.Context) error {
 	machineName := strings.TrimSpace(c.QueryParam("machine"))
-	limit := 50
-	if raw := strings.TrimSpace(c.QueryParam("limit")); raw != "" {
-		if v, err := strconv.Atoi(raw); err == nil && v > 0 && v <= 200 {
-			limit = v
-		}
+	start, size, err := parsePageRequest(c)
+	if err != nil {
+		return c.JSON(gohttp.StatusBadRequest, jsonErrorErr(err))
 	}
-	events, err := s.authStore.ListAuditEvents(c.Request().Context(), machineName, limit)
+	events, total, err := s.authStore.ListAuditEventsPage(c.Request().Context(), machineName, start, size)
 	if err != nil {
 		return c.JSON(gohttp.StatusInternalServerError, jsonErrorErr(err))
 	}
-	return c.JSON(gohttp.StatusOK, itemsResponse[auth.AuditEvent]{Items: events})
+	next := ""
+	if start+len(events) < total {
+		next = encodePageToken(start + len(events))
+	}
+	return c.JSON(gohttp.StatusOK, ListAuditEventsResponse{
+		AuditEvents:   events,
+		NextPageToken: next,
+		TotalSize:     total,
+	})
 }

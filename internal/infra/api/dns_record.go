@@ -17,7 +17,15 @@ func (s *Server) ListDNSRecords(c echo.Context) error {
 	if err != nil {
 		return c.JSON(gohttp.StatusInternalServerError, jsonErrorErr(err))
 	}
-	return c.JSON(gohttp.StatusOK, itemsResponse[dns.DynamicRecord]{Items: records})
+	p, err := parsePagination(c, len(records))
+	if err != nil {
+		return c.JSON(gohttp.StatusBadRequest, jsonErrorErr(err))
+	}
+	return c.JSON(gohttp.StatusOK, ListDNSRecordsResponse{
+		DNSRecords:    paginate(records, p),
+		NextPageToken: p.nextPageToken,
+		TotalSize:     p.totalSize,
+	})
 }
 
 func (s *Server) CreateDNSRecord(c echo.Context) error {

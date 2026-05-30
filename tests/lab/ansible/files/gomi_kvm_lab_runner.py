@@ -983,8 +983,10 @@ class LabRunner:
                 f"http://127.0.0.1:{self.gomi_vm['api_port']}/api/v1/boot-environments",
                 token=self.api_token,
             )
-            for item in response.get("items", []):
-                if item.get("name") != name:
+            for item in response.get("bootEnvironments", []):
+                item_name = str(item.get("name") or "")
+                item_id = item_name.removeprefix("bootEnvironments/")
+                if item_id != name:
                     continue
                 if item.get("phase") == "error":
                     raise LabError(f"boot environment build failed for {name}: {item.get('message', '')}")
@@ -1142,7 +1144,7 @@ class LabRunner:
     def power_on_machine(self, name: str) -> None:
         http_json(
             "POST",
-            f"http://127.0.0.1:{self.gomi_vm['api_port']}/api/v1/machines/{name}/actions/power-on",
+            f"http://127.0.0.1:{self.gomi_vm['api_port']}/api/v1/machines/{name}:powerOn",
             token=self.api_token,
             payload={},
         )
@@ -1150,7 +1152,7 @@ class LabRunner:
     def power_off_machine(self, name: str) -> None:
         http_json(
             "POST",
-            f"http://127.0.0.1:{self.gomi_vm['api_port']}/api/v1/machines/{name}/actions/power-off",
+            f"http://127.0.0.1:{self.gomi_vm['api_port']}/api/v1/machines/{name}:powerOff",
             token=self.api_token,
             payload={},
         )

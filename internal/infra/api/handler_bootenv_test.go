@@ -12,12 +12,9 @@ func TestBootEnvironmentsListStartsMissing(t *testing.T) {
 	requireStatus(t, rec, http.StatusOK)
 
 	body := parseBody(t, rec)
-	items, ok := body["items"].([]any)
-	if !ok {
-		t.Fatalf("expected items array, got %T", body["items"])
-	}
+	items := listValues(t, body)
 	want := map[string]bool{
-		"ubuntu-minimal-cloud-amd64": false,
+		"bootEnvironments/ubuntu-minimal-cloud-amd64": false,
 	}
 	for _, raw := range items {
 		item, ok := raw.(map[string]any)

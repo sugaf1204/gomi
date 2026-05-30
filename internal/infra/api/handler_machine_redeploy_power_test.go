@@ -44,7 +44,7 @@ func TestRedeployMachine_PowerCyclesPoweredMachine(t *testing.T) {
 	}, env.token)
 	requireStatus(t, rec, http.StatusCreated)
 
-	rec = doRequest(env.echo, http.MethodPost, "/api/v1/machines/machine-powered-redeploy/actions/redeploy", map[string]any{
+	rec = doRequest(env.echo, http.MethodPost, "/api/v1/machines/machine-powered-redeploy:redeploy", map[string]any{
 		"confirm": "machine-powered-redeploy",
 	}, env.token)
 	requireStatus(t, rec, http.StatusAccepted)
@@ -108,7 +108,7 @@ func TestRedeployMachine_PowerCycleUsesPreviousIPWhenRedeployClearsIP(t *testing
 	}, env.token)
 	requireStatus(t, rec, http.StatusCreated)
 
-	rec = doRequest(env.echo, http.MethodPost, "/api/v1/machines/machine-dhcp-redeploy/actions/redeploy", map[string]any{
+	rec = doRequest(env.echo, http.MethodPost, "/api/v1/machines/machine-dhcp-redeploy:redeploy", map[string]any{
 		"confirm":      "machine-dhcp-redeploy",
 		"ipAssignment": "dhcp",
 	}, env.token)

@@ -4,13 +4,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	gohttp "net/http"
+	"strings"
+	"time"
+
 	"github.com/labstack/echo/v4"
 	"github.com/sugaf1204/gomi/internal/infra/httputil"
 	"github.com/sugaf1204/gomi/internal/resource"
 	"github.com/sugaf1204/gomi/internal/vm"
-	gohttp "net/http"
-	"strings"
-	"time"
 )
 
 type vmMigrateReq struct {
@@ -27,6 +28,7 @@ func (s *Server) MigrateVM(c echo.Context) error {
 			return c.JSON(gohttp.StatusBadRequest, jsonError("invalid body"))
 		}
 	}
+	req.TargetHypervisor = resourceID("hypervisors", req.TargetHypervisor)
 
 	v, err := s.vms.Get(ctx, name)
 	if err != nil {
@@ -62,7 +64,7 @@ func (s *Server) MigrateVM(c echo.Context) error {
 		"source": sourceHVName,
 		"target": targetHVName,
 	})
-	return c.JSON(gohttp.StatusOK, updated)
+	return c.JSON(gohttp.StatusOK, virtualMachineResponse(updated))
 }
 
 func (s *Server) updateVMPXEProvisioningError(ctx context.Context, current vm.VirtualMachine, reinstallErr error) error {

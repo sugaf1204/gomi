@@ -175,7 +175,7 @@ bootstrap_gomi_api() {
   vm_ssh "curl -fsS -X POST 'http://127.0.0.1:8080/api/v1/power-policies?namespace=default' -H 'Authorization: Bearer $TOKEN' -H 'Content-Type: application/json' -d '{\"metadata\":{\"name\":\"$POWER_POLICY\"},\"spec\":{\"type\":\"webhook\",\"webhook\":{\"powerOnURL\":\"http://127.0.0.1:19999/on\",\"powerOffURL\":\"http://127.0.0.1:19999/off\"}}}' >/dev/null"
   vm_ssh "curl -fsS -X POST 'http://127.0.0.1:8080/api/v1/machines?namespace=default' -H 'Authorization: Bearer $TOKEN' -H 'Content-Type: application/json' -d '{\"metadata\":{\"name\":\"$MACHINE_NAME\"},\"spec\":{\"hostname\":\"$MACHINE_NAME\",\"mac\":\"$TEST_MAC\",\"arch\":\"amd64\",\"firmware\":\"bios\",\"powerPolicyRef\":\"$POWER_POLICY\",\"networkProfileRef\":\"$NET_PROFILE\",\"osPreset\":{\"family\":\"debian\",\"version\":\"13\",\"imageRef\":\"debian-13-netboot\"}}}' >/dev/null"
 
-  JOB_NAME=$(vm_ssh "curl -fsS -X POST 'http://127.0.0.1:8080/api/v1/machines/$MACHINE_NAME/actions/reinstall?namespace=default' -H 'Authorization: Bearer $TOKEN' -H 'Content-Type: application/json' -d '{\"confirm\":\"$MACHINE_NAME\"}' | jq -r '.job.metadata.name'")
+  JOB_NAME=$(vm_ssh "curl -fsS -X POST 'http://127.0.0.1:8080/api/v1/machines/$MACHINE_NAME:reinstall?namespace=default' -H 'Authorization: Bearer $TOKEN' -H 'Content-Type: application/json' -d '{\"confirm\":\"$MACHINE_NAME\"}' | jq -r '.job.metadata.name'")
   if [[ -z "$JOB_NAME" || "$JOB_NAME" == "null" ]]; then
     echo "ERROR: failed to enqueue reinstall job" >&2
     exit 1

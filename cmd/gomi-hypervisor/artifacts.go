@@ -15,6 +15,14 @@ func isArtifactImage(img OSImage) bool {
 	return img.Manifest != nil && strings.TrimSpace(img.Manifest.Root.Path) != ""
 }
 
+func osImageID(img OSImage) string {
+	if id := strings.TrimSpace(img.OSImageID); id != "" {
+		return id
+	}
+	name := strings.TrimSpace(img.Name)
+	return strings.TrimPrefix(name, "osImages/")
+}
+
 func syncedImageFilename(img OSImage) string {
 	format := strings.TrimSpace(img.Format)
 	if isArtifactImage(img) && strings.TrimSpace(img.Manifest.Root.Format) != "" {
@@ -23,7 +31,7 @@ func syncedImageFilename(img OSImage) string {
 	if format == "" {
 		format = "qcow2"
 	}
-	return img.Name + "." + format
+	return osImageID(img) + "." + format
 }
 
 func artifactSourceChecksum(img OSImage) string {
@@ -35,10 +43,10 @@ func artifactSourceChecksum(img OSImage) string {
 
 func (c *apiClient) downloadArtifactImage(ctx context.Context, img OSImage, destPath string) error {
 	if !isArtifactImage(img) {
-		return fmt.Errorf("image %s has no artifact root", img.Name)
+		return fmt.Errorf("image %s has no artifact root", osImageID(img))
 	}
 	root := img.Manifest.Root
-	artifactURL, err := buildArtifactURL(c.serverURL, img.Name, root.Path)
+	artifactURL, err := buildArtifactURL(c.serverURL, osImageID(img), root.Path)
 	if err != nil {
 		return err
 	}
@@ -49,7 +57,7 @@ func (c *apiClient) downloadArtifactImage(ctx context.Context, img OSImage, dest
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		io.Copy(io.Discard, resp.Body)
-		return fmt.Errorf("download artifact %s: status %d", img.Name, resp.StatusCode)
+		return fmt.Errorf("download artifact %s: status %d", osImageID(img), resp.StatusCode)
 	}
 
 	compression := strings.ToLower(strings.TrimSpace(root.Compression))
@@ -73,7 +81,7 @@ func (c *apiClient) downloadArtifactImage(ctx context.Context, img OSImage, dest
 	case "xz":
 		return c.downloadCompressedArtifactImage(ctx, resp.Body, img, destPath, sourceChecksum, "xz", decompressXZ)
 	default:
-		return fmt.Errorf("unsupported artifact compression for %s: %s", img.Name, root.Compression)
+		return fmt.Errorf("unsupported artifact compression for %s: %s", osImageID(img), root.Compression)
 	}
 }
 

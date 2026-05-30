@@ -3,6 +3,7 @@ package main
 // OSImage represents an OS image from the GOMI server API.
 type OSImage struct {
 	Name      string           `json:"name"`
+	OSImageID string           `json:"osImageId"`
 	Format    string           `json:"format"`
 	Checksum  string           `json:"checksum,omitempty"`
 	SizeBytes int64            `json:"sizeBytes,omitempty"`

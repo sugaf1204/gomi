@@ -17,6 +17,7 @@ func (s *Server) CreateSubnet(c echo.Context) error {
 	if err := c.Bind(&sub); err != nil {
 		return c.JSON(gohttp.StatusBadRequest, jsonError("invalid body"))
 	}
+	sub.Name = resourceID("subnets", sub.Name)
 	now := time.Now().UTC()
 	sub.CreatedAt = now
 	sub.UpdatedAt = now
@@ -27,7 +28,7 @@ func (s *Server) CreateSubnet(c echo.Context) error {
 		return c.JSON(gohttp.StatusInternalServerError, jsonErrorErr(err))
 	}
 	httputil.CreateAudit(c, s.authStore, "", "create-subnet", "success", "subnet created: "+sub.Name, nil)
-	return c.JSON(gohttp.StatusCreated, sub)
+	return c.JSON(gohttp.StatusCreated, subnetResponse(sub))
 }
 
 func (s *Server) ListSubnets(c echo.Context) error {
@@ -35,7 +36,15 @@ func (s *Server) ListSubnets(c echo.Context) error {
 	if err != nil {
 		return c.JSON(gohttp.StatusInternalServerError, jsonErrorErr(err))
 	}
-	return c.JSON(gohttp.StatusOK, itemsResponse[subnet.Subnet]{Items: subs})
+	p, err := parsePagination(c, len(subs))
+	if err != nil {
+		return c.JSON(gohttp.StatusBadRequest, jsonErrorErr(err))
+	}
+	return c.JSON(gohttp.StatusOK, ListSubnetsResponse{
+		Subnets:       subnetResponses(paginate(subs, p)),
+		NextPageToken: p.nextPageToken,
+		TotalSize:     p.totalSize,
+	})
 }
 
 func (s *Server) GetSubnet(c echo.Context) error {
@@ -47,7 +56,7 @@ func (s *Server) GetSubnet(c echo.Context) error {
 		}
 		return c.JSON(gohttp.StatusInternalServerError, jsonErrorErr(err))
 	}
-	return c.JSON(gohttp.StatusOK, sub)
+	return c.JSON(gohttp.StatusOK, subnetResponse(sub))
 }
 
 func (s *Server) UpdateSubnet(c echo.Context) error {
@@ -73,7 +82,7 @@ func (s *Server) UpdateSubnet(c echo.Context) error {
 		return c.JSON(gohttp.StatusInternalServerError, jsonErrorErr(err))
 	}
 	httputil.CreateAudit(c, s.authStore, "", "update-subnet", "success", "subnet updated: "+name, nil)
-	return c.JSON(gohttp.StatusOK, sub)
+	return c.JSON(gohttp.StatusOK, subnetResponse(sub))
 }
 
 func (s *Server) DeleteSubnet(c echo.Context) error {
