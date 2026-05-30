@@ -1,21 +1,49 @@
 package api
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	gohttp "net/http"
+	"strings"
+	"time"
+
 	"github.com/labstack/echo/v4"
 	"github.com/sugaf1204/gomi/internal/infra/httputil"
 	"github.com/sugaf1204/gomi/internal/machine"
 	"github.com/sugaf1204/gomi/internal/power"
 	"github.com/sugaf1204/gomi/internal/resource"
-	gohttp "net/http"
-	"strings"
-	"time"
 )
 
+type createMachineRequest struct {
+	MachineID string              `json:"machineId,omitempty"`
+	Machine   *machineSpecRequest `json:"machine"`
+}
+
+type machineSpecRequest struct {
+	Hostname      string                   `json:"hostname"`
+	MAC           string                   `json:"mac"`
+	IP            string                   `json:"ip,omitempty"`
+	Arch          string                   `json:"arch"`
+	Firmware      machine.Firmware         `json:"firmware"`
+	Power         power.PowerConfig        `json:"power"`
+	Network       machine.NetworkConfig    `json:"network"`
+	OSPreset      machine.OSPreset         `json:"osPreset"`
+	TargetDisk    string                   `json:"targetDisk,omitempty"`
+	CloudInitRef  string                   `json:"cloudInitRef,omitempty"`
+	CloudInitRefs []string                 `json:"cloudInitRefs,omitempty"`
+	IPAssignment  machine.IPAssignmentMode `json:"ipAssignment,omitempty"`
+	SubnetRef     string                   `json:"subnetRef,omitempty"`
+	Role          machine.Role             `json:"role,omitempty"`
+	BridgeName    string                   `json:"bridgeName,omitempty"`
+	SSHKeyRefs    []string                 `json:"sshKeyRefs,omitempty"`
+	LoginUser     *machine.LoginUserSpec   `json:"loginUser,omitempty"`
+}
+
 func (s *Server) CreateMachine(c echo.Context) error {
-	var m machine.Machine
-	if err := c.Bind(&m); err != nil {
+	m, err := bindCreateMachine(c)
+	if err != nil {
 		return c.JSON(gohttp.StatusBadRequest, jsonError("invalid body"))
 	}
 	ctx := c.Request().Context()
@@ -78,7 +106,16 @@ func (s *Server) ListMachines(c echo.Context) error {
 	if err != nil {
 		return c.JSON(gohttp.StatusInternalServerError, jsonErrorErr(err))
 	}
-	return c.JSON(gohttp.StatusOK, itemsResponse[MachineResponse]{Items: machineResponses(machines)})
+	machines = filterMachines(c, machines)
+	p, err := parsePagination(c, len(machines))
+	if err != nil {
+		return c.JSON(gohttp.StatusBadRequest, jsonErrorErr(err))
+	}
+	return c.JSON(gohttp.StatusOK, ListMachinesResponse{
+		Machines:      machineResponses(paginate(machines, p)),
+		NextPageToken: p.nextPageToken,
+		TotalSize:     p.totalSize,
+	})
 }
 
 func (s *Server) GetMachine(c echo.Context) error {
@@ -91,6 +128,94 @@ func (s *Server) GetMachine(c echo.Context) error {
 		return c.JSON(gohttp.StatusInternalServerError, jsonErrorErr(err))
 	}
 	return c.JSON(gohttp.StatusOK, machineResponse(m))
+}
+
+func bindCreateMachine(c echo.Context) (machine.Machine, error) {
+	body, err := io.ReadAll(c.Request().Body)
+	if err != nil {
+		return machine.Machine{}, err
+	}
+	var req createMachineRequest
+	if err := json.Unmarshal(body, &req); err == nil && req.Machine != nil {
+		id := strings.TrimSpace(c.QueryParam("machineId"))
+		if id == "" {
+			id = strings.TrimSpace(req.MachineID)
+		}
+		if id == "" {
+			return machine.Machine{}, fmt.Errorf("machineId is required")
+		}
+		return req.Machine.toMachine(resourceID("machines", id)), nil
+	}
+	var m machine.Machine
+	if err := json.Unmarshal(body, &m); err != nil {
+		return machine.Machine{}, err
+	}
+	normalizeMachineRequestRefs(&m)
+	return m, nil
+}
+
+func (r machineSpecRequest) toMachine(id string) machine.Machine {
+	m := machine.Machine{
+		Name:          id,
+		Hostname:      r.Hostname,
+		MAC:           r.MAC,
+		IP:            r.IP,
+		Arch:          r.Arch,
+		Firmware:      r.Firmware,
+		Power:         r.Power,
+		Network:       r.Network,
+		OSPreset:      r.OSPreset,
+		TargetDisk:    r.TargetDisk,
+		CloudInitRef:  r.CloudInitRef,
+		CloudInitRefs: r.CloudInitRefs,
+		IPAssignment:  r.IPAssignment,
+		SubnetRef:     r.SubnetRef,
+		Role:          r.Role,
+		BridgeName:    r.BridgeName,
+		SSHKeyRefs:    r.SSHKeyRefs,
+		LoginUser:     r.LoginUser,
+	}
+	normalizeMachineRequestRefs(&m)
+	return m
+}
+
+func normalizeMachineRequestRefs(m *machine.Machine) {
+	if m == nil {
+		return
+	}
+	m.Name = resourceID("machines", m.Name)
+	m.OSPreset.ImageRef = resourceID("osImages", m.OSPreset.ImageRef)
+	m.CloudInitRef = resourceID("cloudInitTemplates", m.CloudInitRef)
+	m.CloudInitRefs = resourceIDs("cloudInitTemplates", m.CloudInitRefs)
+	m.SubnetRef = resourceID("subnets", m.SubnetRef)
+	m.SSHKeyRefs = resourceIDs("sshKeys", m.SSHKeyRefs)
+}
+
+func filterMachines(c echo.Context, machines []machine.Machine) []machine.Machine {
+	phase := stringFilter(c, "phase")
+	role := stringFilter(c, "role")
+	subnetRef := resourceID("subnets", stringFilter(c, "subnetRef"))
+	ipAssignment := stringFilter(c, "ipAssignment")
+	if phase == "" && role == "" && subnetRef == "" && ipAssignment == "" {
+		return machines
+	}
+	out := make([]machine.Machine, 0, len(machines))
+	for _, m := range machines {
+		if !matchFilter(string(m.Phase), phase) {
+			continue
+		}
+		if !matchFilter(string(m.Role), role) {
+			continue
+		}
+		if !matchFilter(m.SubnetRef, subnetRef) {
+			continue
+		}
+		if !matchFilter(string(m.IPAssignment), ipAssignment) {
+			continue
+		}
+		out = append(out, m)
+	}
+	return out
 }
 
 func (s *Server) DeleteMachine(c echo.Context) error {
@@ -159,6 +284,7 @@ func (s *Server) UpdateMachineNetwork(c echo.Context) error {
 	if ipAssignment != "" && ipAssignment != machine.IPAssignmentModeDHCP && ipAssignment != machine.IPAssignmentModeStatic {
 		return c.JSON(gohttp.StatusBadRequest, jsonError("ipAssignment must be 'dhcp' or 'static'"))
 	}
+	req.SubnetRef = resourceID("subnets", req.SubnetRef)
 	if req.SubnetRef != "" {
 		if _, err := s.subnets.Get(c.Request().Context(), req.SubnetRef); err != nil {
 			return c.JSON(gohttp.StatusBadRequest, jsonError("referenced subnetRef not found"))

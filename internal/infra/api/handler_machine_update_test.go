@@ -77,7 +77,7 @@ func TestRedeployMachine_UpdatesSpecAndNetwork(t *testing.T) {
 	}, env.token)
 	requireStatus(t, rec, http.StatusCreated)
 
-	rec = doRequest(env.echo, http.MethodPost, "/api/v1/machines/machine-redeploy/actions/redeploy", map[string]any{
+	rec = doRequest(env.echo, http.MethodPost, "/api/v1/machines/machine-redeploy:redeploy", map[string]any{
 		"confirm":  "machine-redeploy",
 		"hostname": "machine-redeploy-new",
 		"mac":      "52:54:00:de:ad:02",
@@ -121,10 +121,10 @@ func TestRedeployMachine_UpdatesSpecAndNetwork(t *testing.T) {
 		t.Fatalf("expected firmware=bios, got %v", body["firmware"])
 	}
 	osPreset, _ := body["osPreset"].(map[string]any)
-	if osPreset["family"] != "debian" || osPreset["version"] != "13" || osPreset["imageRef"] != "debian-machine" {
+	if osPreset["family"] != "debian" || osPreset["version"] != "13" || osPreset["imageRef"] != "osImages/debian-machine" {
 		t.Fatalf("expected redeploy to update osPreset from OS image, got %v", osPreset)
 	}
-	if body["subnetRef"] != "subnet-new" {
+	if body["subnetRef"] != "subnets/subnet-new" {
 		t.Fatalf("expected subnetRef=subnet-new, got %v", body["subnetRef"])
 	}
 	if body["ipAssignment"] != "dhcp" {
@@ -138,10 +138,10 @@ func TestRedeployMachine_UpdatesSpecAndNetwork(t *testing.T) {
 		t.Fatalf("expected domain=redeploy.example, got %v", network["domain"])
 	}
 	cloudInitRefs, _ := body["cloudInitRefs"].([]any)
-	if len(cloudInitRefs) != 1 || cloudInitRefs[0] != "ci-machine-new" {
+	if len(cloudInitRefs) != 1 || cloudInitRefs[0] != "cloudInitTemplates/ci-machine-new" {
 		t.Fatalf("expected cloudInitRefs=[ci-machine-new], got %v", cloudInitRefs)
 	}
-	if body["lastDeployedCloudInitRef"] != "ci-machine-new" {
+	if body["lastDeployedCloudInitRef"] != "cloudInitTemplates/ci-machine-new" {
 		t.Fatalf("expected lastDeployedCloudInitRef=ci-machine-new, got %v", body["lastDeployedCloudInitRef"])
 	}
 	powerBody, _ := body["power"].(map[string]any)
@@ -272,7 +272,7 @@ func TestRedeployMachine_PreservesWoLGeneratedFieldsOnPowerOverride(t *testing.T
 	}, env.token)
 	requireStatus(t, rec, http.StatusCreated)
 
-	rec = doRequest(env.echo, http.MethodPost, "/api/v1/machines/machine-wol-preserve/actions/redeploy", map[string]any{
+	rec = doRequest(env.echo, http.MethodPost, "/api/v1/machines/machine-wol-preserve:redeploy", map[string]any{
 		"confirm": "machine-wol-preserve",
 		"power": map[string]any{
 			"type": "wol",

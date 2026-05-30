@@ -3,6 +3,16 @@ import { auditEvents, dnsRecords, machines, subnets } from './fixtures'
 
 const API_BASE = 'http://localhost:5392/api/v1'
 
+function apiPattern(path: string) {
+  const escapedBase = API_BASE.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  return new RegExp(`^${escapedBase}${path}$`)
+}
+
+function customMethodName(url: string, method: string) {
+  const last = new URL(url).pathname.split('/').pop() ?? ''
+  return decodeURIComponent(last.replace(`:${method}`, ''))
+}
+
 export const handlers = [
   http.post(`${API_BASE}/auth/login`, () => {
     return HttpResponse.json({ token: 'mock-token-abc123' })
@@ -25,7 +35,7 @@ export const handlers = [
   }),
 
   http.get(`${API_BASE}/machines`, () => {
-    return HttpResponse.json({ items: machines })
+    return HttpResponse.json({ machines, totalSize: machines.length })
   }),
 
   http.get(`${API_BASE}/machines/:name`, ({ params }) => {
@@ -48,8 +58,9 @@ export const handlers = [
     })
   }),
 
-  http.post(`${API_BASE}/machines/:name/actions/redeploy`, ({ params }) => {
-    const machine = machines.find((m) => m.name === params.name)
+  http.post(apiPattern('/machines/[^/]+:redeploy'), ({ request }) => {
+    const machineName = customMethodName(request.url, 'redeploy')
+    const machine = machines.find((m) => m.name === machineName)
     if (!machine) return HttpResponse.json({ error: 'not found' }, { status: 404 })
     return HttpResponse.json({
       ...machine,
@@ -63,11 +74,11 @@ export const handlers = [
     }, { status: 202 })
   }),
 
-  http.post(`${API_BASE}/machines/:name/actions/power-on`, () => {
+  http.post(apiPattern('/machines/[^/]+:powerOn'), () => {
     return HttpResponse.json({ status: 'accepted' })
   }),
 
-  http.post(`${API_BASE}/machines/:name/actions/power-off`, () => {
+  http.post(apiPattern('/machines/[^/]+:powerOff'), () => {
     return HttpResponse.json({ status: 'accepted' })
   }),
 
@@ -82,7 +93,7 @@ export const handlers = [
   }),
 
   http.get(`${API_BASE}/subnets`, () => {
-    return HttpResponse.json({ items: subnets })
+    return HttpResponse.json({ subnets, totalSize: subnets.length })
   }),
 
   http.get(`${API_BASE}/subnets/:name`, ({ params }) => {
@@ -111,39 +122,39 @@ export const handlers = [
   }),
 
   http.get(`${API_BASE}/audit-events`, () => {
-    return HttpResponse.json({ items: auditEvents })
+    return HttpResponse.json({ auditEvents, totalSize: auditEvents.length })
   }),
 
   http.get(`${API_BASE}/ssh-keys`, () => {
-    return HttpResponse.json({ items: [] })
+    return HttpResponse.json({ sshKeys: [], totalSize: 0 })
   }),
 
   http.get(`${API_BASE}/hypervisors`, () => {
-    return HttpResponse.json({ items: [] })
+    return HttpResponse.json({ hypervisors: [], totalSize: 0 })
   }),
 
   http.get(`${API_BASE}/virtual-machines`, () => {
-    return HttpResponse.json({ items: [] })
+    return HttpResponse.json({ virtualMachines: [], totalSize: 0 })
   }),
 
   http.get(`${API_BASE}/cloud-init-templates`, () => {
-    return HttpResponse.json({ items: [] })
+    return HttpResponse.json({ cloudInitTemplates: [], totalSize: 0 })
   }),
 
   http.get(`${API_BASE}/os-images`, () => {
-    return HttpResponse.json({ items: [] })
+    return HttpResponse.json({ osImages: [], totalSize: 0 })
   }),
 
   http.get(`${API_BASE}/boot-environments`, () => {
-    return HttpResponse.json({ items: [] })
+    return HttpResponse.json({ bootEnvironments: [], totalSize: 0 })
   }),
 
   http.get(`${API_BASE}/dhcp-leases`, () => {
-    return HttpResponse.json({ items: [] })
+    return HttpResponse.json({ dhcpLeases: [], totalSize: 0 })
   }),
 
   http.get(`${API_BASE}/dns-records`, () => {
-    return HttpResponse.json({ items: dnsRecords })
+    return HttpResponse.json({ dnsRecords, totalSize: dnsRecords.length })
   }),
 
   http.post(`${API_BASE}/dns-records`, async ({ request }) => {

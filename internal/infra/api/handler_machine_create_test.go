@@ -52,7 +52,7 @@ func TestCreateMachine_ResolveOSPresetFromImage(t *testing.T) {
 	if osPreset["version"] != "13" {
 		t.Fatalf("expected version=13 (from OS image), got: %v", osPreset["version"])
 	}
-	if osPreset["imageRef"] != "debian-13-amd64" {
+	if osPreset["imageRef"] != "osImages/debian-13-amd64" {
 		t.Fatalf("expected imageRef=debian-13-amd64, got: %v", osPreset["imageRef"])
 	}
 	provision, ok := result["provision"].(map[string]any)

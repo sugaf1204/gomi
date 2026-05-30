@@ -4,15 +4,16 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	gohttp "net/http"
+	"strings"
+	"time"
+
 	"github.com/labstack/echo/v4"
 	"github.com/sugaf1204/gomi/internal/infra/httputil"
 	"github.com/sugaf1204/gomi/internal/infra/pxehttp"
 	"github.com/sugaf1204/gomi/internal/osimage"
 	"github.com/sugaf1204/gomi/internal/resource"
 	"github.com/sugaf1204/gomi/internal/vm"
-	gohttp "net/http"
-	"strings"
-	"time"
 )
 
 type vmReinstallReq struct {
@@ -44,6 +45,7 @@ func (s *Server) ReinstallVM(c echo.Context) error {
 			return c.JSON(gohttp.StatusBadRequest, jsonError("invalid body"))
 		}
 	}
+	normalizeVMReinstallRequestRefs(&req)
 	if strings.TrimSpace(req.Confirm) != "" && strings.TrimSpace(req.Confirm) != name {
 		return c.JSON(gohttp.StatusBadRequest, jsonError("confirm must match vm name"))
 	}
@@ -117,10 +119,10 @@ func (s *Server) ReinstallVM(c echo.Context) error {
 	updated, getErr := s.vms.Get(ctx, name)
 	if getErr != nil {
 		httputil.CreateAudit(c, s.authStore, name, "redeploy-vm", "partial", "vm os redeploy started but failed to load updated status", nil)
-		return c.JSON(gohttp.StatusAccepted, current)
+		return c.JSON(gohttp.StatusAccepted, virtualMachineResponse(current))
 	}
 	httputil.CreateAudit(c, s.authStore, name, "redeploy-vm", "success", "vm os redeploy started", nil)
-	return c.JSON(gohttp.StatusAccepted, updated)
+	return c.JSON(gohttp.StatusAccepted, virtualMachineResponse(updated))
 }
 
 func (s *Server) RedeployVM(c echo.Context) error {
@@ -140,6 +142,24 @@ func applyReinstallCloudInitRef(current *vm.VirtualMachine, cloudInitRef string)
 	current.CloudInitRef = ""
 	current.CloudInitRefs = updated
 	current.LastDeployedCloudInitRef = cloudInitRef
+}
+
+func normalizeVMReinstallRequestRefs(req *vmReinstallReq) {
+	if req == nil {
+		return
+	}
+	req.HypervisorRef = resourceID("hypervisors", req.HypervisorRef)
+	req.OSImageRef = resourceID("osImages", req.OSImageRef)
+	req.CloudInitRef = resourceID("cloudInitTemplates", req.CloudInitRef)
+	req.CloudInitRefs = resourceIDs("cloudInitTemplates", req.CloudInitRefs)
+	if req.SubnetRef != nil {
+		v := resourceID("subnets", *req.SubnetRef)
+		req.SubnetRef = &v
+	}
+	if req.SSHKeyRefs != nil {
+		v := resourceIDs("sshKeys", *req.SSHKeyRefs)
+		req.SSHKeyRefs = &v
+	}
 }
 
 func applyReinstallSpec(current *vm.VirtualMachine, req *vmReinstallReq) {

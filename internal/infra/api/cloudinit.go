@@ -16,12 +16,13 @@ func (s *Server) CreateCloudInitTemplate(c echo.Context) error {
 	if err := c.Bind(&t); err != nil {
 		return c.JSON(gohttp.StatusBadRequest, jsonError("invalid body"))
 	}
+	t.Name = resourceID("cloudInitTemplates", t.Name)
 	created, err := s.cloudInits.Create(c.Request().Context(), t)
 	if err != nil {
 		return c.JSON(gohttp.StatusBadRequest, jsonErrorErr(err))
 	}
 	httputil.CreateAudit(c, s.authStore, created.Name, "create-cloud-init-template", "success", "cloud-init template created", nil)
-	return c.JSON(gohttp.StatusCreated, created)
+	return c.JSON(gohttp.StatusCreated, cloudInitTemplateResponse(created))
 }
 
 func (s *Server) ListCloudInitTemplates(c echo.Context) error {
@@ -29,7 +30,15 @@ func (s *Server) ListCloudInitTemplates(c echo.Context) error {
 	if err != nil {
 		return c.JSON(gohttp.StatusInternalServerError, jsonErrorErr(err))
 	}
-	return c.JSON(gohttp.StatusOK, itemsResponse[cloudinit.CloudInitTemplate]{Items: items})
+	p, err := parsePagination(c, len(items))
+	if err != nil {
+		return c.JSON(gohttp.StatusBadRequest, jsonErrorErr(err))
+	}
+	return c.JSON(gohttp.StatusOK, ListCloudInitTemplatesResponse{
+		CloudInitTemplates: cloudInitTemplateResponses(paginate(items, p)),
+		NextPageToken:      p.nextPageToken,
+		TotalSize:          p.totalSize,
+	})
 }
 
 func (s *Server) GetCloudInitTemplate(c echo.Context) error {
@@ -41,7 +50,7 @@ func (s *Server) GetCloudInitTemplate(c echo.Context) error {
 		}
 		return c.JSON(gohttp.StatusInternalServerError, jsonErrorErr(err))
 	}
-	return c.JSON(gohttp.StatusOK, t)
+	return c.JSON(gohttp.StatusOK, cloudInitTemplateResponse(t))
 }
 
 func (s *Server) UpdateCloudInitTemplate(c echo.Context) error {
@@ -59,7 +68,7 @@ func (s *Server) UpdateCloudInitTemplate(c echo.Context) error {
 		return c.JSON(gohttp.StatusBadRequest, jsonErrorErr(err))
 	}
 	httputil.CreateAudit(c, s.authStore, name, "update-cloud-init-template", "success", "cloud-init template updated", nil)
-	return c.JSON(gohttp.StatusOK, updated)
+	return c.JSON(gohttp.StatusOK, cloudInitTemplateResponse(updated))
 }
 
 func (s *Server) DeleteCloudInitTemplate(c echo.Context) error {

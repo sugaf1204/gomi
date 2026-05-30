@@ -223,10 +223,7 @@ func NewServer(cfg ServerConfig) *Server {
 	writer.POST("/machines", s.CreateMachine)
 	writer.POST("/machines/discover", s.DiscoverMachine)
 	writer.DELETE("/machines/:name", s.DeleteMachine)
-	writer.POST("/machines/:name/actions/redeploy", s.RedeployMachine)
-	writer.POST("/machines/:name/actions/reinstall", s.ReinstallMachine)
-	writer.POST("/machines/:name/actions/power-on", s.PowerOnMachine)
-	writer.POST("/machines/:name/actions/power-off", s.PowerOffMachine)
+	writer.POST("/machines/*", s.DispatchMachineCustomMethod)
 	writer.PATCH("/machines/:name/settings", s.UpdateMachineSettings)
 	writer.PATCH("/machines/:name/network", s.UpdateMachineNetwork)
 
@@ -262,12 +259,8 @@ func NewServer(cfg ServerConfig) *Server {
 	authed.GET("/virtual-machines/:name", s.GetVirtualMachine)
 	writer.POST("/virtual-machines", s.CreateVirtualMachine)
 	writer.DELETE("/virtual-machines/:name", s.DeleteVirtualMachine)
-	writer.POST("/virtual-machines/:name/actions/power-on", s.PowerOnVM)
-	writer.POST("/virtual-machines/:name/actions/power-off", s.PowerOffVM)
-	writer.POST("/virtual-machines/:name/actions/reinstall", s.ReinstallVM)
 	authed.GET("/virtual-machines/:name/vnc", s.VMVNCProxy)
-	writer.POST("/virtual-machines/:name/actions/migrate", s.MigrateVM)
-	writer.POST("/virtual-machines/:name/actions/redeploy", s.RedeployVM)
+	writer.POST("/virtual-machines/*", s.DispatchVirtualMachineCustomMethod)
 
 	// CloudInitTemplate routes — reads for all, writes for operator+.
 	authed.GET("/cloud-init-templates", s.ListCloudInitTemplates)

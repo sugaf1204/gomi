@@ -10,7 +10,7 @@ import (
 
 func (s *Server) ListDHCPLeases(c echo.Context) error {
 	if s.leaseStore == nil {
-		return c.JSON(gohttp.StatusOK, itemsResponse[any]{Items: []any{}})
+		return c.JSON(gohttp.StatusOK, ListDHCPLeasesResponse{DHCPLeases: []pxe.DHCPLease{}, TotalSize: 0})
 	}
 
 	leases, err := s.leaseStore.List(c.Request().Context())
@@ -18,5 +18,13 @@ func (s *Server) ListDHCPLeases(c echo.Context) error {
 		return c.JSON(gohttp.StatusInternalServerError, jsonErrorErr(err))
 	}
 
-	return c.JSON(gohttp.StatusOK, itemsResponse[pxe.DHCPLease]{Items: leases})
+	p, err := parsePagination(c, len(leases))
+	if err != nil {
+		return c.JSON(gohttp.StatusBadRequest, jsonErrorErr(err))
+	}
+	return c.JSON(gohttp.StatusOK, ListDHCPLeasesResponse{
+		DHCPLeases:    paginate(leases, p),
+		NextPageToken: p.nextPageToken,
+		TotalSize:     p.totalSize,
+	})
 }

@@ -2,6 +2,28 @@ import type { AuditEvent, BootEnvironmentStatus, CloudInitTemplate, DHCPLease, D
 
 const API_BASE = import.meta.env.VITE_API_BASE ?? `${window.location.origin}/api/v1`
 
+type ListResponse<K extends string, T> = Record<K, T[]> & {
+  nextPageToken?: string
+  totalSize?: number
+}
+
+type MachineApi = Omit<Machine, 'name' | 'osPreset'> & {
+  name: string
+  machineId?: string
+  cloudInitRef?: string
+  osPreset: Machine['osPreset']
+}
+
+type VirtualMachineApi = Omit<VirtualMachine, 'name' | 'installCfg'> & {
+  name: string
+  virtualMachineId?: string
+  installConfig?: VirtualMachine['installCfg']
+}
+
+type NamedApi<T, ID extends string> = T & {
+  name: string
+} & Record<ID, string | undefined>
+
 type MachineSpecPayload = {
   hostname?: string
   mac?: string
@@ -45,6 +67,110 @@ type VMRedeployPayload = {
   ip?: string
   sshKeyRefs?: string[]
   loginUser?: VirtualMachine['loginUser']
+}
+
+type VMApiSpecPayload = Omit<VMRedeployPayload, 'installCfg'> & {
+  installConfig?: VirtualMachine['installCfg']
+}
+
+function resourceName(collection: string, id?: string) {
+  const value = id?.trim() ?? ''
+  if (!value) return ''
+  return value.startsWith(`${collection}/`) ? value : `${collection}/${value}`
+}
+
+function resourceId(collection: string, name?: string) {
+  const value = name?.trim() ?? ''
+  if (!value) return ''
+  return value.startsWith(`${collection}/`) ? value.slice(collection.length + 1) : value
+}
+
+function resourceIds(collection: string, names?: string[]) {
+  return names?.map((name) => resourceId(collection, name)).filter(Boolean)
+}
+
+function resourceNames(collection: string, ids?: string[]) {
+  return ids?.map((id) => resourceName(collection, id)).filter(Boolean)
+}
+
+function fromApiMachine(input: MachineApi): Machine {
+  return {
+    ...input,
+    name: input.machineId || resourceId('machines', input.name),
+    osPreset: {
+      ...input.osPreset,
+      imageRef: resourceId('osImages', input.osPreset?.imageRef)
+    },
+    cloudInitRefs: resourceIds('cloudInitTemplates', input.cloudInitRefs),
+    subnetRef: resourceId('subnets', input.subnetRef),
+    sshKeyRefs: resourceIds('sshKeys', input.sshKeyRefs),
+    lastDeployedCloudInitRef: resourceId('cloudInitTemplates', input.lastDeployedCloudInitRef)
+  }
+}
+
+function toApiMachineSpec<T extends MachineSpecPayload>(input: T): T {
+  return {
+    ...input,
+    osPreset: input.osPreset
+      ? { ...input.osPreset, imageRef: resourceName('osImages', input.osPreset.imageRef) }
+      : input.osPreset,
+    cloudInitRef: resourceName('cloudInitTemplates', input.cloudInitRef),
+    cloudInitRefs: resourceNames('cloudInitTemplates', input.cloudInitRefs),
+    subnetRef: resourceName('subnets', input.subnetRef),
+    sshKeyRefs: resourceNames('sshKeys', input.sshKeyRefs)
+  }
+}
+
+function fromApiVirtualMachine(input: VirtualMachineApi): VirtualMachine {
+  const { installConfig, ...rest } = input
+  return {
+    ...rest,
+    name: input.virtualMachineId || resourceId('virtualMachines', input.name),
+    hypervisorRef: resourceId('hypervisors', input.hypervisorRef),
+    osImageRef: resourceId('osImages', input.osImageRef),
+    cloudInitRef: resourceId('cloudInitTemplates', input.cloudInitRef),
+    cloudInitRefs: resourceIds('cloudInitTemplates', input.cloudInitRefs),
+    subnetRef: resourceId('subnets', input.subnetRef),
+    sshKeyRefs: resourceIds('sshKeys', input.sshKeyRefs),
+    lastDeployedCloudInitRef: resourceId('cloudInitTemplates', input.lastDeployedCloudInitRef),
+    installCfg: installConfig
+  }
+}
+
+function toApiVirtualMachineSpec(input: VMRedeployPayload): VMApiSpecPayload {
+  const { installCfg, ...rest } = input
+  return {
+    ...rest,
+    hypervisorRef: resourceName('hypervisors', rest.hypervisorRef),
+    osImageRef: resourceName('osImages', rest.osImageRef),
+    cloudInitRef: resourceName('cloudInitTemplates', rest.cloudInitRef),
+    cloudInitRefs: resourceNames('cloudInitTemplates', rest.cloudInitRefs),
+    subnetRef: resourceName('subnets', rest.subnetRef),
+    sshKeyRefs: resourceNames('sshKeys', rest.sshKeyRefs),
+    installConfig: installCfg
+  }
+}
+
+function fromApiNamed<T extends { name: string }, ID extends string>(collection: string, idField: ID, input: NamedApi<T, ID>): T {
+  return {
+    ...input,
+    name: input[idField] || resourceId(collection, input.name)
+  }
+}
+
+function fromApiHypervisor(input: NamedApi<Hypervisor, 'hypervisorId'>): Hypervisor {
+  return {
+    ...fromApiNamed('hypervisors', 'hypervisorId', input),
+    machineRef: resourceId('machines', input.machineRef),
+    connection: {
+      ...input.connection,
+      keyRef: resourceId('sshKeys', input.connection.keyRef)
+    }
+  }
+}
+
+function fromApiOSImage(input: NamedApi<OSImage, 'osImageId'>): OSImage {
+  return fromApiNamed('osImages', 'osImageId', input)
 }
 
 class ApiClient {
@@ -116,18 +242,21 @@ class ApiClient {
   }
 
   listMachines() {
-    return this.request<{ items: Machine[] }>('/machines')
+    return this.request<ListResponse<'machines', MachineApi>>('/machines')
+      .then((res) => ({ items: res.machines.map(fromApiMachine) }))
   }
 
   getMachine(name: string) {
-    return this.request<Machine>(`/machines/${encodeURIComponent(name)}`)
+    return this.request<MachineApi>(`/machines/${encodeURIComponent(name)}`).then(fromApiMachine)
   }
 
   createMachine(data: { name: string } & MachineSpecPayload & { hostname: string; mac: string; arch: string; firmware: string; power: PowerConfig; osPreset: Machine['osPreset'] }) {
-    return this.request<Machine>('/machines', {
+    const { name, ...machine } = data
+    const params = new URLSearchParams({ machineId: name })
+    return this.request<MachineApi>(`/machines?${params.toString()}`, {
       method: 'POST',
-      body: JSON.stringify(data)
-    })
+      body: JSON.stringify({ machine: toApiMachineSpec(machine) })
+    }).then(fromApiMachine)
   }
 
   deleteMachine(name: string) {
@@ -137,21 +266,11 @@ class ApiClient {
   }
 
   async redeploy(name: string, payload?: MachineRedeployPayload) {
-    const body = JSON.stringify(payload ?? {})
-    try {
-      return await this.request<Machine>(`/machines/${encodeURIComponent(name)}/actions/redeploy`, {
-        method: 'POST',
-        body
-      })
-    } catch (err) {
-      if (!(err instanceof Error) || !/HTTP 404|Not Found/i.test(err.message)) {
-        throw err
-      }
-      return this.request<Machine>(`/machines/${encodeURIComponent(name)}/actions/reinstall`, {
-        method: 'POST',
-        body
-      })
-    }
+    const body = JSON.stringify(payload ? toApiMachineSpec(payload) : {})
+    return this.request<MachineApi>(`/machines/${encodeURIComponent(name)}:redeploy`, {
+      method: 'POST',
+      body
+    }).then(fromApiMachine)
   }
 
   reinstall(name: string, payload?: MachineRedeployPayload) {
@@ -159,51 +278,53 @@ class ApiClient {
   }
 
   powerOn(name: string) {
-    return this.request<{ status: string }>(`/machines/${encodeURIComponent(name)}/actions/power-on`, {
+    return this.request<{ status: string }>(`/machines/${encodeURIComponent(name)}:powerOn`, {
       method: 'POST'
     })
   }
 
   powerOff(name: string) {
-    return this.request<{ status: string }>(`/machines/${encodeURIComponent(name)}/actions/power-off`, {
+    return this.request<{ status: string }>(`/machines/${encodeURIComponent(name)}:powerOff`, {
       method: 'POST'
     })
   }
 
   updateMachineSettings(name: string, payload: { power: PowerConfig }) {
-    return this.request<Machine>(`/machines/${encodeURIComponent(name)}/settings`, {
+    return this.request<MachineApi>(`/machines/${encodeURIComponent(name)}/settings`, {
       method: 'PATCH',
       body: JSON.stringify(payload)
-    })
+    }).then(fromApiMachine)
   }
 
   updateMachineNetwork(name: string, payload: { ip: string; ipAssignment: string; subnetRef: string; domain: string }) {
-    return this.request<Machine>(`/machines/${encodeURIComponent(name)}/network`, {
+    return this.request<MachineApi>(`/machines/${encodeURIComponent(name)}/network`, {
       method: 'PATCH',
-      body: JSON.stringify(payload)
-    })
+      body: JSON.stringify({ ...payload, subnetRef: resourceName('subnets', payload.subnetRef) })
+    }).then(fromApiMachine)
   }
 
   listSubnets() {
-    return this.request<{ items: Subnet[] }>('/subnets')
+    return this.request<ListResponse<'subnets', NamedApi<Subnet, 'subnetId'>>>('/subnets')
+      .then((res) => ({ items: res.subnets.map((item) => fromApiNamed('subnets', 'subnetId', item)) }))
   }
 
   getSubnet(name: string) {
-    return this.request<Subnet>(`/subnets/${encodeURIComponent(name)}`)
+    return this.request<NamedApi<Subnet, 'subnetId'>>(`/subnets/${encodeURIComponent(name)}`)
+      .then((item) => fromApiNamed('subnets', 'subnetId', item))
   }
 
   createSubnet(subnet: { name: string; spec: Subnet['spec'] }) {
-    return this.request<Subnet>('/subnets', {
+    return this.request<NamedApi<Subnet, 'subnetId'>>('/subnets', {
       method: 'POST',
       body: JSON.stringify(subnet)
-    })
+    }).then((item) => fromApiNamed('subnets', 'subnetId', item))
   }
 
   updateSubnet(name: string, spec: Subnet['spec']) {
-    return this.request<Subnet>(`/subnets/${encodeURIComponent(name)}`, {
+    return this.request<NamedApi<Subnet, 'subnetId'>>(`/subnets/${encodeURIComponent(name)}`, {
       method: 'PUT',
       body: JSON.stringify({ spec })
-    })
+    }).then((item) => fromApiNamed('subnets', 'subnetId', item))
   }
 
   deleteSubnet(name: string) {
@@ -217,14 +338,15 @@ class ApiClient {
   }
 
   listSSHKeys() {
-    return this.request<{ items: SSHKey[] }>('/ssh-keys')
+    return this.request<ListResponse<'sshKeys', NamedApi<SSHKey, 'sshKeyId'>>>('/ssh-keys')
+      .then((res) => ({ items: res.sshKeys.map((item) => fromApiNamed('sshKeys', 'sshKeyId', item)) }))
   }
 
   createSSHKey(key: { name: string; publicKey: string; privateKey?: string; comment?: string }) {
-    return this.request<SSHKey>('/ssh-keys', {
+    return this.request<NamedApi<SSHKey, 'sshKeyId'>>('/ssh-keys', {
       method: 'POST',
       body: JSON.stringify(key)
-    })
+    }).then((item) => fromApiNamed('sshKeys', 'sshKeyId', item))
   }
 
   deleteSSHKey(name: string) {
@@ -238,23 +360,26 @@ class ApiClient {
     if (machine && machine.trim().length > 0) {
       params.set('machine', machine)
     }
-    return this.request<{ items: AuditEvent[] }>(`/audit-events?${params.toString()}`)
+    return this.request<ListResponse<'auditEvents', AuditEvent>>(`/audit-events?${params.toString()}`)
+      .then((res) => ({ items: res.auditEvents }))
   }
 
   // Hypervisor APIs
   listHypervisors() {
-    return this.request<{ items: Hypervisor[] }>('/hypervisors')
+    return this.request<ListResponse<'hypervisors', NamedApi<Hypervisor, 'hypervisorId'>>>('/hypervisors')
+      .then((res) => ({ items: res.hypervisors.map(fromApiHypervisor) }))
   }
 
   getHypervisor(name: string) {
-    return this.request<Hypervisor>(`/hypervisors/${encodeURIComponent(name)}`)
+    return this.request<NamedApi<Hypervisor, 'hypervisorId'>>(`/hypervisors/${encodeURIComponent(name)}`)
+      .then(fromApiHypervisor)
   }
 
   createHypervisor(data: { name: string; connection: Hypervisor['connection']; labels?: Record<string, string> }) {
-    return this.request<Hypervisor>('/hypervisors', {
+    return this.request<NamedApi<Hypervisor, 'hypervisorId'>>('/hypervisors', {
       method: 'POST',
       body: JSON.stringify(data)
-    })
+    }).then(fromApiHypervisor)
   }
 
   deleteHypervisor(name: string) {
@@ -271,18 +396,27 @@ class ApiClient {
 
   // Virtual Machine APIs
   listVirtualMachines() {
-    return this.request<{ items: VirtualMachine[] }>('/virtual-machines')
+    return this.request<ListResponse<'virtualMachines', VirtualMachineApi>>('/virtual-machines')
+      .then((res) => ({ items: res.virtualMachines.map(fromApiVirtualMachine) }))
   }
 
   getVirtualMachine(name: string) {
-    return this.request<VirtualMachine>(`/virtual-machines/${encodeURIComponent(name)}`)
+    return this.request<VirtualMachineApi>(`/virtual-machines/${encodeURIComponent(name)}`)
+      .then(fromApiVirtualMachine)
   }
 
   createVirtualMachine(data: { name: string; hypervisorRef: string; resources: VirtualMachine['resources']; osImageRef?: string; cloudInitRefs?: string[]; cloudInitRef?: string; installCfg?: VirtualMachine['installCfg']; network?: VirtualMachine['network']; ipAssignment?: 'dhcp' | 'static'; subnetRef?: string; domain?: string; powerControlMethod: string; advancedOptions?: VirtualMachine['advancedOptions']; sshKeyRefs?: string[]; loginUser?: VirtualMachine['loginUser'] }) {
-    return this.request<VirtualMachine>('/virtual-machines', {
+    const { name, installCfg, ...rest } = data
+    const params = new URLSearchParams({ virtualMachineId: name })
+    return this.request<VirtualMachineApi>(`/virtual-machines?${params.toString()}`, {
       method: 'POST',
-      body: JSON.stringify(data)
-    })
+      body: JSON.stringify({
+        virtualMachine: {
+          ...toApiVirtualMachineSpec(rest),
+          installConfig: installCfg
+        }
+      })
+    }).then(fromApiVirtualMachine)
   }
 
   deleteVirtualMachine(name: string) {
@@ -292,41 +426,30 @@ class ApiClient {
   }
 
   vmPowerOn(name: string) {
-    return this.request<{ status: string }>(`/virtual-machines/${encodeURIComponent(name)}/actions/power-on`, {
+    return this.request<VirtualMachineApi>(`/virtual-machines/${encodeURIComponent(name)}:powerOn`, {
       method: 'POST'
-    })
+    }).then(fromApiVirtualMachine)
   }
 
   vmPowerOff(name: string) {
-    return this.request<{ status: string }>(`/virtual-machines/${encodeURIComponent(name)}/actions/power-off`, {
+    return this.request<VirtualMachineApi>(`/virtual-machines/${encodeURIComponent(name)}:powerOff`, {
       method: 'POST'
-    })
+    }).then(fromApiVirtualMachine)
   }
 
   async vmRedeploy(name: string, payload?: VMRedeployPayload) {
-    const body = JSON.stringify(payload ?? {})
-    try {
-      return await this.request<VirtualMachine>(`/virtual-machines/${encodeURIComponent(name)}/actions/redeploy`, {
-        method: 'POST',
-        body
-      })
-    } catch (err) {
-      // Fallback for backends exposing only the reinstall route.
-      if (!(err instanceof Error) || !/HTTP 404|Not Found/i.test(err.message)) {
-        throw err
-      }
-      return this.request<VirtualMachine>(`/virtual-machines/${encodeURIComponent(name)}/actions/reinstall`, {
-        method: 'POST',
-        body
-      })
-    }
+    const body = JSON.stringify(payload ? toApiVirtualMachineSpec(payload) : {})
+    return this.request<VirtualMachineApi>(`/virtual-machines/${encodeURIComponent(name)}:redeploy`, {
+      method: 'POST',
+      body
+    }).then(fromApiVirtualMachine)
   }
 
   vmMigrate(name: string, payload?: { targetHypervisor?: string }) {
-    return this.request<VirtualMachine>(`/virtual-machines/${encodeURIComponent(name)}/actions/migrate`, {
+    return this.request<VirtualMachineApi>(`/virtual-machines/${encodeURIComponent(name)}:migrate`, {
       method: 'POST',
-      body: JSON.stringify(payload ?? {})
-    })
+      body: JSON.stringify(payload ? { targetHypervisor: resourceName('hypervisors', payload.targetHypervisor) } : {})
+    }).then(fromApiVirtualMachine)
   }
 
   vmReinstall(
@@ -338,25 +461,27 @@ class ApiClient {
 
   // Cloud-Init Template APIs
   listCloudInitTemplates() {
-    return this.request<{ items: CloudInitTemplate[] }>('/cloud-init-templates')
+    return this.request<ListResponse<'cloudInitTemplates', NamedApi<CloudInitTemplate, 'cloudInitTemplateId'>>>('/cloud-init-templates')
+      .then((res) => ({ items: res.cloudInitTemplates.map((item) => fromApiNamed('cloudInitTemplates', 'cloudInitTemplateId', item)) }))
   }
 
   getCloudInitTemplate(name: string) {
-    return this.request<CloudInitTemplate>(`/cloud-init-templates/${encodeURIComponent(name)}`)
+    return this.request<NamedApi<CloudInitTemplate, 'cloudInitTemplateId'>>(`/cloud-init-templates/${encodeURIComponent(name)}`)
+      .then((item) => fromApiNamed('cloudInitTemplates', 'cloudInitTemplateId', item))
   }
 
   createCloudInitTemplate(data: { name: string; description?: string; userData: string; networkConfig?: string; metadataTemplate?: string }) {
-    return this.request<CloudInitTemplate>('/cloud-init-templates', {
+    return this.request<NamedApi<CloudInitTemplate, 'cloudInitTemplateId'>>('/cloud-init-templates', {
       method: 'POST',
       body: JSON.stringify(data)
-    })
+    }).then((item) => fromApiNamed('cloudInitTemplates', 'cloudInitTemplateId', item))
   }
 
   updateCloudInitTemplate(name: string, data: { description?: string; userData: string; networkConfig?: string; metadataTemplate?: string }) {
-    return this.request<CloudInitTemplate>(`/cloud-init-templates/${encodeURIComponent(name)}`, {
+    return this.request<NamedApi<CloudInitTemplate, 'cloudInitTemplateId'>>(`/cloud-init-templates/${encodeURIComponent(name)}`, {
       method: 'PUT',
       body: JSON.stringify(data)
-    })
+    }).then((item) => fromApiNamed('cloudInitTemplates', 'cloudInitTemplateId', item))
   }
 
   deleteCloudInitTemplate(name: string) {
@@ -367,22 +492,25 @@ class ApiClient {
 
   // OS Image APIs
   listOSImages() {
-    return this.request<{ items: OSImage[] }>('/os-images')
+    return this.request<ListResponse<'osImages', NamedApi<OSImage, 'osImageId'>>>('/os-images')
+      .then((res) => ({ items: res.osImages.map(fromApiOSImage) }))
   }
 
   listBootEnvironments() {
-    return this.request<{ items: BootEnvironmentStatus[] }>('/boot-environments')
+    return this.request<ListResponse<'bootEnvironments', NamedApi<BootEnvironmentStatus, 'bootEnvironmentId'>>>('/boot-environments')
+      .then((res) => ({ items: res.bootEnvironments.map((item) => fromApiNamed('bootEnvironments', 'bootEnvironmentId', item)) }))
   }
 
   getOSImage(name: string) {
-    return this.request<OSImage>(`/os-images/${encodeURIComponent(name)}`)
+    return this.request<NamedApi<OSImage, 'osImageId'>>(`/os-images/${encodeURIComponent(name)}`)
+      .then(fromApiOSImage)
   }
 
   createOSImage(data: { name: string; osFamily: string; osVersion: string; arch: string; format: string; source: string; url?: string; checksum?: string }) {
-    return this.request<OSImage>('/os-images', {
+    return this.request<NamedApi<OSImage, 'osImageId'>>('/os-images', {
       method: 'POST',
       body: JSON.stringify(data)
-    })
+    }).then(fromApiOSImage)
   }
 
   uploadOSImageFile(name: string, file: File) {
@@ -401,7 +529,7 @@ class ApiClient {
         const payload = await res.json().catch(() => ({ error: `HTTP ${res.status}` }))
         throw new Error(payload.error ?? `HTTP ${res.status}`)
       }
-      return res.json() as Promise<OSImage>
+      return (res.json() as Promise<NamedApi<OSImage, 'osImageId'>>).then(fromApiOSImage)
     })
   }
 
@@ -413,11 +541,13 @@ class ApiClient {
 
   // DHCP Lease APIs
   listDHCPLeases() {
-    return this.request<{ items: DHCPLease[] }>('/dhcp-leases')
+    return this.request<ListResponse<'dhcpLeases', DHCPLease>>('/dhcp-leases')
+      .then((res) => ({ items: res.dhcpLeases }))
   }
 
   listDNSRecords() {
-    return this.request<{ items: DNSRecord[] }>('/dns-records')
+    return this.request<ListResponse<'dnsRecords', DNSRecord>>('/dns-records')
+      .then((res) => ({ items: res.dnsRecords }))
   }
 
   createDNSRecord(record: Pick<DNSRecord, 'name' | 'type' | 'ttl' | 'values'>) {

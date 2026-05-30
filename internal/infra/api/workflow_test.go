@@ -10,11 +10,7 @@ func listItems(t *testing.T, env testEnv, path, token string) []any {
 	rec := doRequest(env.echo, http.MethodGet, path, nil, token)
 	requireStatus(t, rec, http.StatusOK)
 	body := parseBody(t, rec)
-	items, ok := body["items"].([]any)
-	if !ok {
-		t.Fatalf("expected items array from %s, got %v", path, body["items"])
-	}
-	return items
+	return listValues(t, body)
 }
 
 // requireItemCount is a test helper that asserts the number of items in a list response.
@@ -60,7 +56,7 @@ func TestWorkflow_HypervisorRegistrationAndVMLifecycle(t *testing.T) {
 	requireStatus(t, rec, http.StatusCreated)
 	registered := parseBody(t, rec)
 	regHV, _ := registered["hypervisor"].(map[string]any)
-	if regHV["name"] != "hv-wf1" {
+	if regHV["name"] != "hypervisors/hv-wf1" {
 		t.Fatalf("expected registered name hv-wf1, got %v", regHV["name"])
 	}
 
@@ -122,16 +118,16 @@ func TestWorkflow_HypervisorRegistrationAndVMLifecycle(t *testing.T) {
 	rec = doRequest(env.echo, http.MethodGet, "/api/v1/virtual-machines/vm-wf1", nil, env.token)
 	requireStatus(t, rec, http.StatusOK)
 	vmDetail := parseBody(t, rec)
-	if vmDetail["hypervisorRef"] != "hv-wf1" {
+	if vmDetail["hypervisorRef"] != "hypervisors/hv-wf1" {
 		t.Fatalf("expected hypervisorRef hv-wf1, got %v", vmDetail["hypervisorRef"])
 	}
 	cloudInitRefs, _ := vmDetail["cloudInitRefs"].([]any)
-	if len(cloudInitRefs) == 0 || cloudInitRefs[0] != "ci-wf1" {
+	if len(cloudInitRefs) == 0 || cloudInitRefs[0] != "cloudInitTemplates/ci-wf1" {
 		t.Fatalf("expected legacy cloudInitRef to map to cloudInitRefs[0], got %v", cloudInitRefs)
 	}
 
 	// Step 10: Attempt power-on (will get libvirt error but should not crash).
-	rec = doRequest(env.echo, http.MethodPost, "/api/v1/virtual-machines/vm-wf1/actions/power-on", nil, env.token)
+	rec = doRequest(env.echo, http.MethodPost, "/api/v1/virtual-machines/vm-wf1:powerOn", nil, env.token)
 	// Accept 500 (expected libvirt/SSH failure) but NOT 401/403 (auth issues).
 	if rec.Code == http.StatusForbidden || rec.Code == http.StatusUnauthorized {
 		t.Fatalf("authenticated user should be allowed for power-on, got status %d", rec.Code)

@@ -32,10 +32,6 @@ type tokenResponse struct {
 	Token string `json:"token"`
 }
 
-type itemsResponse[T any] struct {
-	Items []T `json:"items"`
-}
-
 type authUserResponse struct {
 	Username string    `json:"username"`
 	Role     auth.Role `json:"role"`

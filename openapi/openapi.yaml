@@ -4,6 +4,23 @@ info:
   version: 1.0.0
 servers:
   - url: /api/v1
+
+tags:
+  - name: setup
+  - name: auth
+  - name: machines
+  - name: virtual-machines
+  - name: hypervisors
+  - name: subnets
+  - name: ssh-keys
+  - name: cloud-init-templates
+  - name: os-images
+  - name: boot-environments
+  - name: dhcp-leases
+  - name: dns-records
+  - name: audit
+  - name: users
+
 paths:
   /setup/status:
     get:
@@ -20,6 +37,7 @@ paths:
                 properties:
                   required:
                     type: boolean
+
   /setup/admin:
     post:
       summary: Create first admin
@@ -30,18 +48,17 @@ paths:
         content:
           application/json:
             schema:
-              type: object
-              required: [username, password]
-              properties:
-                username:
-                  type: string
-                password:
-                  type: string
+              $ref: '#/components/schemas/CreateFirstAdminRequest'
       responses:
         '201':
           description: created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StatusResponse'
         '409':
-          description: setup already completed
+          $ref: '#/components/responses/Conflict'
+
   /auth/login:
     post:
       summary: Login
@@ -51,53 +68,102 @@ paths:
         content:
           application/json:
             schema:
-              type: object
-              required: [username, password]
-              properties:
-                username:
-                  type: string
-                password:
-                  type: string
+              $ref: '#/components/schemas/LoginRequest'
       responses:
         '200':
           description: success
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [token]
+                properties:
+                  token:
+                    type: string
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
   /auth/logout:
     post:
       summary: Logout
       tags: [auth]
       security:
+        - bearerAuth: []
         - cookieAuth: []
       responses:
-        '200':
-          description: success
+        '204':
+          description: logged out
+
   /me:
     get:
       summary: Get current user
       tags: [auth]
       security:
+        - bearerAuth: []
         - cookieAuth: []
       responses:
         '200':
           description: success
+
+  /system-info:
+    get:
+      summary: Get system information
+      tags: [auth]
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      responses:
+        '200':
+          description: success
+
   /machines:
     get:
       summary: List machines
       tags: [machines]
       security:
+        - bearerAuth: []
         - cookieAuth: []
       parameters:
+        - $ref: '#/components/parameters/PageSize'
+        - $ref: '#/components/parameters/PageToken'
         - in: query
-          name: namespace
+          name: phase
           schema:
             type: string
+        - in: query
+          name: role
+          schema:
+            type: string
+        - in: query
+          name: subnetRef
+          schema:
+            type: string
+          description: Canonical subnet resource name, for example subnets/lab.
+        - in: query
+          name: ipAssignment
+          schema:
+            type: string
+            enum: [dhcp, static]
       responses:
         '200':
           description: success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListMachinesResponse'
     post:
       summary: Create machine
       tags: [machines]
       security:
+        - bearerAuth: []
         - cookieAuth: []
+      parameters:
+        - in: query
+          name: machineId
+          required: true
+          schema:
+            type: string
+          description: User-specified machine ID.
       requestBody:
         required: true
         content:
@@ -107,272 +173,21 @@ paths:
       responses:
         '201':
           description: created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Machine'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+
   /machines/{name}:
+    parameters:
+      - $ref: '#/components/parameters/MachineName'
     get:
       summary: Get machine
       tags: [machines]
       security:
-        - cookieAuth: []
-      parameters:
-        - in: path
-          name: name
-          required: true
-          schema:
-            type: string
-      responses:
-        '200':
-          description: success
-    delete:
-      summary: Delete machine
-      tags: [machines]
-      security:
-        - cookieAuth: []
-      parameters:
-        - in: path
-          name: name
-          required: true
-          schema:
-            type: string
-      responses:
-        '204':
-          description: deleted
-  /machines/{name}/actions/reinstall:
-    post:
-      summary: Reinstall machine
-      tags: [machines]
-      security:
-        - cookieAuth: []
-      parameters:
-        - in: path
-          name: name
-          required: true
-          schema:
-            type: string
-      responses:
-        '202':
-          description: accepted
-  /machines/{name}/actions/power-on:
-    post:
-      summary: Power on machine
-      tags: [machines]
-      security:
-        - cookieAuth: []
-      parameters:
-        - in: path
-          name: name
-          required: true
-          schema:
-            type: string
-      responses:
-        '200':
-          description: success
-  /machines/{name}/actions/power-off:
-    post:
-      summary: Power off machine
-      tags: [machines]
-      security:
-        - cookieAuth: []
-      parameters:
-        - in: path
-          name: name
-          required: true
-          schema:
-            type: string
-      responses:
-        '200':
-          description: success
-  /machines/{name}/settings:
-    patch:
-      summary: Update machine settings
-      tags: [machines]
-      security:
-        - cookieAuth: []
-      parameters:
-        - in: path
-          name: name
-          required: true
-          schema:
-            type: string
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-      responses:
-        '200':
-          description: success
-  /machines/discover:
-    post:
-      summary: Discover machines
-      tags: [machines]
-      security:
-        - cookieAuth: []
-      responses:
-        '200':
-          description: success
-  /audit-events:
-    get:
-      summary: List audit events
-      tags: [audit]
-      security:
-        - cookieAuth: []
-      responses:
-        '200':
-          description: success
-  /power-policies:
-    get:
-      summary: List power policies
-      tags: [power-policies]
-      security:
-        - cookieAuth: []
-      responses:
-        '200':
-          description: success
-    post:
-      summary: Create power policy
-      tags: [power-policies]
-      security:
-        - cookieAuth: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-      responses:
-        '201':
-          description: created
-  /power-policies/{name}:
-    get:
-      summary: Get power policy
-      tags: [power-policies]
-      security:
-        - cookieAuth: []
-      parameters:
-        - in: path
-          name: name
-          required: true
-          schema:
-            type: string
-      responses:
-        '200':
-          description: success
-    delete:
-      summary: Delete power policy
-      tags: [power-policies]
-      security:
-        - cookieAuth: []
-      parameters:
-        - in: path
-          name: name
-          required: true
-          schema:
-            type: string
-      responses:
-        '204':
-          description: deleted
-  /subnets:
-    get:
-      summary: List subnets
-      tags: [subnets]
-      security:
-        - cookieAuth: []
-      responses:
-        '200':
-          description: success
-    post:
-      summary: Create subnet
-      tags: [subnets]
-      security:
-        - cookieAuth: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-      responses:
-        '201':
-          description: created
-  /subnets/{name}:
-    get:
-      summary: Get subnet
-      tags: [subnets]
-      security:
-        - cookieAuth: []
-      parameters:
-        - in: path
-          name: name
-          required: true
-          schema:
-            type: string
-      responses:
-        '200':
-          description: success
-    put:
-      summary: Update subnet
-      tags: [subnets]
-      security:
-        - cookieAuth: []
-      parameters:
-        - in: path
-          name: name
-          required: true
-          schema:
-            type: string
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-      responses:
-        '200':
-          description: success
-    delete:
-      summary: Delete subnet
-      tags: [subnets]
-      security:
-        - cookieAuth: []
-      parameters:
-        - in: path
-          name: name
-          required: true
-          schema:
-            type: string
-      responses:
-        '204':
-          description: deleted
-  /users:
-    post:
-      summary: Create user
-      tags: [users]
-      security:
-        - cookieAuth: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [username, password, role]
-              properties:
-                username:
-                  type: string
-                password:
-                  type: string
-                role:
-                  type: string
-                  enum: [admin, operator, viewer]
-      responses:
-        '201':
-          description: created
-  /dns-records:
-    get:
-      summary: List manual DNS records
-      tags: [dns-records]
-      security:
+        - bearerAuth: []
         - cookieAuth: []
       responses:
         '200':
@@ -380,19 +195,932 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                required: [items]
-                properties:
-                  items:
-                    type: array
-                    items:
-                      $ref: '#/components/schemas/DNSRecord'
+                $ref: '#/components/schemas/Machine'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    delete:
+      summary: Delete machine
+      tags: [machines]
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      responses:
+        '204':
+          description: deleted
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /machines/{name}:redeploy:
+    parameters:
+      - $ref: '#/components/parameters/MachineName'
+    post:
+      summary: Redeploy machine OS
+      tags: [machines]
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RedeployMachineRequest'
+      responses:
+        '202':
+          description: accepted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Machine'
+
+  /machines/{name}:reinstall:
+    parameters:
+      - $ref: '#/components/parameters/MachineName'
+    post:
+      summary: Reinstall machine OS
+      tags: [machines]
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RedeployMachineRequest'
+      responses:
+        '202':
+          description: accepted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Machine'
+
+  /machines/{name}:powerOn:
+    parameters:
+      - $ref: '#/components/parameters/MachineName'
+    post:
+      summary: Power on machine
+      tags: [machines]
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      responses:
+        '200':
+          description: success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StatusResponse'
+
+  /machines/{name}:powerOff:
+    parameters:
+      - $ref: '#/components/parameters/MachineName'
+    post:
+      summary: Power off machine
+      tags: [machines]
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      responses:
+        '200':
+          description: success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StatusResponse'
+
+  /machines/{name}/settings:
+    parameters:
+      - $ref: '#/components/parameters/MachineName'
+    patch:
+      summary: Update machine power settings
+      tags: [machines]
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateMachineSettingsRequest'
+      responses:
+        '200':
+          description: success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Machine'
+
+  /machines/{name}/network:
+    parameters:
+      - $ref: '#/components/parameters/MachineName'
+    patch:
+      summary: Update machine network settings
+      tags: [machines]
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateMachineNetworkRequest'
+      responses:
+        '200':
+          description: success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Machine'
+
+  /machines/{name}/hardware:
+    parameters:
+      - $ref: '#/components/parameters/MachineName'
+    get:
+      summary: Get reported machine hardware
+      tags: [machines]
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      responses:
+        '200':
+          description: success
+
+  /machines/discover:
+    post:
+      summary: Discover or register a machine from boot metadata
+      tags: [machines]
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DiscoverMachineRequest'
+      responses:
+        '200':
+          description: success
+
+  /virtual-machines:
+    get:
+      summary: List virtual machines
+      tags: [virtual-machines]
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      parameters:
+        - $ref: '#/components/parameters/PageSize'
+        - $ref: '#/components/parameters/PageToken'
+        - in: query
+          name: phase
+          schema:
+            type: string
+        - in: query
+          name: hypervisorRef
+          schema:
+            type: string
+        - in: query
+          name: subnetRef
+          schema:
+            type: string
+        - in: query
+          name: ipAssignment
+          schema:
+            type: string
+            enum: [dhcp, static]
+      responses:
+        '200':
+          description: success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListVirtualMachinesResponse'
+    post:
+      summary: Create virtual machine
+      tags: [virtual-machines]
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      parameters:
+        - in: query
+          name: virtualMachineId
+          required: true
+          schema:
+            type: string
+          description: User-specified virtual machine ID.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateVirtualMachineRequest'
+      responses:
+        '201':
+          description: created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VirtualMachine'
+
+  /virtual-machines/{name}:
+    parameters:
+      - $ref: '#/components/parameters/VirtualMachineName'
+    get:
+      summary: Get virtual machine
+      tags: [virtual-machines]
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      responses:
+        '200':
+          description: success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VirtualMachine'
+    delete:
+      summary: Delete virtual machine
+      tags: [virtual-machines]
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      responses:
+        '204':
+          description: deleted
+
+  /virtual-machines/{name}:redeploy:
+    parameters:
+      - $ref: '#/components/parameters/VirtualMachineName'
+    post:
+      summary: Redeploy virtual machine OS
+      tags: [virtual-machines]
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RedeployVirtualMachineRequest'
+      responses:
+        '202':
+          description: accepted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VirtualMachine'
+
+  /virtual-machines/{name}:reinstall:
+    parameters:
+      - $ref: '#/components/parameters/VirtualMachineName'
+    post:
+      summary: Reinstall virtual machine OS
+      tags: [virtual-machines]
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RedeployVirtualMachineRequest'
+      responses:
+        '202':
+          description: accepted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VirtualMachine'
+
+  /virtual-machines/{name}:powerOn:
+    parameters:
+      - $ref: '#/components/parameters/VirtualMachineName'
+    post:
+      summary: Power on virtual machine
+      tags: [virtual-machines]
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      responses:
+        '200':
+          description: success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VirtualMachine'
+
+  /virtual-machines/{name}:powerOff:
+    parameters:
+      - $ref: '#/components/parameters/VirtualMachineName'
+    post:
+      summary: Power off virtual machine
+      tags: [virtual-machines]
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      responses:
+        '200':
+          description: success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VirtualMachine'
+
+  /virtual-machines/{name}:migrate:
+    parameters:
+      - $ref: '#/components/parameters/VirtualMachineName'
+    post:
+      summary: Migrate virtual machine
+      tags: [virtual-machines]
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MigrateVirtualMachineRequest'
+      responses:
+        '200':
+          description: success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VirtualMachine'
+
+  /subnets:
+    get:
+      summary: List subnets
+      tags: [subnets]
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      parameters:
+        - $ref: '#/components/parameters/PageSize'
+        - $ref: '#/components/parameters/PageToken'
+      responses:
+        '200':
+          description: success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListSubnetsResponse'
+    post:
+      summary: Create subnet
+      tags: [subnets]
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SubnetInput'
+      responses:
+        '201':
+          description: created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Subnet'
+
+  /subnets/{name}:
+    parameters:
+      - $ref: '#/components/parameters/SubnetName'
+    get:
+      summary: Get subnet
+      tags: [subnets]
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      responses:
+        '200':
+          description: success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Subnet'
+    put:
+      summary: Update subnet
+      tags: [subnets]
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SubnetInput'
+      responses:
+        '200':
+          description: success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Subnet'
+    delete:
+      summary: Delete subnet
+      tags: [subnets]
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      responses:
+        '204':
+          description: deleted
+
+  /ssh-keys:
+    get:
+      summary: List SSH keys
+      tags: [ssh-keys]
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      parameters:
+        - $ref: '#/components/parameters/PageSize'
+        - $ref: '#/components/parameters/PageToken'
+      responses:
+        '200':
+          description: success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListSSHKeysResponse'
+    post:
+      summary: Create SSH key
+      tags: [ssh-keys]
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SSHKeyInput'
+      responses:
+        '201':
+          description: created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SSHKey'
+
+  /ssh-keys/{name}:
+    parameters:
+      - $ref: '#/components/parameters/SSHKeyName'
+    get:
+      summary: Get SSH key
+      tags: [ssh-keys]
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      responses:
+        '200':
+          description: success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SSHKey'
+    delete:
+      summary: Delete SSH key
+      tags: [ssh-keys]
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      responses:
+        '204':
+          description: deleted
+
+  /hypervisors:
+    get:
+      summary: List hypervisors
+      tags: [hypervisors]
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      parameters:
+        - $ref: '#/components/parameters/PageSize'
+        - $ref: '#/components/parameters/PageToken'
+      responses:
+        '200':
+          description: success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListHypervisorsResponse'
+    post:
+      summary: Create hypervisor
+      tags: [hypervisors]
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/HypervisorInput'
+      responses:
+        '201':
+          description: created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Hypervisor'
+
+  /hypervisors/{name}:
+    parameters:
+      - $ref: '#/components/parameters/HypervisorName'
+    get:
+      summary: Get hypervisor
+      tags: [hypervisors]
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      responses:
+        '200':
+          description: success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Hypervisor'
+    delete:
+      summary: Delete hypervisor
+      tags: [hypervisors]
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      responses:
+        '204':
+          description: deleted
+
+  /hypervisors/registration-tokens:
+    post:
+      summary: Create hypervisor registration token
+      tags: [hypervisors]
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      responses:
+        '201':
+          description: created
+
+  /hypervisors/{name}/agent-token:
+    parameters:
+      - $ref: '#/components/parameters/HypervisorName'
+    post:
+      summary: Create hypervisor agent token
+      tags: [hypervisors]
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      responses:
+        '201':
+          description: created
+
+  /cloud-init-templates:
+    get:
+      summary: List cloud-init templates
+      tags: [cloud-init-templates]
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      parameters:
+        - $ref: '#/components/parameters/PageSize'
+        - $ref: '#/components/parameters/PageToken'
+      responses:
+        '200':
+          description: success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListCloudInitTemplatesResponse'
+    post:
+      summary: Create cloud-init template
+      tags: [cloud-init-templates]
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CloudInitTemplateInput'
+      responses:
+        '201':
+          description: created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CloudInitTemplate'
+
+  /cloud-init-templates/{name}:
+    parameters:
+      - $ref: '#/components/parameters/CloudInitTemplateName'
+    get:
+      summary: Get cloud-init template
+      tags: [cloud-init-templates]
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      responses:
+        '200':
+          description: success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CloudInitTemplate'
+    put:
+      summary: Update cloud-init template
+      tags: [cloud-init-templates]
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CloudInitTemplateInput'
+      responses:
+        '200':
+          description: success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CloudInitTemplate'
+    delete:
+      summary: Delete cloud-init template
+      tags: [cloud-init-templates]
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      responses:
+        '204':
+          description: deleted
+
+  /boot-environments:
+    get:
+      summary: List boot environments
+      tags: [boot-environments]
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      parameters:
+        - $ref: '#/components/parameters/PageSize'
+        - $ref: '#/components/parameters/PageToken'
+      responses:
+        '200':
+          description: success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListBootEnvironmentsResponse'
+
+  /boot-environments/{name}/logs:
+    parameters:
+      - $ref: '#/components/parameters/BootEnvironmentName'
+    get:
+      summary: Get boot environment logs
+      tags: [boot-environments]
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      responses:
+        '200':
+          description: success
+
+  /boot-environments/{name}/rebuild:
+    parameters:
+      - $ref: '#/components/parameters/BootEnvironmentName'
+    post:
+      summary: Rebuild boot environment
+      tags: [boot-environments]
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      responses:
+        '202':
+          description: accepted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BootEnvironment'
+
+  /os-images:
+    get:
+      summary: List OS images
+      tags: [os-images]
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      parameters:
+        - $ref: '#/components/parameters/PageSize'
+        - $ref: '#/components/parameters/PageToken'
+        - in: query
+          name: osFamily
+          schema:
+            type: string
+        - in: query
+          name: format
+          schema:
+            type: string
+        - in: query
+          name: variant
+          schema:
+            type: string
+        - in: query
+          name: ready
+          schema:
+            type: boolean
+      responses:
+        '200':
+          description: success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListOSImagesResponse'
+    post:
+      summary: Create OS image
+      tags: [os-images]
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OSImageInput'
+      responses:
+        '201':
+          description: created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OSImage'
+
+  /os-images/{name}:
+    parameters:
+      - $ref: '#/components/parameters/OSImageName'
+    get:
+      summary: Get OS image
+      tags: [os-images]
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      responses:
+        '200':
+          description: success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OSImage'
+    delete:
+      summary: Delete OS image
+      tags: [os-images]
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      responses:
+        '204':
+          description: deleted
+
+  /os-images/{name}/upload:
+    parameters:
+      - $ref: '#/components/parameters/OSImageName'
+    post:
+      summary: Upload OS image file
+      tags: [os-images]
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file:
+                  type: string
+                  format: binary
+      responses:
+        '200':
+          description: success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OSImage'
+
+  /os-images/{name}/status:
+    parameters:
+      - $ref: '#/components/parameters/OSImageName'
+    patch:
+      summary: Update OS image status
+      tags: [os-images]
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateOSImageStatusRequest'
+      responses:
+        '200':
+          description: success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OSImage'
+
+  /os-images/{name}/download:
+    parameters:
+      - $ref: '#/components/parameters/OSImageName'
+    get:
+      summary: Download OS image
+      tags: [os-images]
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      responses:
+        '200':
+          description: image bytes
+
+  /dhcp-leases:
+    get:
+      summary: List DHCP leases
+      tags: [dhcp-leases]
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      parameters:
+        - $ref: '#/components/parameters/PageSize'
+        - $ref: '#/components/parameters/PageToken'
+      responses:
+        '200':
+          description: success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListDHCPLeasesResponse'
+
+  /audit-events:
+    get:
+      summary: List audit events
+      tags: [audit]
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      parameters:
+        - $ref: '#/components/parameters/PageSize'
+        - $ref: '#/components/parameters/PageToken'
+      responses:
+        '200':
+          description: success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListAuditEventsResponse'
+
+  /dns-records:
+    get:
+      summary: List manual DNS records
+      tags: [dns-records]
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      parameters:
+        - $ref: '#/components/parameters/PageSize'
+        - $ref: '#/components/parameters/PageToken'
+      responses:
+        '200':
+          description: success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListDNSRecordsResponse'
         '409':
-          description: embedded DNS mode is required
+          $ref: '#/components/responses/Conflict'
     post:
       summary: Create manual DNS record
       tags: [dns-records]
       security:
+        - bearerAuth: []
         - cookieAuth: []
       requestBody:
         required: true
@@ -403,28 +1131,30 @@ paths:
       responses:
         '201':
           description: created
-        '400':
-          description: invalid record
-        '409':
-          description: embedded DNS mode is required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DNSRecord'
+
   /dns-records/{name}/{type}:
+    parameters:
+      - in: path
+        name: name
+        required: true
+        schema:
+          type: string
+      - in: path
+        name: type
+        required: true
+        schema:
+          type: string
+          enum: [A, CNAME, TXT]
     put:
       summary: Update manual DNS record
       tags: [dns-records]
       security:
+        - bearerAuth: []
         - cookieAuth: []
-      parameters:
-        - in: path
-          name: name
-          required: true
-          schema:
-            type: string
-        - in: path
-          name: type
-          required: true
-          schema:
-            type: string
-            enum: [A, CNAME, TXT]
       requestBody:
         required: true
         content:
@@ -434,41 +1164,898 @@ paths:
       responses:
         '200':
           description: success
-        '400':
-          description: invalid record
-        '409':
-          description: embedded DNS mode is required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DNSRecord'
     delete:
       summary: Delete manual DNS record
       tags: [dns-records]
       security:
+        - bearerAuth: []
         - cookieAuth: []
-      parameters:
-        - in: path
-          name: name
-          required: true
-          schema:
-            type: string
-        - in: path
-          name: type
-          required: true
-          schema:
-            type: string
-            enum: [A, CNAME, TXT]
       responses:
         '204':
           description: deleted
-        '400':
-          description: invalid record key
-        '409':
-          description: embedded DNS mode is required
+
+  /users:
+    post:
+      summary: Create user
+      tags: [users]
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateUserRequest'
+      responses:
+        '201':
+          description: created
+
 components:
   securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
     cookieAuth:
       type: apiKey
       in: cookie
       name: session
+
+  parameters:
+    PageSize:
+      in: query
+      name: pageSize
+      schema:
+        type: integer
+        minimum: 0
+        maximum: 500
+      description: Maximum number of resources to return. Defaults to 100.
+    PageToken:
+      in: query
+      name: pageToken
+      schema:
+        type: string
+      description: Token returned by the previous list response.
+    MachineName:
+      in: path
+      name: name
+      required: true
+      schema:
+        type: string
+      description: Machine ID. Response resources expose the canonical name machines/{machine}.
+    VirtualMachineName:
+      in: path
+      name: name
+      required: true
+      schema:
+        type: string
+      description: Virtual machine ID. Response resources expose the canonical name virtualMachines/{virtualMachine}.
+    HypervisorName:
+      in: path
+      name: name
+      required: true
+      schema:
+        type: string
+    SubnetName:
+      in: path
+      name: name
+      required: true
+      schema:
+        type: string
+    SSHKeyName:
+      in: path
+      name: name
+      required: true
+      schema:
+        type: string
+    CloudInitTemplateName:
+      in: path
+      name: name
+      required: true
+      schema:
+        type: string
+    OSImageName:
+      in: path
+      name: name
+      required: true
+      schema:
+        type: string
+    BootEnvironmentName:
+      in: path
+      name: name
+      required: true
+      schema:
+        type: string
+
+  responses:
+    BadRequest:
+      description: bad request
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    Unauthorized:
+      description: unauthorized
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    NotFound:
+      description: not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    Conflict:
+      description: conflict
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+
   schemas:
+    ErrorResponse:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
+
+    StatusResponse:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+        state:
+          type: string
+        error:
+          type: string
+
+    LoginRequest:
+      type: object
+      required: [username, password]
+      properties:
+        username:
+          type: string
+        password:
+          type: string
+          format: password
+
+    CreateFirstAdminRequest:
+      allOf:
+        - $ref: '#/components/schemas/LoginRequest'
+
+    CreateUserRequest:
+      type: object
+      required: [username, password, role]
+      properties:
+        username:
+          type: string
+        password:
+          type: string
+          format: password
+        role:
+          type: string
+          enum: [admin, operator, viewer]
+
+    ListMetadata:
+      type: object
+      required: [totalSize]
+      properties:
+        nextPageToken:
+          type: string
+        totalSize:
+          type: integer
+          minimum: 0
+
+    CreateMachineRequest:
+      type: object
+      required: [machine]
+      properties:
+        machineId:
+          type: string
+          description: User-specified ID. Prefer query parameter machineId for HTTP/JSON.
+        machine:
+          $ref: '#/components/schemas/MachineSpec'
+
+    MachineSpec:
+      type: object
+      required: [hostname, mac, arch, firmware, power, osPreset]
+      properties:
+        hostname:
+          type: string
+        mac:
+          type: string
+        ip:
+          type: string
+        arch:
+          type: string
+        firmware:
+          type: string
+          enum: [uefi, bios]
+        power:
+          $ref: '#/components/schemas/PowerConfig'
+        network:
+          type: object
+          additionalProperties: true
+        osPreset:
+          $ref: '#/components/schemas/MachineOSPreset'
+        targetDisk:
+          type: string
+        cloudInitRef:
+          type: string
+          description: Canonical resource name cloudInitTemplates/{template}.
+        cloudInitRefs:
+          type: array
+          items:
+            type: string
+        ipAssignment:
+          type: string
+          enum: [dhcp, static]
+        subnetRef:
+          type: string
+          description: Canonical resource name subnets/{subnet}.
+        role:
+          type: string
+        bridgeName:
+          type: string
+        sshKeyRefs:
+          type: array
+          items:
+            type: string
+        loginUser:
+          $ref: '#/components/schemas/LoginUserSpec'
+
+    RedeployMachineRequest:
+      allOf:
+        - $ref: '#/components/schemas/MachineSpec'
+        - type: object
+          properties:
+            confirm:
+              type: string
+
+    Machine:
+      allOf:
+        - $ref: '#/components/schemas/MachineSpec'
+        - type: object
+          required: [name, machineId, phase, createdAt, updatedAt]
+          properties:
+            name:
+              type: string
+              example: machines/node-01
+            machineId:
+              type: string
+              example: node-01
+            phase:
+              type: string
+            provision:
+              $ref: '#/components/schemas/ProvisionProgress'
+            lastPowerAction:
+              type: string
+            lastDeployedCloudInitRef:
+              type: string
+            lastError:
+              type: string
+            powerState:
+              type: string
+            powerStateAt:
+              type: string
+              format: date-time
+            createdAt:
+              type: string
+              format: date-time
+            updatedAt:
+              type: string
+              format: date-time
+
+    MachineOSPreset:
+      type: object
+      required: [family, version]
+      properties:
+        family:
+          type: string
+        version:
+          type: string
+        imageRef:
+          type: string
+          description: Canonical resource name osImages/{image}.
+        installConfig:
+          type: object
+          additionalProperties:
+            type: string
+
+    ListMachinesResponse:
+      allOf:
+        - $ref: '#/components/schemas/ListMetadata'
+        - type: object
+          required: [machines]
+          properties:
+            machines:
+              type: array
+              items:
+                $ref: '#/components/schemas/Machine'
+
+    CreateVirtualMachineRequest:
+      type: object
+      required: [virtualMachine]
+      properties:
+        virtualMachineId:
+          type: string
+          description: User-specified ID. Prefer query parameter virtualMachineId for HTTP/JSON.
+        virtualMachine:
+          $ref: '#/components/schemas/VirtualMachineSpec'
+
+    VirtualMachineSpec:
+      type: object
+      required: [resources, powerControlMethod]
+      properties:
+        hypervisorRef:
+          type: string
+          description: Canonical resource name hypervisors/{hypervisor}.
+        resources:
+          type: object
+          required: [cpuCores, memoryMB, diskGB]
+          properties:
+            cpuCores:
+              type: integer
+            memoryMB:
+              type: integer
+            diskGB:
+              type: integer
+        osImageRef:
+          type: string
+        cloudInitRef:
+          type: string
+        cloudInitRefs:
+          type: array
+          items:
+            type: string
+        network:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+        ipAssignment:
+          type: string
+          enum: [dhcp, static]
+        subnetRef:
+          type: string
+        domain:
+          type: string
+        installConfig:
+          type: object
+          additionalProperties: true
+        powerControlMethod:
+          type: string
+        advancedOptions:
+          type: object
+          additionalProperties: true
+        sshKeyRefs:
+          type: array
+          items:
+            type: string
+        loginUser:
+          $ref: '#/components/schemas/LoginUserSpec'
+
+    RedeployVirtualMachineRequest:
+      allOf:
+        - $ref: '#/components/schemas/VirtualMachineSpec'
+        - type: object
+          properties:
+            confirm:
+              type: string
+
+    MigrateVirtualMachineRequest:
+      type: object
+      properties:
+        targetHypervisor:
+          type: string
+          description: Canonical resource name hypervisors/{hypervisor}.
+
+    VirtualMachine:
+      allOf:
+        - $ref: '#/components/schemas/VirtualMachineSpec'
+        - type: object
+          required: [name, virtualMachineId, phase, createdAt, updatedAt]
+          properties:
+            name:
+              type: string
+              example: virtualMachines/vm-01
+            virtualMachineId:
+              type: string
+              example: vm-01
+            phase:
+              type: string
+            libvirtDomain:
+              type: string
+            hypervisorName:
+              type: string
+            ipAddresses:
+              type: array
+              items:
+                type: string
+            networkInterfaces:
+              type: array
+              items:
+                type: object
+                additionalProperties: true
+            provisioning:
+              $ref: '#/components/schemas/ProvisioningStatus'
+            lastPowerAction:
+              type: string
+            lastDeployedCloudInitRef:
+              type: string
+            lastError:
+              type: string
+            createdOnHost:
+              type: string
+            createdAt:
+              type: string
+              format: date-time
+            updatedAt:
+              type: string
+              format: date-time
+
+    ListVirtualMachinesResponse:
+      allOf:
+        - $ref: '#/components/schemas/ListMetadata'
+        - type: object
+          required: [virtualMachines]
+          properties:
+            virtualMachines:
+              type: array
+              items:
+                $ref: '#/components/schemas/VirtualMachine'
+
+    LoginUserSpec:
+      type: object
+      properties:
+        username:
+          type: string
+        password:
+          type: string
+          format: password
+        passwordConfigured:
+          type: boolean
+          readOnly: true
+
+    PowerConfig:
+      type: object
+      required: [type]
+      properties:
+        type:
+          type: string
+          enum: [manual, wol, ipmi, webhook]
+        manual:
+          type: object
+          additionalProperties: true
+        wol:
+          type: object
+          additionalProperties: true
+        ipmi:
+          type: object
+          additionalProperties: true
+        webhook:
+          type: object
+          additionalProperties: true
+
+    ProvisionProgress:
+      type: object
+      properties:
+        active:
+          type: boolean
+        attemptId:
+          type: string
+        inventoryId:
+          type: string
+        startedAt:
+          type: string
+          format: date-time
+        deadlineAt:
+          type: string
+          format: date-time
+        completedAt:
+          type: string
+          format: date-time
+        trigger:
+          type: string
+        requestedBy:
+          type: string
+        message:
+          type: string
+        artifacts:
+          type: object
+          additionalProperties:
+            type: string
+        completionSource:
+          type: string
+        lastSignalAt:
+          type: string
+          format: date-time
+        failureReason:
+          type: string
+        logUrl:
+          type: string
+
+    ProvisioningStatus:
+      type: object
+      properties:
+        active:
+          type: boolean
+        startedAt:
+          type: string
+          format: date-time
+        deadlineAt:
+          type: string
+          format: date-time
+        completedAt:
+          type: string
+          format: date-time
+        completionSource:
+          type: string
+        lastSignalAt:
+          type: string
+          format: date-time
+
+    UpdateMachineSettingsRequest:
+      type: object
+      required: [power]
+      properties:
+        power:
+          $ref: '#/components/schemas/PowerConfig'
+
+    UpdateMachineNetworkRequest:
+      type: object
+      properties:
+        ip:
+          type: string
+        ipAssignment:
+          type: string
+          enum: [dhcp, static]
+        subnetRef:
+          type: string
+        domain:
+          type: string
+
+    DiscoverMachineRequest:
+      type: object
+      required: [mac]
+      properties:
+        mac:
+          type: string
+        clientHostname:
+          type: string
+        arch:
+          type: string
+        firmware:
+          type: string
+
+    SubnetInput:
+      type: object
+      required: [name, spec]
+      properties:
+        name:
+          type: string
+        spec:
+          type: object
+          additionalProperties: true
+
+    Subnet:
+      allOf:
+        - $ref: '#/components/schemas/SubnetInput'
+        - type: object
+          required: [subnetId, createdAt, updatedAt]
+          properties:
+            subnetId:
+              type: string
+            createdAt:
+              type: string
+              format: date-time
+            updatedAt:
+              type: string
+              format: date-time
+
+    ListSubnetsResponse:
+      allOf:
+        - $ref: '#/components/schemas/ListMetadata'
+        - type: object
+          required: [subnets]
+          properties:
+            subnets:
+              type: array
+              items:
+                $ref: '#/components/schemas/Subnet'
+
+    SSHKeyInput:
+      type: object
+      required: [name, publicKey]
+      properties:
+        name:
+          type: string
+        publicKey:
+          type: string
+        privateKey:
+          type: string
+          format: password
+          writeOnly: true
+        comment:
+          type: string
+
+    SSHKey:
+      type: object
+      required: [name, sshKeyId, publicKey, createdAt, updatedAt]
+      properties:
+        name:
+          type: string
+          example: sshKeys/default
+        sshKeyId:
+          type: string
+        publicKey:
+          type: string
+        comment:
+          type: string
+        keyType:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
+    ListSSHKeysResponse:
+      allOf:
+        - $ref: '#/components/schemas/ListMetadata'
+        - type: object
+          required: [sshKeys]
+          properties:
+            sshKeys:
+              type: array
+              items:
+                $ref: '#/components/schemas/SSHKey'
+
+    HypervisorInput:
+      type: object
+      required: [name, connection]
+      properties:
+        name:
+          type: string
+        connection:
+          type: object
+          additionalProperties: true
+        labels:
+          type: object
+          additionalProperties:
+            type: string
+        machineRef:
+          type: string
+        bridgeName:
+          type: string
+
+    Hypervisor:
+      allOf:
+        - $ref: '#/components/schemas/HypervisorInput'
+        - type: object
+          required: [hypervisorId, phase, vmCount, createdAt, updatedAt]
+          properties:
+            hypervisorId:
+              type: string
+            phase:
+              type: string
+            capacity:
+              type: object
+              additionalProperties: true
+            used:
+              type: object
+              additionalProperties: true
+            vmCount:
+              type: integer
+            libvirtURI:
+              type: string
+            lastHeartbeat:
+              type: string
+              format: date-time
+            lastError:
+              type: string
+            createdAt:
+              type: string
+              format: date-time
+            updatedAt:
+              type: string
+              format: date-time
+
+    ListHypervisorsResponse:
+      allOf:
+        - $ref: '#/components/schemas/ListMetadata'
+        - type: object
+          required: [hypervisors]
+          properties:
+            hypervisors:
+              type: array
+              items:
+                $ref: '#/components/schemas/Hypervisor'
+
+    CloudInitTemplateInput:
+      type: object
+      required: [name, userData]
+      properties:
+        name:
+          type: string
+        userData:
+          type: string
+        networkConfig:
+          type: string
+        metadataTemplate:
+          type: string
+        description:
+          type: string
+
+    CloudInitTemplate:
+      allOf:
+        - $ref: '#/components/schemas/CloudInitTemplateInput'
+        - type: object
+          required: [cloudInitTemplateId, createdAt, updatedAt]
+          properties:
+            cloudInitTemplateId:
+              type: string
+            createdAt:
+              type: string
+              format: date-time
+            updatedAt:
+              type: string
+              format: date-time
+
+    ListCloudInitTemplatesResponse:
+      allOf:
+        - $ref: '#/components/schemas/ListMetadata'
+        - type: object
+          required: [cloudInitTemplates]
+          properties:
+            cloudInitTemplates:
+              type: array
+              items:
+                $ref: '#/components/schemas/CloudInitTemplate'
+
+    BootEnvironment:
+      type: object
+      required: [name, bootEnvironmentId, phase, updatedAt]
+      properties:
+        name:
+          type: string
+          example: bootEnvironments/default
+        bootEnvironmentId:
+          type: string
+        phase:
+          type: string
+        message:
+          type: string
+        artifactDir:
+          type: string
+        logPath:
+          type: string
+        kernelPath:
+          type: string
+        initrdPath:
+          type: string
+        rootfsPath:
+          type: string
+        updatedAt:
+          type: string
+          format: date-time
+
+    ListBootEnvironmentsResponse:
+      allOf:
+        - $ref: '#/components/schemas/ListMetadata'
+        - type: object
+          required: [bootEnvironments]
+          properties:
+            bootEnvironments:
+              type: array
+              items:
+                $ref: '#/components/schemas/BootEnvironment'
+
+    OSImageInput:
+      type: object
+      required: [name, osFamily, osVersion, arch, format, source]
+      properties:
+        name:
+          type: string
+        osFamily:
+          type: string
+        osVersion:
+          type: string
+        arch:
+          type: string
+        format:
+          type: string
+        source:
+          type: string
+        variant:
+          type: string
+        url:
+          type: string
+        checksum:
+          type: string
+        sizeBytes:
+          type: integer
+          format: int64
+        description:
+          type: string
+        manifest:
+          type: object
+          additionalProperties: true
+
+    OSImage:
+      allOf:
+        - $ref: '#/components/schemas/OSImageInput'
+        - type: object
+          required: [osImageId, ready, createdAt, updatedAt]
+          properties:
+            osImageId:
+              type: string
+            ready:
+              type: boolean
+            error:
+              type: string
+            createdAt:
+              type: string
+              format: date-time
+            updatedAt:
+              type: string
+              format: date-time
+
+    UpdateOSImageStatusRequest:
+      type: object
+      required: [ready]
+      properties:
+        ready:
+          type: boolean
+        localPath:
+          type: string
+          writeOnly: true
+        error:
+          type: string
+
+    ListOSImagesResponse:
+      allOf:
+        - $ref: '#/components/schemas/ListMetadata'
+        - type: object
+          required: [osImages]
+          properties:
+            osImages:
+              type: array
+              items:
+                $ref: '#/components/schemas/OSImage'
+
+    ListDHCPLeasesResponse:
+      allOf:
+        - $ref: '#/components/schemas/ListMetadata'
+        - type: object
+          required: [dhcpLeases]
+          properties:
+            dhcpLeases:
+              type: array
+              items:
+                type: object
+                additionalProperties: true
+
+    ListAuditEventsResponse:
+      allOf:
+        - $ref: '#/components/schemas/ListMetadata'
+        - type: object
+          required: [auditEvents]
+          properties:
+            auditEvents:
+              type: array
+              items:
+                type: object
+                additionalProperties: true
+
     DNSRecordInput:
       type: object
       required: [name, type, values]
@@ -485,6 +2072,7 @@ components:
           type: array
           items:
             type: string
+
     DNSRecordUpdateInput:
       type: object
       required: [values]
@@ -496,6 +2084,7 @@ components:
           type: array
           items:
             type: string
+
     DNSRecord:
       allOf:
         - $ref: '#/components/schemas/DNSRecordInput'
@@ -508,51 +2097,14 @@ components:
             updatedAt:
               type: string
               format: date-time
-    CreateMachineRequest:
-      type: object
-      required: [hostname, mac, arch, firmware, powerPolicyRef, osPreset]
-      properties:
-        hostname:
-          type: string
-        mac:
-          type: string
-        ip:
-          type: string
-        arch:
-          type: string
-        firmware:
-          type: string
-          enum: [uefi, bios]
-        powerPolicyRef:
-          type: string
-        network:
-          type: object
+
+    ListDNSRecordsResponse:
+      allOf:
+        - $ref: '#/components/schemas/ListMetadata'
+        - type: object
+          required: [dnsRecords]
           properties:
-            domain:
-              type: string
-            nameServers:
+            dnsRecords:
               type: array
               items:
-                type: string
-            gateway:
-              type: string
-        ipAssignment:
-          type: string
-          enum: [dhcp, static]
-        subnetRef:
-          type: string
-        osPreset:
-          type: object
-          required: [family, version, imageRef]
-          properties:
-            family:
-              type: string
-              enum: [ubuntu, debian]
-            version:
-              type: string
-            imageRef:
-              type: string
-            installConfig:
-              type: object
-              additionalProperties:
-                type: string
+                $ref: '#/components/schemas/DNSRecord'

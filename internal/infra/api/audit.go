@@ -6,8 +6,6 @@ import (
 	"strings"
 
 	"github.com/labstack/echo/v4"
-
-	"github.com/sugaf1204/gomi/internal/auth"
 )
 
 func (s *Server) ListAuditEvents(c echo.Context) error {
@@ -22,5 +20,13 @@ func (s *Server) ListAuditEvents(c echo.Context) error {
 	if err != nil {
 		return c.JSON(gohttp.StatusInternalServerError, jsonErrorErr(err))
 	}
-	return c.JSON(gohttp.StatusOK, itemsResponse[auth.AuditEvent]{Items: events})
+	p, err := parsePagination(c, len(events))
+	if err != nil {
+		return c.JSON(gohttp.StatusBadRequest, jsonErrorErr(err))
+	}
+	return c.JSON(gohttp.StatusOK, ListAuditEventsResponse{
+		AuditEvents:   paginate(events, p),
+		NextPageToken: p.nextPageToken,
+		TotalSize:     p.totalSize,
+	})
 }

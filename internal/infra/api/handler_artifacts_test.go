@@ -1,6 +1,7 @@
 package api_test
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"net/http"
@@ -22,7 +23,7 @@ func TestCloudInitTemplateCRUD(t *testing.T) {
 	rec := doRequest(env.echo, http.MethodPost, "/api/v1/cloud-init-templates", ciBody, env.token)
 	requireStatus(t, rec, http.StatusCreated)
 	created := parseBody(t, rec)
-	if created["name"] != "ci-basic" {
+	if created["name"] != "cloudInitTemplates/ci-basic" {
 		t.Fatalf("expected name ci-basic, got %v", created["name"])
 	}
 
@@ -30,9 +31,9 @@ func TestCloudInitTemplateCRUD(t *testing.T) {
 	rec = doRequest(env.echo, http.MethodGet, "/api/v1/cloud-init-templates", nil, env.token)
 	requireStatus(t, rec, http.StatusOK)
 	body := parseBody(t, rec)
-	items, ok := body["items"].([]any)
-	if !ok || len(items) != 1 {
-		t.Fatalf("expected 1 cloud-init template, got %v", body["items"])
+	items := listValues(t, body)
+	if len(items) != 1 {
+		t.Fatalf("expected 1 cloud-init template, got %v", body)
 	}
 
 	// GET /api/v1/cloud-init-templates/ci-basic - Get
@@ -83,7 +84,7 @@ func TestOSImageCRUD(t *testing.T) {
 	rec := doRequest(env.echo, http.MethodPost, "/api/v1/os-images", imgBody, env.token)
 	requireStatus(t, rec, http.StatusCreated)
 	created := parseBody(t, rec)
-	if created["name"] != "ubuntu-22.04" {
+	if created["name"] != "osImages/ubuntu-22.04" {
 		t.Fatalf("expected name ubuntu-22.04, got %v", created["name"])
 	}
 
@@ -91,9 +92,9 @@ func TestOSImageCRUD(t *testing.T) {
 	rec = doRequest(env.echo, http.MethodGet, "/api/v1/os-images", nil, env.token)
 	requireStatus(t, rec, http.StatusOK)
 	body := parseBody(t, rec)
-	items, ok := body["items"].([]any)
-	if !ok || len(items) != 1 {
-		t.Fatalf("expected 1 os-image, got %v", body["items"])
+	items := listValues(t, body)
+	if len(items) != 1 {
+		t.Fatalf("expected 1 os-image, got %v", body)
 	}
 
 	// GET /api/v1/os-images/ubuntu-22.04 - Get
@@ -142,9 +143,16 @@ func TestCreateURLOSImageDownloadsToServerStorage(t *testing.T) {
 	if ready, _ := created["ready"].(bool); !ready {
 		t.Fatalf("expected ready URL image, got %v", created)
 	}
-	localPath, _ := created["localPath"].(string)
+	if _, leaked := created["localPath"]; leaked {
+		t.Fatalf("localPath must not be exposed in API response: %v", created)
+	}
+	stored, err := env.osimages.Get(context.Background(), "debian-url")
+	if err != nil {
+		t.Fatalf("get stored os image: %v", err)
+	}
+	localPath := stored.LocalPath
 	if strings.TrimSpace(localPath) == "" {
-		t.Fatalf("expected localPath, got %v", created)
+		t.Fatalf("expected stored localPath, got %#v", stored)
 	}
 	data, err := os.ReadFile(localPath)
 	if err != nil {

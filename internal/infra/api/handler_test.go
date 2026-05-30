@@ -33,6 +33,7 @@ type testEnv struct {
 	token     string
 	authStore auth.Store
 	machines  *machine.Service
+	osimages  *osimage.Service
 }
 
 // setupTestEnv creates a fully wired Server with in-memory backend and
@@ -103,6 +104,7 @@ func setupTestEnvWithOptions(t *testing.T, powerExecutor infraapi.PowerExecutor,
 		token:     adminToken,
 		authStore: authStore,
 		machines:  machineSvc,
+		osimages:  osimageSvc,
 	}
 }
 
@@ -218,6 +220,30 @@ func requireStatus(t *testing.T, rec *httptest.ResponseRecorder, expected int) {
 	if rec.Code != expected {
 		t.Fatalf("expected status %d, got %d; body: %s", expected, rec.Code, rec.Body.String())
 	}
+}
+
+func listValues(t *testing.T, body map[string]any) []any {
+	t.Helper()
+	for _, key := range []string{
+		"machines",
+		"virtualMachines",
+		"hypervisors",
+		"subnets",
+		"sshKeys",
+		"cloudInitTemplates",
+		"osImages",
+		"bootEnvironments",
+		"dhcpLeases",
+		"auditEvents",
+		"dnsRecords",
+		"items",
+	} {
+		if items, ok := body[key].([]any); ok {
+			return items
+		}
+	}
+	t.Fatalf("expected list response array, got %v", body)
+	return nil
 }
 
 func signTestPowerEvent(body []byte, secret string) string {

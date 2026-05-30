@@ -24,7 +24,7 @@ func TestHealthCheck(t *testing.T) {
 func TestPowerOnNonexistentVM(t *testing.T) {
 	env := setupTestEnv(t)
 
-	rec := doRequest(env.echo, http.MethodPost, "/api/v1/virtual-machines/nonexistent/actions/power-on", nil, env.token)
+	rec := doRequest(env.echo, http.MethodPost, "/api/v1/virtual-machines/nonexistent:powerOn", nil, env.token)
 	requireStatus(t, rec, http.StatusNotFound)
 }
 
@@ -87,7 +87,7 @@ func TestReinstallPXEVM_UpdatesInstallConfigAndCloudInitRef(t *testing.T) {
 	}, env.token)
 	requireStatus(t, rec, http.StatusCreated)
 
-	rec = doRequest(env.echo, http.MethodPost, "/api/v1/virtual-machines/vm-redeploy/actions/redeploy", map[string]any{"confirm": "vm-redeploy"}, env.token)
+	rec = doRequest(env.echo, http.MethodPost, "/api/v1/virtual-machines/vm-redeploy:redeploy", map[string]any{"confirm": "vm-redeploy"}, env.token)
 	if rec.Code == http.StatusForbidden || rec.Code == http.StatusUnauthorized || rec.Code == http.StatusNotFound {
 		t.Fatalf("redeploy route should exist and be writable, got status %d", rec.Code)
 	}
@@ -116,9 +116,9 @@ func TestReinstallPXEVM_UpdatesInstallConfigAndCloudInitRef(t *testing.T) {
 			"ioThreads":  2,
 		},
 	}
-	rec = doRequest(env.echo, http.MethodPost, "/api/v1/virtual-machines/vm-redeploy/actions/reinstall", reinstallBody, env.token)
+	rec = doRequest(env.echo, http.MethodPost, "/api/v1/virtual-machines/vm-redeploy:reinstall", reinstallBody, env.token)
 	if rec.Code == http.StatusForbidden || rec.Code == http.StatusUnauthorized || rec.Code == http.StatusNotFound {
-		t.Fatalf("legacy reinstall route should exist and be writable, got status %d", rec.Code)
+		t.Fatalf("reinstall route should exist and be writable, got status %d", rec.Code)
 	}
 
 	rec = doRequest(env.echo, http.MethodGet, "/api/v1/virtual-machines/vm-redeploy", nil, env.token)
@@ -133,13 +133,13 @@ func TestReinstallPXEVM_UpdatesInstallConfigAndCloudInitRef(t *testing.T) {
 		t.Fatalf("expected inline install config to be preserved, got %q", inline)
 	}
 	cloudInitRefs, _ := body["cloudInitRefs"].([]any)
-	if len(cloudInitRefs) == 0 || cloudInitRefs[0] != "ci-reinstall" {
+	if len(cloudInitRefs) == 0 || cloudInitRefs[0] != "cloudInitTemplates/ci-reinstall" {
 		t.Fatalf("expected cloudInitRefs first item to be ci-reinstall, got %v", cloudInitRefs)
 	}
-	if body["lastDeployedCloudInitRef"] != "ci-reinstall" {
+	if body["lastDeployedCloudInitRef"] != "cloudInitTemplates/ci-reinstall" {
 		t.Fatalf("expected lastDeployedCloudInitRef=ci-reinstall, got %v", body["lastDeployedCloudInitRef"])
 	}
-	if body["subnetRef"] != "vm-redeploy-net" {
+	if body["subnetRef"] != "subnets/vm-redeploy-net" {
 		t.Fatalf("expected subnetRef=vm-redeploy-net, got %v", body["subnetRef"])
 	}
 	if body["ipAssignment"] != "static" {
@@ -168,7 +168,7 @@ func TestReinstallPXEVM_UpdatesInstallConfigAndCloudInitRef(t *testing.T) {
 	rec = doRequest(env.echo, http.MethodGet, "/api/v1/audit-events?machine=vm-redeploy", nil, env.token)
 	requireStatus(t, rec, http.StatusOK)
 	auditBody := parseBody(t, rec)
-	items, _ := auditBody["items"].([]any)
+	items := listValues(t, auditBody)
 	found := false
 	for _, item := range items {
 		event, _ := item.(map[string]any)
@@ -266,10 +266,7 @@ func TestListEmpty(t *testing.T) {
 		rec := doRequest(env.echo, http.MethodGet, ep, nil, env.token)
 		requireStatus(t, rec, http.StatusOK)
 		body := parseBody(t, rec)
-		items, ok := body["items"].([]any)
-		if !ok {
-			t.Fatalf("[%s] expected items array, got %v", ep, body["items"])
-		}
+		items := listValues(t, body)
 		if len(items) != 0 {
 			t.Fatalf("[%s] expected 0 items, got %d", ep, len(items))
 		}

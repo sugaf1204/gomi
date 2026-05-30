@@ -11,7 +11,8 @@ import (
 )
 
 type MachineResponse struct {
-	Name string `json:"name"`
+	Name      string `json:"name"`
+	MachineID string `json:"machineId"`
 
 	Hostname      string                    `json:"hostname"`
 	MAC           string                    `json:"mac"`
@@ -20,7 +21,7 @@ type MachineResponse struct {
 	Firmware      machine.Firmware          `json:"firmware"`
 	Power         PowerConfigResponse       `json:"power"`
 	Network       machine.NetworkConfig     `json:"network"`
-	OSPreset      machine.OSPreset          `json:"osPreset"`
+	OSPreset      OSPresetResponse          `json:"osPreset"`
 	TargetDisk    string                    `json:"targetDisk,omitempty"`
 	CloudInitRef  string                    `json:"cloudInitRef,omitempty"`
 	CloudInitRefs []string                  `json:"cloudInitRefs,omitempty"`
@@ -28,6 +29,8 @@ type MachineResponse struct {
 	SubnetRef     string                    `json:"subnetRef,omitempty"`
 	Role          machine.Role              `json:"role,omitempty"`
 	BridgeName    string                    `json:"bridgeName,omitempty"`
+	SSHKeyRefs    []string                  `json:"sshKeyRefs,omitempty"`
+	LoginUser     *LoginUserResponse        `json:"loginUser,omitempty"`
 
 	Phase                    machine.Phase              `json:"phase"`
 	Provision                *ProvisionProgressResponse `json:"provision,omitempty"`
@@ -39,6 +42,18 @@ type MachineResponse struct {
 
 	CreatedAt time.Time `json:"createdAt"`
 	UpdatedAt time.Time `json:"updatedAt"`
+}
+
+type OSPresetResponse struct {
+	Family        machine.OSType    `json:"family"`
+	Version       string            `json:"version"`
+	ImageRef      string            `json:"imageRef,omitempty"`
+	InstallConfig map[string]string `json:"installConfig,omitempty"`
+}
+
+type LoginUserResponse struct {
+	Username           string `json:"username"`
+	PasswordConfigured bool   `json:"passwordConfigured,omitempty"`
 }
 
 type ProvisionProgressResponse struct {
@@ -106,7 +121,8 @@ func machineResponses(machines []machine.Machine) []MachineResponse {
 
 func machineResponse(m machine.Machine) MachineResponse {
 	return MachineResponse{
-		Name:                     m.Name,
+		Name:                     resourceName("machines", m.Name),
+		MachineID:                m.Name,
 		Hostname:                 m.Hostname,
 		MAC:                      m.MAC,
 		IP:                       m.IP,
@@ -114,23 +130,44 @@ func machineResponse(m machine.Machine) MachineResponse {
 		Firmware:                 m.Firmware,
 		Power:                    powerConfigResponse(m.Power),
 		Network:                  m.Network,
-		OSPreset:                 m.OSPreset,
+		OSPreset:                 osPresetResponse(m.OSPreset),
 		TargetDisk:               m.TargetDisk,
-		CloudInitRef:             m.CloudInitRef,
-		CloudInitRefs:            m.CloudInitRefs,
+		CloudInitRef:             resourceName("cloudInitTemplates", m.CloudInitRef),
+		CloudInitRefs:            resourceNames("cloudInitTemplates", m.CloudInitRefs),
 		IPAssignment:             m.IPAssignment,
-		SubnetRef:                m.SubnetRef,
+		SubnetRef:                resourceName("subnets", m.SubnetRef),
 		Role:                     m.Role,
 		BridgeName:               m.BridgeName,
+		SSHKeyRefs:               resourceNames("sshKeys", m.SSHKeyRefs),
+		LoginUser:                loginUserResponse(m.LoginUser),
 		Phase:                    m.Phase,
 		Provision:                provisionProgressResponse(m.Provision),
 		LastPowerAction:          m.LastPowerAction,
-		LastDeployedCloudInitRef: m.LastDeployedCloudInitRef,
+		LastDeployedCloudInitRef: resourceName("cloudInitTemplates", m.LastDeployedCloudInitRef),
 		LastError:                m.LastError,
 		PowerState:               m.PowerState,
 		PowerStateAt:             m.PowerStateAt,
 		CreatedAt:                m.CreatedAt,
 		UpdatedAt:                m.UpdatedAt,
+	}
+}
+
+func osPresetResponse(p machine.OSPreset) OSPresetResponse {
+	return OSPresetResponse{
+		Family:        p.Family,
+		Version:       p.Version,
+		ImageRef:      resourceName("osImages", p.ImageRef),
+		InstallConfig: p.InstallConfig,
+	}
+}
+
+func loginUserResponse(user *machine.LoginUserSpec) *LoginUserResponse {
+	if user == nil || strings.TrimSpace(user.Username) == "" {
+		return nil
+	}
+	return &LoginUserResponse{
+		Username:           user.Username,
+		PasswordConfigured: strings.TrimSpace(user.Password) != "",
 	}
 }
 
