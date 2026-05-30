@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 )
 
@@ -34,22 +35,36 @@ func (c *apiClient) doRequest(ctx context.Context, method, url string) (*http.Re
 }
 
 func (c *apiClient) fetchImages(ctx context.Context) ([]OSImage, error) {
-	url := c.serverURL + "/api/v1/os-images"
-	resp, err := c.doRequest(ctx, http.MethodGet, url)
-	if err != nil {
-		return nil, err
+	var images []OSImage
+	pageToken := ""
+	for {
+		endpoint := c.serverURL + "/api/v1/os-images?pageSize=500"
+		if pageToken != "" {
+			endpoint += "&pageToken=" + url.QueryEscape(pageToken)
+		}
+		resp, err := c.doRequest(ctx, http.MethodGet, endpoint)
+		if err != nil {
+			return nil, err
+		}
+		if resp.StatusCode != http.StatusOK {
+			resp.Body.Close()
+			return nil, fmt.Errorf("unexpected status: %d", resp.StatusCode)
+		}
+		var result struct {
+			OSImages      []OSImage `json:"osImages"`
+			NextPageToken string    `json:"nextPageToken"`
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+			resp.Body.Close()
+			return nil, err
+		}
+		resp.Body.Close()
+		images = append(images, result.OSImages...)
+		pageToken = strings.TrimSpace(result.NextPageToken)
+		if pageToken == "" {
+			return images, nil
+		}
 	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("unexpected status: %d", resp.StatusCode)
-	}
-	var result struct {
-		OSImages []OSImage `json:"osImages"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, err
-	}
-	return result.OSImages, nil
 }
 
 func (c *apiClient) downloadImage(ctx context.Context, name, destPath string) error {

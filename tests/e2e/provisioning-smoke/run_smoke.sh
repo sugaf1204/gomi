@@ -134,7 +134,7 @@ curl -fsS -X POST "$API_BASE/api/v1/machines?namespace=$NAMESPACE" \
   -d "{\"metadata\":{\"name\":\"$MACHINE_NAME\"},\"spec\":{\"hostname\":\"$MACHINE_NAME\",\"mac\":\"00:11:22:33:44:55\",\"arch\":\"amd64\",\"firmware\":\"uefi\",\"powerPolicyRef\":\"$POWER_NAME\",\"networkProfileRef\":\"$NETWORK_NAME\",\"osPreset\":{\"family\":\"ubuntu\",\"version\":\"24.04\",\"imageRef\":\"ubuntu-24.04\"}}}" >/dev/null
 
 echo "[smoke] request reinstall"
-JOB_NAME=$(curl -fsS -X POST "$API_BASE/api/v1/machines/$MACHINE_NAME/actions/reinstall?namespace=$NAMESPACE" \
+JOB_NAME=$(curl -fsS -X POST "$API_BASE/api/v1/machines/$MACHINE_NAME:reinstall?namespace=$NAMESPACE" \
   -H "Authorization: Bearer $TOKEN" \
   -H 'Content-Type: application/json' \
   -d "{\"confirm\":\"$MACHINE_NAME\"}" | jq -r '.job.metadata.name')
@@ -165,9 +165,9 @@ for i in {1..40}; do
 done
 
 echo "[smoke] invoke power on/off"
-curl -fsS -X POST "$API_BASE/api/v1/machines/$MACHINE_NAME/actions/power-on?namespace=$NAMESPACE" \
+curl -fsS -X POST "$API_BASE/api/v1/machines/$MACHINE_NAME:powerOn?namespace=$NAMESPACE" \
   -H "Authorization: Bearer $TOKEN" >/dev/null
-curl -fsS -X POST "$API_BASE/api/v1/machines/$MACHINE_NAME/actions/power-off?namespace=$NAMESPACE" \
+curl -fsS -X POST "$API_BASE/api/v1/machines/$MACHINE_NAME:powerOff?namespace=$NAMESPACE" \
   -H "Authorization: Bearer $TOKEN" >/dev/null
 
 sleep 1

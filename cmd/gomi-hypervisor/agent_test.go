@@ -60,6 +60,57 @@ func TestSyncOnce_DownloadsReadyImages(t *testing.T) {
 	}
 }
 
+func TestSyncOnce_FollowsOSImagePagesBeforeCleanup(t *testing.T) {
+	imageContent := []byte("paged-qcow2-data")
+	var sawSecondPage bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v1/os-images":
+			switch r.URL.Query().Get("pageToken") {
+			case "":
+				resp := map[string]any{
+					"osImages": []OSImage{
+						{Name: "osImages/first-page", OSImageID: "first-page", Format: "qcow2", Ready: true},
+					},
+					"nextPageToken": "second",
+				}
+				json.NewEncoder(w).Encode(resp)
+			case "second":
+				sawSecondPage = true
+				resp := map[string]any{
+					"osImages": []OSImage{
+						{Name: "osImages/second-page", OSImageID: "second-page", Format: "qcow2", Ready: true},
+					},
+				}
+				json.NewEncoder(w).Encode(resp)
+			default:
+				http.NotFound(w, r)
+			}
+		case "/api/v1/os-images/first-page/download", "/api/v1/os-images/second-page/download":
+			w.Write(imageContent)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "second-page.qcow2"), []byte("already-here"), 0o644)
+	os.WriteFile(filepath.Join(dir, "second-page.qcow2"+managedMarkerSuffix), []byte("gomi-hypervisor\n"), 0o644)
+	cfg := Config{ServerURL: srv.URL, Interval: time.Minute, ImageDir: dir}
+	client := newAPIClient(srv.URL, "")
+
+	if err := syncOnce(context.Background(), cfg, client); err != nil {
+		t.Fatalf("syncOnce: %v", err)
+	}
+	if !sawSecondPage {
+		t.Fatal("expected agent to request the second OS image page")
+	}
+	if _, err := os.Stat(filepath.Join(dir, "second-page.qcow2")); err != nil {
+		t.Fatalf("expected later-page managed image to be kept: %v", err)
+	}
+}
+
 func TestSyncOnce_DownloadsArtifactRoot(t *testing.T) {
 	imageContent := []byte("qcow2-root-image")
 	sum := sha256.Sum256(imageContent)
