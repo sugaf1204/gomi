@@ -1412,12 +1412,51 @@ components:
           $ref: '#/components/schemas/LoginUserSpec'
 
     RedeployMachineRequest:
-      allOf:
-        - $ref: '#/components/schemas/MachineSpec'
-        - type: object
-          properties:
-            confirm:
-              type: string
+      type: object
+      properties:
+        confirm:
+          type: string
+        hostname:
+          type: string
+        mac:
+          type: string
+        ip:
+          type: string
+        arch:
+          type: string
+        firmware:
+          type: string
+          enum: [uefi, bios]
+        power:
+          $ref: '#/components/schemas/PowerConfig'
+        network:
+          type: object
+          additionalProperties: true
+        osPreset:
+          $ref: '#/components/schemas/MachineOSPreset'
+        targetDisk:
+          type: string
+        cloudInitRef:
+          type: string
+        cloudInitRefs:
+          type: array
+          items:
+            type: string
+        ipAssignment:
+          type: string
+          enum: [dhcp, static]
+        subnetRef:
+          type: string
+        role:
+          type: string
+        bridgeName:
+          type: string
+        sshKeyRefs:
+          type: array
+          items:
+            type: string
+        loginUser:
+          $ref: '#/components/schemas/LoginUserSpec'
 
     Machine:
       allOf:
@@ -1543,12 +1582,55 @@ components:
           $ref: '#/components/schemas/LoginUserSpec'
 
     RedeployVirtualMachineRequest:
-      allOf:
-        - $ref: '#/components/schemas/VirtualMachineSpec'
-        - type: object
+      type: object
+      properties:
+        confirm:
+          type: string
+        hypervisorRef:
+          type: string
+        resources:
+          type: object
           properties:
-            confirm:
-              type: string
+            cpuCores:
+              type: integer
+            memoryMB:
+              type: integer
+            diskGB:
+              type: integer
+        osImageRef:
+          type: string
+        cloudInitRef:
+          type: string
+        cloudInitRefs:
+          type: array
+          items:
+            type: string
+        network:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+        ipAssignment:
+          type: string
+          enum: [dhcp, static]
+        subnetRef:
+          type: string
+        domain:
+          type: string
+        installConfig:
+          type: object
+          additionalProperties: true
+        powerControlMethod:
+          type: string
+        advancedOptions:
+          type: object
+          additionalProperties: true
+        sshKeyRefs:
+          type: array
+          items:
+            type: string
+        loginUser:
+          $ref: '#/components/schemas/LoginUserSpec'
 
     MigrateVirtualMachineRequest:
       type: object

@@ -79,6 +79,10 @@ function resourceName(collection: string, id?: string) {
   return value.startsWith(`${collection}/`) ? value : `${collection}/${value}`
 }
 
+function optionalResourceName(collection: string, id?: string) {
+  return id === undefined ? undefined : resourceName(collection, id)
+}
+
 function resourceId(collection: string, name?: string) {
   const value = name?.trim() ?? ''
   if (!value) return ''
@@ -114,9 +118,9 @@ function toApiMachineSpec<T extends MachineSpecPayload>(input: T): T {
     osPreset: input.osPreset
       ? { ...input.osPreset, imageRef: resourceName('osImages', input.osPreset.imageRef) }
       : input.osPreset,
-    cloudInitRef: resourceName('cloudInitTemplates', input.cloudInitRef),
+    cloudInitRef: optionalResourceName('cloudInitTemplates', input.cloudInitRef),
     cloudInitRefs: resourceNames('cloudInitTemplates', input.cloudInitRefs),
-    subnetRef: resourceName('subnets', input.subnetRef),
+    subnetRef: optionalResourceName('subnets', input.subnetRef),
     sshKeyRefs: resourceNames('sshKeys', input.sshKeyRefs)
   }
 }
@@ -141,11 +145,11 @@ function toApiVirtualMachineSpec(input: VMRedeployPayload): VMApiSpecPayload {
   const { installCfg, ...rest } = input
   return {
     ...rest,
-    hypervisorRef: resourceName('hypervisors', rest.hypervisorRef),
-    osImageRef: resourceName('osImages', rest.osImageRef),
-    cloudInitRef: resourceName('cloudInitTemplates', rest.cloudInitRef),
+    hypervisorRef: optionalResourceName('hypervisors', rest.hypervisorRef),
+    osImageRef: optionalResourceName('osImages', rest.osImageRef),
+    cloudInitRef: optionalResourceName('cloudInitTemplates', rest.cloudInitRef),
     cloudInitRefs: resourceNames('cloudInitTemplates', rest.cloudInitRefs),
-    subnetRef: resourceName('subnets', rest.subnetRef),
+    subnetRef: optionalResourceName('subnets', rest.subnetRef),
     sshKeyRefs: resourceNames('sshKeys', rest.sshKeyRefs),
     installConfig: installCfg
   }
@@ -211,6 +215,19 @@ class ApiClient {
     return (await res.json()) as T
   }
 
+  private async listAll<K extends string, T>(path: string, key: K): Promise<T[]> {
+    const items: T[] = []
+    let pageToken = ''
+    do {
+      const separator = path.includes('?') ? '&' : '?'
+      const tokenParam = pageToken ? `${separator}pageToken=${encodeURIComponent(pageToken)}` : ''
+      const response = await this.request<ListResponse<K, T>>(`${path}${tokenParam}`)
+      items.push(...response[key])
+      pageToken = response.nextPageToken ?? ''
+    } while (pageToken)
+    return items
+  }
+
   login(username: string, password: string) {
     return this.request<{ token: string }>('/auth/login', {
       method: 'POST',
@@ -242,8 +259,8 @@ class ApiClient {
   }
 
   listMachines() {
-    return this.request<ListResponse<'machines', MachineApi>>('/machines')
-      .then((res) => ({ items: res.machines.map(fromApiMachine) }))
+    return this.listAll<'machines', MachineApi>('/machines', 'machines')
+      .then((items) => ({ items: items.map(fromApiMachine) }))
   }
 
   getMachine(name: string) {
@@ -304,8 +321,8 @@ class ApiClient {
   }
 
   listSubnets() {
-    return this.request<ListResponse<'subnets', NamedApi<Subnet, 'subnetId'>>>('/subnets')
-      .then((res) => ({ items: res.subnets.map((item) => fromApiNamed('subnets', 'subnetId', item)) }))
+    return this.listAll<'subnets', NamedApi<Subnet, 'subnetId'>>('/subnets', 'subnets')
+      .then((items) => ({ items: items.map((item) => fromApiNamed('subnets', 'subnetId', item)) }))
   }
 
   getSubnet(name: string) {
@@ -338,8 +355,8 @@ class ApiClient {
   }
 
   listSSHKeys() {
-    return this.request<ListResponse<'sshKeys', NamedApi<SSHKey, 'sshKeyId'>>>('/ssh-keys')
-      .then((res) => ({ items: res.sshKeys.map((item) => fromApiNamed('sshKeys', 'sshKeyId', item)) }))
+    return this.listAll<'sshKeys', NamedApi<SSHKey, 'sshKeyId'>>('/ssh-keys', 'sshKeys')
+      .then((items) => ({ items: items.map((item) => fromApiNamed('sshKeys', 'sshKeyId', item)) }))
   }
 
   createSSHKey(key: { name: string; publicKey: string; privateKey?: string; comment?: string }) {
@@ -356,18 +373,18 @@ class ApiClient {
   }
 
   listAudit(machine?: string) {
-    const params = new URLSearchParams({ limit: '50' })
+    const params = new URLSearchParams({ pageSize: '500' })
     if (machine && machine.trim().length > 0) {
       params.set('machine', machine)
     }
-    return this.request<ListResponse<'auditEvents', AuditEvent>>(`/audit-events?${params.toString()}`)
-      .then((res) => ({ items: res.auditEvents }))
+    return this.listAll<'auditEvents', AuditEvent>(`/audit-events?${params.toString()}`, 'auditEvents')
+      .then((items) => ({ items }))
   }
 
   // Hypervisor APIs
   listHypervisors() {
-    return this.request<ListResponse<'hypervisors', NamedApi<Hypervisor, 'hypervisorId'>>>('/hypervisors')
-      .then((res) => ({ items: res.hypervisors.map(fromApiHypervisor) }))
+    return this.listAll<'hypervisors', NamedApi<Hypervisor, 'hypervisorId'>>('/hypervisors', 'hypervisors')
+      .then((items) => ({ items: items.map(fromApiHypervisor) }))
   }
 
   getHypervisor(name: string) {
@@ -396,8 +413,8 @@ class ApiClient {
 
   // Virtual Machine APIs
   listVirtualMachines() {
-    return this.request<ListResponse<'virtualMachines', VirtualMachineApi>>('/virtual-machines')
-      .then((res) => ({ items: res.virtualMachines.map(fromApiVirtualMachine) }))
+    return this.listAll<'virtualMachines', VirtualMachineApi>('/virtual-machines', 'virtualMachines')
+      .then((items) => ({ items: items.map(fromApiVirtualMachine) }))
   }
 
   getVirtualMachine(name: string) {
@@ -461,8 +478,8 @@ class ApiClient {
 
   // Cloud-Init Template APIs
   listCloudInitTemplates() {
-    return this.request<ListResponse<'cloudInitTemplates', NamedApi<CloudInitTemplate, 'cloudInitTemplateId'>>>('/cloud-init-templates')
-      .then((res) => ({ items: res.cloudInitTemplates.map((item) => fromApiNamed('cloudInitTemplates', 'cloudInitTemplateId', item)) }))
+    return this.listAll<'cloudInitTemplates', NamedApi<CloudInitTemplate, 'cloudInitTemplateId'>>('/cloud-init-templates', 'cloudInitTemplates')
+      .then((items) => ({ items: items.map((item) => fromApiNamed('cloudInitTemplates', 'cloudInitTemplateId', item)) }))
   }
 
   getCloudInitTemplate(name: string) {
@@ -492,13 +509,13 @@ class ApiClient {
 
   // OS Image APIs
   listOSImages() {
-    return this.request<ListResponse<'osImages', NamedApi<OSImage, 'osImageId'>>>('/os-images')
-      .then((res) => ({ items: res.osImages.map(fromApiOSImage) }))
+    return this.listAll<'osImages', NamedApi<OSImage, 'osImageId'>>('/os-images', 'osImages')
+      .then((items) => ({ items: items.map(fromApiOSImage) }))
   }
 
   listBootEnvironments() {
-    return this.request<ListResponse<'bootEnvironments', NamedApi<BootEnvironmentStatus, 'bootEnvironmentId'>>>('/boot-environments')
-      .then((res) => ({ items: res.bootEnvironments.map((item) => fromApiNamed('bootEnvironments', 'bootEnvironmentId', item)) }))
+    return this.listAll<'bootEnvironments', NamedApi<BootEnvironmentStatus, 'bootEnvironmentId'>>('/boot-environments', 'bootEnvironments')
+      .then((items) => ({ items: items.map((item) => fromApiNamed('bootEnvironments', 'bootEnvironmentId', item)) }))
   }
 
   getOSImage(name: string) {
@@ -541,13 +558,13 @@ class ApiClient {
 
   // DHCP Lease APIs
   listDHCPLeases() {
-    return this.request<ListResponse<'dhcpLeases', DHCPLease>>('/dhcp-leases')
-      .then((res) => ({ items: res.dhcpLeases }))
+    return this.listAll<'dhcpLeases', DHCPLease>('/dhcp-leases', 'dhcpLeases')
+      .then((items) => ({ items }))
   }
 
   listDNSRecords() {
-    return this.request<ListResponse<'dnsRecords', DNSRecord>>('/dns-records')
-      .then((res) => ({ items: res.dnsRecords }))
+    return this.listAll<'dnsRecords', DNSRecord>('/dns-records', 'dnsRecords')
+      .then((items) => ({ items }))
   }
 
   createDNSRecord(record: Pick<DNSRecord, 'name' | 'type' | 'ttl' | 'values'>) {
