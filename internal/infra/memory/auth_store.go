@@ -74,6 +74,15 @@ func (s *AuthStore) CreateAuditEvent(_ context.Context, event auth.AuditEvent) e
 }
 
 func (s *AuthStore) ListAuditEvents(_ context.Context, machineName string, limit int) ([]auth.AuditEvent, error) {
+	out, _, err := s.listAuditEvents(machineName, 0, limit)
+	return out, err
+}
+
+func (s *AuthStore) ListAuditEventsPage(_ context.Context, machineName string, offset, limit int) ([]auth.AuditEvent, int, error) {
+	return s.listAuditEvents(machineName, offset, limit)
+}
+
+func (s *AuthStore) listAuditEvents(machineName string, offset, limit int) ([]auth.AuditEvent, int, error) {
 	s.b.mu.RLock()
 	defer s.b.mu.RUnlock()
 	out := make([]auth.AuditEvent, 0)
@@ -86,10 +95,15 @@ func (s *AuthStore) ListAuditEvents(_ context.Context, machineName string, limit
 	sort.Slice(out, func(i, j int) bool {
 		return out[i].CreatedAt.After(out[j].CreatedAt)
 	})
-	if limit > 0 && len(out) > limit {
-		return out[:limit], nil
+	total := len(out)
+	if offset > total {
+		return []auth.AuditEvent{}, total, nil
 	}
-	return out, nil
+	out = out[offset:]
+	if limit > 0 && len(out) > limit {
+		out = out[:limit]
+	}
+	return out, total, nil
 }
 
 // --- SSHKeyStore ---

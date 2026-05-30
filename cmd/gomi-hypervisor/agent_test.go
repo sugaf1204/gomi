@@ -21,9 +21,9 @@ func TestSyncOnce_DownloadsReadyImages(t *testing.T) {
 		switch r.URL.Path {
 		case "/api/v1/os-images":
 			resp := map[string]any{
-				"items": []OSImage{
-					{Name: "ubuntu-22.04", Format: "qcow2", Ready: true},
-					{Name: "not-ready", Format: "iso", Ready: false},
+				"osImages": []OSImage{
+					{Name: "osImages/ubuntu-22.04", OSImageID: "ubuntu-22.04", Format: "qcow2", Ready: true},
+					{Name: "osImages/not-ready", OSImageID: "not-ready", Format: "iso", Ready: false},
 				},
 			}
 			json.NewEncoder(w).Encode(resp)
@@ -70,7 +70,7 @@ func TestSyncOnce_DownloadsArtifactRoot(t *testing.T) {
 		switch r.URL.Path {
 		case "/api/v1/os-images":
 			resp := map[string]any{
-				"items": []OSImage{
+				"osImages": []OSImage{
 					{
 						Name:   "ubuntu-artifact",
 						Format: "qcow2",
@@ -132,7 +132,7 @@ func TestSyncOnce_DownloadsXZCompressedArtifactRoot(t *testing.T) {
 		switch r.URL.Path {
 		case "/api/v1/os-images":
 			resp := map[string]any{
-				"items": []OSImage{
+				"osImages": []OSImage{
 					{
 						Name:   "debian-artifact",
 						Format: "squashfs",
@@ -180,7 +180,7 @@ func TestSyncOnce_DownloadsSquashFSWithInternalXZCompression(t *testing.T) {
 		switch r.URL.Path {
 		case "/api/v1/os-images":
 			resp := map[string]any{
-				"items": []OSImage{
+				"osImages": []OSImage{
 					{
 						Name:   "fedora-artifact",
 						Format: "squashfs",
@@ -224,7 +224,7 @@ func TestSyncOnce_CleansUpStaleFiles(t *testing.T) {
 		switch r.URL.Path {
 		case "/api/v1/os-images":
 			resp := map[string]any{
-				"items": []OSImage{
+				"osImages": []OSImage{
 					{Name: "keep-me", Format: "qcow2", Ready: true},
 				},
 			}
@@ -270,7 +270,7 @@ func TestSyncOnce_SkipsExistingFileWithNoChecksum(t *testing.T) {
 		switch r.URL.Path {
 		case "/api/v1/os-images":
 			resp := map[string]any{
-				"items": []OSImage{
+				"osImages": []OSImage{
 					{Name: "existing", Format: "qcow2", Ready: true},
 				},
 			}

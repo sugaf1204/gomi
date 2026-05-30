@@ -67,11 +67,26 @@ func resourceNames(collection string, ids []string) []string {
 }
 
 func parsePagination(c echo.Context, total int) (page, error) {
+	start, size, err := parsePageRequest(c)
+	if err != nil {
+		return page{}, err
+	}
+	if start > total {
+		start = total
+	}
+	next := ""
+	if start+size < total {
+		next = encodePageToken(start + size)
+	}
+	return page{start: start, size: size, nextPageToken: next, totalSize: total}, nil
+}
+
+func parsePageRequest(c echo.Context) (int, int, error) {
 	size := defaultPageSize
 	if raw := strings.TrimSpace(c.QueryParam("pageSize")); raw != "" {
 		n, err := strconv.Atoi(raw)
 		if err != nil || n < 0 {
-			return page{}, fmt.Errorf("pageSize must be a non-negative integer")
+			return 0, 0, fmt.Errorf("pageSize must be a non-negative integer")
 		}
 		if n > 0 {
 			size = n
@@ -85,19 +100,11 @@ func parsePagination(c echo.Context, total int) (page, error) {
 	if token := strings.TrimSpace(c.QueryParam("pageToken")); token != "" {
 		offset, err := decodePageToken(token)
 		if err != nil || offset < 0 {
-			return page{}, fmt.Errorf("pageToken is invalid")
+			return 0, 0, fmt.Errorf("pageToken is invalid")
 		}
 		start = offset
 	}
-	if start > total {
-		start = total
-	}
-
-	next := ""
-	if start+size < total {
-		next = encodePageToken(start + size)
-	}
-	return page{start: start, size: size, nextPageToken: next, totalSize: total}, nil
+	return start, size, nil
 }
 
 func paginate[T any](items []T, p page) []T {

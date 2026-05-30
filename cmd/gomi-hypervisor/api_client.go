@@ -44,12 +44,12 @@ func (c *apiClient) fetchImages(ctx context.Context) ([]OSImage, error) {
 		return nil, fmt.Errorf("unexpected status: %d", resp.StatusCode)
 	}
 	var result struct {
-		Items []OSImage `json:"items"`
+		OSImages []OSImage `json:"osImages"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		return nil, err
 	}
-	return result.Items, nil
+	return result.OSImages, nil
 }
 
 func (c *apiClient) downloadImage(ctx context.Context, name, destPath string) error {

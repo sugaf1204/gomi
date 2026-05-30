@@ -9,17 +9,21 @@ import (
 
 func (s *Server) ListAuditEvents(c echo.Context) error {
 	machineName := strings.TrimSpace(c.QueryParam("machine"))
-	events, err := s.authStore.ListAuditEvents(c.Request().Context(), machineName, 0)
-	if err != nil {
-		return c.JSON(gohttp.StatusInternalServerError, jsonErrorErr(err))
-	}
-	p, err := parsePagination(c, len(events))
+	start, size, err := parsePageRequest(c)
 	if err != nil {
 		return c.JSON(gohttp.StatusBadRequest, jsonErrorErr(err))
 	}
+	events, total, err := s.authStore.ListAuditEventsPage(c.Request().Context(), machineName, start, size)
+	if err != nil {
+		return c.JSON(gohttp.StatusInternalServerError, jsonErrorErr(err))
+	}
+	next := ""
+	if start+len(events) < total {
+		next = encodePageToken(start + len(events))
+	}
 	return c.JSON(gohttp.StatusOK, ListAuditEventsResponse{
-		AuditEvents:   paginate(events, p),
-		NextPageToken: p.nextPageToken,
-		TotalSize:     p.totalSize,
+		AuditEvents:   events,
+		NextPageToken: next,
+		TotalSize:     total,
 	})
 }
