@@ -3,6 +3,7 @@ import type { MachineTab } from '../../../app-types'
 
 const tabs: { key: MachineTab; label: string }[] = [
   { key: 'info', label: 'Info' },
+  { key: 'deploy', label: 'Deploy' },
   { key: 'detail', label: 'Detail' },
   { key: 'network', label: 'Network' },
   { key: 'console', label: 'Console' },
