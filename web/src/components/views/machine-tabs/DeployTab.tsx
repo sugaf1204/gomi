@@ -37,6 +37,9 @@ function computeTimeSpan(machine: Machine, timings: ProvisionTiming[]): TimeSpan
     if (s !== undefined && typeof t.durationMs === 'number' && t.durationMs > 0) {
       maxMs = Math.max(maxMs, s + t.durationMs)
     }
+    if (s === undefined && e !== undefined && typeof t.durationMs === 'number' && t.durationMs > 0) {
+      minMs = Math.min(minMs, e - t.durationMs)
+    }
   }
 
   if (!Number.isFinite(minMs) || !Number.isFinite(maxMs)) {
@@ -86,6 +89,12 @@ function barPosition(t: ProvisionTiming, span: TimeSpan, provStartMs?: number) {
   if (startMs === undefined && endMs === undefined) return { left: 0, width: 0 }
 
   if (startMs === undefined && endMs !== undefined) {
+    if (typeof t.durationMs === 'number' && t.durationMs > 0) {
+      const derivedStart = endMs - t.durationMs
+      const left = ((derivedStart - span.originMs) / span.totalMs) * 100
+      const width = (t.durationMs / span.totalMs) * 100
+      return { left, width: Math.max(width, 0.4) }
+    }
     const left = ((endMs - span.originMs) / span.totalMs) * 100
     return { left, width: 0.4 }
   }
@@ -234,7 +243,9 @@ function latestTimestamp(timings: ProvisionTiming[]) {
 }
 
 function isFailure(event: ProvisionTiming) {
-  return event.result?.toLowerCase() === 'failure' || event.result?.toLowerCase() === 'failed' || event.eventType?.toLowerCase() === 'failure'
+  const r = event.result?.toLowerCase()
+  const et = event.eventType?.toLowerCase()
+  return r === 'failure' || r === 'failed' || et === 'failure' || et === 'failed'
 }
 
 function durationBetween(start?: string, end?: string) {
