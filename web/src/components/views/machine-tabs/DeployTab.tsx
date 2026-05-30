@@ -14,7 +14,7 @@ export function DeployTab({ machine }: Props) {
     <div className="pt-[0.65rem] grid gap-[1rem]">
       <SummaryCards machine={machine} timings={timings} />
       {visibleTimings.length > 0 ? (
-        <GanttChart machine={machine} timings={visibleTimings} span={span} />
+        <GanttChart machine={machine} timings={visibleTimings} span={span} provStartMs={parseProvisionStart(machine)} />
       ) : (
         <p className="m-0 text-ink-soft text-[0.86rem]">No deploy timing has been reported for the current provisioning attempt.</p>
       )}
@@ -25,46 +25,74 @@ export function DeployTab({ machine }: Props) {
 type TimeSpan = { originMs: number; totalMs: number }
 
 function computeTimeSpan(machine: Machine, timings: ProvisionTiming[]): TimeSpan {
-  const startMs = machine.provision?.startedAt ? Date.parse(machine.provision.startedAt) : undefined
-  let minMs = startMs && Number.isFinite(startMs) ? startMs : Infinity
-  let maxMs = startMs && Number.isFinite(startMs) ? startMs : -Infinity
+  const provStartMs = parseProvisionStart(machine)
+  let minMs = provStartMs ?? Infinity
+  let maxMs = provStartMs ?? -Infinity
 
   for (const t of timings) {
-    const s = resolveStartMs(t)
-    const e = resolveEndMs(t)
+    const s = resolveStartMs(t, provStartMs)
+    const e = resolveEndMs(t, provStartMs)
     if (s !== undefined) { minMs = Math.min(minMs, s); maxMs = Math.max(maxMs, s) }
     if (e !== undefined) { minMs = Math.min(minMs, e); maxMs = Math.max(maxMs, e) }
+    if (s !== undefined && typeof t.durationMs === 'number' && t.durationMs > 0) {
+      maxMs = Math.max(maxMs, s + t.durationMs)
+    }
   }
 
-  if (!Number.isFinite(minMs) || !Number.isFinite(maxMs) || maxMs <= minMs) {
+  if (!Number.isFinite(minMs) || !Number.isFinite(maxMs)) {
     return { originMs: 0, totalMs: 1 }
+  }
+  if (maxMs <= minMs) {
+    return { originMs: minMs - 500, totalMs: 1000 }
   }
   const pad = Math.max((maxMs - minMs) * 0.03, 500)
   return { originMs: minMs, totalMs: maxMs - minMs + pad }
 }
 
-function resolveStartMs(t: ProvisionTiming): number | undefined {
+function parseProvisionStart(machine: Machine): number | undefined {
+  if (!machine.provision?.startedAt) return undefined
+  const ms = Date.parse(machine.provision.startedAt)
+  return Number.isFinite(ms) ? ms : undefined
+}
+
+function resolveStartMs(t: ProvisionTiming, provStartMs?: number): number | undefined {
   const raw = t.startedAt ?? t.timestamp
-  if (!raw) return undefined
-  const ms = Date.parse(raw)
-  return Number.isFinite(ms) ? ms : undefined
+  if (raw) {
+    const ms = Date.parse(raw)
+    if (Number.isFinite(ms)) return ms
+  }
+  if (typeof t.monotonicSeconds === 'number' && provStartMs !== undefined) {
+    return provStartMs + t.monotonicSeconds * 1000
+  }
+  return undefined
 }
 
-function resolveEndMs(t: ProvisionTiming): number | undefined {
+function resolveEndMs(t: ProvisionTiming, provStartMs?: number): number | undefined {
   const raw = t.finishedAt ?? t.timestamp
-  if (!raw) return undefined
-  const ms = Date.parse(raw)
-  return Number.isFinite(ms) ? ms : undefined
+  if (raw) {
+    const ms = Date.parse(raw)
+    if (Number.isFinite(ms)) return ms
+  }
+  if (typeof t.monotonicSeconds === 'number' && typeof t.durationMs === 'number' && provStartMs !== undefined) {
+    return provStartMs + t.monotonicSeconds * 1000 + t.durationMs
+  }
+  return undefined
 }
 
-function barPosition(t: ProvisionTiming, span: TimeSpan) {
-  const startMs = resolveStartMs(t)
-  const endMs = resolveEndMs(t)
-  if (startMs === undefined) return { left: 0, width: 0 }
+function barPosition(t: ProvisionTiming, span: TimeSpan, provStartMs?: number) {
+  const startMs = resolveStartMs(t, provStartMs)
+  const endMs = resolveEndMs(t, provStartMs)
 
-  const left = ((startMs - span.originMs) / span.totalMs) * 100
-  if (endMs !== undefined && endMs > startMs) {
-    const width = ((endMs - startMs) / span.totalMs) * 100
+  if (startMs === undefined && endMs === undefined) return { left: 0, width: 0 }
+
+  if (startMs === undefined && endMs !== undefined) {
+    const left = ((endMs - span.originMs) / span.totalMs) * 100
+    return { left, width: 0.4 }
+  }
+
+  const left = ((startMs! - span.originMs) / span.totalMs) * 100
+  if (endMs !== undefined && endMs > startMs!) {
+    const width = ((endMs - startMs!) / span.totalMs) * 100
     return { left, width: Math.max(width, 0.4) }
   }
   if (typeof t.durationMs === 'number' && t.durationMs > 0) {
@@ -102,7 +130,7 @@ function SummaryCards({ machine, timings }: { machine: Machine; timings: Provisi
   )
 }
 
-function GanttChart({ machine, timings, span }: { machine: Machine; timings: ProvisionTiming[]; span: TimeSpan }) {
+function GanttChart({ machine, timings, span, provStartMs }: { machine: Machine; timings: ProvisionTiming[]; span: TimeSpan; provStartMs?: number }) {
   const tickCount = 5
   const ticks = Array.from({ length: tickCount + 1 }, (_, i) => {
     const ms = span.originMs + (span.totalMs * i) / tickCount
@@ -144,7 +172,7 @@ function GanttChart({ machine, timings, span }: { machine: Machine; timings: Pro
             <div className="py-[0.4rem] px-[0.15rem]">
               <p className="m-0 text-[0.72rem] font-semibold uppercase tracking-[0.04em] text-ink-soft mb-[0.3rem]">{group.source}</p>
               {group.items.map((event, idx) => (
-                <GanttRow key={`${event.name}-${event.timestamp ?? event.finishedAt ?? idx}`} event={event} span={span} />
+                <GanttRow key={`${event.name}-${event.timestamp ?? event.finishedAt ?? idx}`} event={event} span={span} provStartMs={provStartMs} />
               ))}
             </div>
           </div>
@@ -154,8 +182,8 @@ function GanttChart({ machine, timings, span }: { machine: Machine; timings: Pro
   )
 }
 
-function GanttRow({ event, span }: { event: ProvisionTiming; span: TimeSpan }) {
-  const pos = barPosition(event, span)
+function GanttRow({ event, span, provStartMs }: { event: ProvisionTiming; span: TimeSpan; provStartMs?: number }) {
+  const pos = barPosition(event, span, provStartMs)
   const failed = isFailure(event)
   const success = event.result?.toLowerCase() === 'success'
 
