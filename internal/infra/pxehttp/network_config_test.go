@@ -208,7 +208,7 @@ func TestPXENocloudUserData_FedoraMachineStaticWritesNetworkManagerKeyfile(t *te
 			t.Fatalf("expected Fedora user-data to contain %q, got:\n%s", want, body)
 		}
 	}
-	if strings.Contains(body, "99-gomi-network.yaml") || strings.Contains(body, "netplan apply") {
+	if strings.Contains(body, "50-gomi-network.yaml") || strings.Contains(body, "netplan apply") {
 		t.Fatalf("Fedora must not receive netplan user-data, got:\n%s", body)
 	}
 	if strings.Contains(body, "resize_rootfs: false") {
@@ -275,7 +275,7 @@ func TestPXENocloudUserData_FedoraVMStaticWritesNetworkManagerKeyfile(t *testing
 			t.Fatalf("expected Fedora VM user-data to contain %q, got:\n%s", want, body)
 		}
 	}
-	if strings.Contains(body, "99-gomi-network.yaml") || strings.Contains(body, "netplan apply") {
+	if strings.Contains(body, "50-gomi-network.yaml") || strings.Contains(body, "netplan apply") {
 		t.Fatalf("Fedora VM must not receive netplan user-data, got:\n%s", body)
 	}
 }
