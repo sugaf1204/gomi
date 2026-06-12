@@ -10,7 +10,15 @@ import (
 	"github.com/sugaf1204/gomi/internal/resource"
 )
 
-const UserContextKey = "gomi.user"
+const (
+	UserContextKey       = "gomi.user"
+	AuthMethodContextKey = "gomi.auth_method"
+)
+
+const (
+	AuthMethodSession = "session"
+	AuthMethodAgent   = "agent"
+)
 
 func UserFromContext(c echo.Context) (auth.User, bool) {
 	v := c.Get(UserContextKey)
@@ -19,6 +27,11 @@ func UserFromContext(c echo.Context) (auth.User, bool) {
 	}
 	user, ok := v.(auth.User)
 	return user, ok
+}
+
+func AuthMethodFromContext(c echo.Context) string {
+	v, _ := c.Get(AuthMethodContextKey).(string)
+	return v
 }
 
 func TimePtr(v time.Time) *time.Time {

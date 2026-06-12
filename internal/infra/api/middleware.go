@@ -30,6 +30,7 @@ func (s *Server) AuthMiddleware() echo.MiddlewareFunc {
 			user, err := s.authenticate(c.Request().Context(), tokenValue)
 			if err == nil {
 				c.Set(httputil.UserContextKey, user)
+				c.Set(httputil.AuthMethodContextKey, httputil.AuthMethodSession)
 				return next(c)
 			}
 
@@ -41,6 +42,7 @@ func (s *Server) AuthMiddleware() echo.MiddlewareFunc {
 						Username: "agent:" + agentToken.HypervisorName,
 						Role:     auth.RoleViewer,
 					})
+					c.Set(httputil.AuthMethodContextKey, httputil.AuthMethodAgent)
 					return next(c)
 				}
 			}

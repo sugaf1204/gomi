@@ -95,7 +95,7 @@ func (s *Server) ChangeMyPassword(c echo.Context) error {
 	if !ok {
 		return c.JSON(gohttp.StatusUnauthorized, jsonError("auth required"))
 	}
-	if strings.HasPrefix(user.Username, "agent:") {
+	if httputil.AuthMethodFromContext(c) != httputil.AuthMethodSession {
 		return c.JSON(gohttp.StatusForbidden, jsonError("session user required"))
 	}
 
@@ -115,7 +115,7 @@ func (s *Server) ChangeMyPassword(c echo.Context) error {
 		return c.JSON(gohttp.StatusUnauthorized, jsonError("invalid session user"))
 	}
 	if err := bcrypt.CompareHashAndPassword([]byte(stored.PasswordHash), []byte(req.CurrentPassword)); err != nil {
-		return c.JSON(gohttp.StatusUnauthorized, jsonError("invalid current password"))
+		return c.JSON(gohttp.StatusBadRequest, jsonError("invalid current password"))
 	}
 	if err := s.createUser(c.Request().Context(), stored.Username, req.NewPassword, stored.Role); err != nil {
 		return c.JSON(gohttp.StatusInternalServerError, jsonErrorErr(err))

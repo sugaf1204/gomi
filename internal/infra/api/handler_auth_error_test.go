@@ -5,6 +5,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"github.com/sugaf1204/gomi/internal/auth"
 )
 
 func TestAuth_Unauthenticated(t *testing.T) {
@@ -254,11 +256,39 @@ func TestChangeMyPasswordRejectsWrongCurrentPassword(t *testing.T) {
 		"newPassword":     "newpass123",
 	}
 	rec := doRequest(env.echo, http.MethodPost, "/api/v1/me/password", changeBody, env.token)
-	requireStatus(t, rec, http.StatusUnauthorized)
+	requireStatus(t, rec, http.StatusBadRequest)
 
 	rec = doRequest(env.echo, http.MethodPost, "/api/v1/auth/login", map[string]any{
 		"username": "admin",
 		"password": "adminpass",
+	}, "")
+	requireStatus(t, rec, http.StatusOK)
+}
+
+func TestChangeMyPasswordAllowsSessionUserWithAgentPrefix(t *testing.T) {
+	env := setupTestEnv(t)
+	createUser(t, env.authStore, "agent:person", "oldpass123", auth.RoleViewer)
+
+	rec := doRequest(env.echo, http.MethodPost, "/api/v1/auth/login", map[string]any{
+		"username": "agent:person",
+		"password": "oldpass123",
+	}, "")
+	requireStatus(t, rec, http.StatusOK)
+	loginResp := parseBody(t, rec)
+	token, _ := loginResp["token"].(string)
+	if token == "" {
+		t.Fatalf("expected login token, got %v", loginResp)
+	}
+
+	rec = doRequest(env.echo, http.MethodPost, "/api/v1/me/password", map[string]any{
+		"currentPassword": "oldpass123",
+		"newPassword":     "newpass123",
+	}, token)
+	requireStatus(t, rec, http.StatusNoContent)
+
+	rec = doRequest(env.echo, http.MethodPost, "/api/v1/auth/login", map[string]any{
+		"username": "agent:person",
+		"password": "newpass123",
 	}, "")
 	requireStatus(t, rec, http.StatusOK)
 }
