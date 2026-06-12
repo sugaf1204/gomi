@@ -105,6 +105,29 @@ paths:
         '200':
           description: success
 
+  /me/password:
+    post:
+      summary: Change current user password
+      tags: [auth]
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ChangePasswordRequest'
+      responses:
+        '204':
+          description: password changed
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
   /system-info:
     get:
       summary: Get system information
@@ -1284,6 +1307,12 @@ components:
         application/json:
           schema:
             $ref: '#/components/schemas/ErrorResponse'
+    Forbidden:
+      description: forbidden
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
     NotFound:
       description: not found
       content:
@@ -1329,6 +1358,18 @@ components:
     CreateFirstAdminRequest:
       allOf:
         - $ref: '#/components/schemas/LoginRequest'
+
+    ChangePasswordRequest:
+      type: object
+      required: [currentPassword, newPassword]
+      properties:
+        currentPassword:
+          type: string
+          format: password
+        newPassword:
+          type: string
+          format: password
+          minLength: 8
 
     CreateUserRequest:
       type: object

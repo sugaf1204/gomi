@@ -223,6 +223,57 @@ func TestAuthLoginNonexistentUser(t *testing.T) {
 	requireStatus(t, rec, http.StatusUnauthorized)
 }
 
+func TestChangeMyPassword(t *testing.T) {
+	env := setupTestEnv(t)
+
+	changeBody := map[string]any{
+		"currentPassword": "adminpass",
+		"newPassword":     "newpass123",
+	}
+	rec := doRequest(env.echo, http.MethodPost, "/api/v1/me/password", changeBody, env.token)
+	requireStatus(t, rec, http.StatusNoContent)
+
+	rec = doRequest(env.echo, http.MethodPost, "/api/v1/auth/login", map[string]any{
+		"username": "admin",
+		"password": "adminpass",
+	}, "")
+	requireStatus(t, rec, http.StatusUnauthorized)
+
+	rec = doRequest(env.echo, http.MethodPost, "/api/v1/auth/login", map[string]any{
+		"username": "admin",
+		"password": "newpass123",
+	}, "")
+	requireStatus(t, rec, http.StatusOK)
+}
+
+func TestChangeMyPasswordRejectsWrongCurrentPassword(t *testing.T) {
+	env := setupTestEnv(t)
+
+	changeBody := map[string]any{
+		"currentPassword": "wrongpass",
+		"newPassword":     "newpass123",
+	}
+	rec := doRequest(env.echo, http.MethodPost, "/api/v1/me/password", changeBody, env.token)
+	requireStatus(t, rec, http.StatusUnauthorized)
+
+	rec = doRequest(env.echo, http.MethodPost, "/api/v1/auth/login", map[string]any{
+		"username": "admin",
+		"password": "adminpass",
+	}, "")
+	requireStatus(t, rec, http.StatusOK)
+}
+
+func TestChangeMyPasswordRequiresMinimumLength(t *testing.T) {
+	env := setupTestEnv(t)
+
+	changeBody := map[string]any{
+		"currentPassword": "adminpass",
+		"newPassword":     "short",
+	}
+	rec := doRequest(env.echo, http.MethodPost, "/api/v1/me/password", changeBody, env.token)
+	requireStatus(t, rec, http.StatusBadRequest)
+}
+
 func TestSetupStatusRequiresFirstAdminWhenNoUsersExist(t *testing.T) {
 	env := setupFirstRunTestEnv(t)
 

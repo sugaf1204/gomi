@@ -207,6 +207,7 @@ func NewServer(cfg ServerConfig) *Server {
 	authed := v1.Group("", s.AuthMiddleware())
 	authed.POST("/auth/logout", s.Logout)
 	authed.GET("/me", s.Me)
+	authed.POST("/me/password", s.ChangeMyPassword)
 	authed.GET("/system-info", s.SystemInfo)
 
 	// Writer group: requires admin or operator role.
