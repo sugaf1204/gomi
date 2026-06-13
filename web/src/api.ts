@@ -254,6 +254,13 @@ class ApiClient {
     return this.request<Me>('/me')
   }
 
+  changeMyPassword(currentPassword: string, newPassword: string) {
+    return this.request<void>('/me/password', {
+      method: 'POST',
+      body: JSON.stringify({ currentPassword, newPassword })
+    })
+  }
+
   systemInfo() {
     return this.request<SystemInfo>('/system-info')
   }

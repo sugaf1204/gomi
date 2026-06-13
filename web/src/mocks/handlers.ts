@@ -34,6 +34,10 @@ export const handlers = [
     return HttpResponse.json({ username: 'admin', role: 'admin' })
   }),
 
+  http.post(`${API_BASE}/me/password`, () => {
+    return new HttpResponse(null, { status: 204 })
+  }),
+
   http.get(`${API_BASE}/machines`, () => {
     return HttpResponse.json({ machines, totalSize: machines.length })
   }),
