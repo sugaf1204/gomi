@@ -119,6 +119,24 @@ func (s *MachineStore) List(_ context.Context) ([]machine.Machine, error) {
 	return out, nil
 }
 
+// ListPage returns one page of machines (ordered by name) plus the total count.
+// It implements machine.PageLister.
+func (s *MachineStore) ListPage(ctx context.Context, offset, limit int) ([]machine.Machine, int, error) {
+	all, err := s.List(ctx)
+	if err != nil {
+		return nil, 0, err
+	}
+	total := len(all)
+	if limit <= 0 || offset >= total {
+		return []machine.Machine{}, total, nil
+	}
+	end := offset + limit
+	if end > total {
+		end = total
+	}
+	return all[offset:end], total, nil
+}
+
 func (s *MachineStore) GetByMAC(_ context.Context, mac string) (machine.Machine, error) {
 	s.b.mu.RLock()
 	defer s.b.mu.RUnlock()

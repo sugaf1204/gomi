@@ -3,6 +3,10 @@ import { api } from '../api'
 import type { MachineSettingsDraft, View } from '../app-types'
 import type { AuditEvent, Machine } from '../types'
 
+// Delay between dashboard refreshes, measured from when the previous refresh
+// settles (see the self-scheduling loop below).
+const REFRESH_INTERVAL_MS = 5000
+
 type SelectionSyncParams = {
   machines: Machine[]
   selectedMachine: string
@@ -67,15 +71,31 @@ export function useRefreshEffects({
 }: RefreshSyncParams) {
   useEffect(() => {
     if (!token) return
-    void refreshAll()
-    const id = setInterval(() => void refreshAll(), 2500)
-    return () => clearInterval(id)
+    let cancelled = false
+    let timer: ReturnType<typeof setTimeout> | undefined
+    // Self-scheduling loop instead of setInterval: the next refresh is only
+    // queued after the previous one settles, so slow refreshes never stack up
+    // into overlapping bursts of the (multi-endpoint) dashboard fetch.
+    const tick = async () => {
+      await refreshAll()
+      if (!cancelled) {
+        timer = setTimeout(() => void tick(), REFRESH_INTERVAL_MS)
+      }
+    }
+    void tick()
+    return () => {
+      cancelled = true
+      if (timer) clearTimeout(timer)
+    }
   }, [token])
 
   useEffect(() => {
     if (!token) return
     if (view === 'overview') {
-      void refreshAudit(undefined)
+      // The overview renders only aggregate counts; it never displays audit
+      // events, so skip fetching them here. Fetching the full activity feed
+      // (all pages) on the default landing view added many list round-trips
+      // for data that is never shown.
       return
     }
     if (view === 'machines') {

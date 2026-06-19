@@ -19,12 +19,52 @@ type RuntimeSyncer struct {
 	VMs         *Service
 }
 
+// hypervisorGetter resolves a hypervisor by reference. It lets a list sync
+// memoize lookups so a hypervisor shared by many VMs is read from the store
+// once per request instead of once per VM.
+type hypervisorGetter func(ctx context.Context, ref string) (hypervisor.Hypervisor, error)
+
 func (s *RuntimeSyncer) Sync(ctx context.Context, v VirtualMachine, leaseIPByMAC map[string]string) (VirtualMachine, error) {
+	return s.sync(ctx, v, leaseIPByMAC, s.Hypervisors.Get)
+}
+
+// SyncList runtime-syncs a page of VMs, memoizing hypervisor lookups across the
+// page. Listing a page of VMs that share a handful of hypervisors otherwise
+// reads the same hypervisor rows from the store once per VM. The returned slice
+// mirrors items with synced state applied; a VM that fails to sync keeps its
+// stored state (matching the per-VM Sync behavior).
+func (s *RuntimeSyncer) SyncList(ctx context.Context, items []VirtualMachine, leaseIPByMAC map[string]string) []VirtualMachine {
+	cache := make(map[string]hypervisor.Hypervisor)
+	get := func(ctx context.Context, ref string) (hypervisor.Hypervisor, error) {
+		if hv, ok := cache[ref]; ok {
+			return hv, nil
+		}
+		hv, err := s.Hypervisors.Get(ctx, ref)
+		if err != nil {
+			return hypervisor.Hypervisor{}, err
+		}
+		cache[ref] = hv
+		return hv, nil
+	}
+	out := make([]VirtualMachine, len(items))
+	copy(out, items)
+	for i := range out {
+		synced, err := s.sync(ctx, out[i], leaseIPByMAC, get)
+		if err != nil {
+			log.Printf("vm-sync: list %s: %v", out[i].Name, err)
+			continue
+		}
+		out[i] = synced
+	}
+	return out
+}
+
+func (s *RuntimeSyncer) sync(ctx context.Context, v VirtualMachine, leaseIPByMAC map[string]string, getHypervisor hypervisorGetter) (VirtualMachine, error) {
 	if strings.TrimSpace(v.HypervisorRef) == "" {
 		return v, nil
 	}
 
-	hv, err := s.Hypervisors.Get(ctx, v.HypervisorRef)
+	hv, err := getHypervisor(ctx, v.HypervisorRef)
 	if err != nil {
 		return v, fmt.Errorf("get hypervisor %s: %w", v.HypervisorRef, err)
 	}

@@ -257,6 +257,36 @@ func (s *MachineStore) List(ctx context.Context) ([]machine.Machine, error) {
 	return out, rows.Err()
 }
 
+// ListPage returns one page of machines (ordered by name) plus the total row
+// count, using SQL LIMIT/OFFSET so only the requested rows are scanned and
+// decoded. It implements machine.PageLister.
+func (s *MachineStore) ListPage(ctx context.Context, offset, limit int) ([]machine.Machine, int, error) {
+	var total int
+	if err := s.b.queryRow(ctx, `SELECT COUNT(*) FROM machines`).Scan(&total); err != nil {
+		return nil, 0, err
+	}
+	if limit <= 0 || offset >= total {
+		return []machine.Machine{}, total, nil
+	}
+	rows, err := s.b.query(ctx,
+		`SELECT name, hostname, mac, ip, arch, firmware, spec, status, created_at, updated_at
+		 FROM machines ORDER BY name LIMIT ? OFFSET ?`, limit, offset)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+
+	out := make([]machine.Machine, 0, limit)
+	for rows.Next() {
+		m, err := scanMachineRow(rows)
+		if err != nil {
+			return nil, 0, err
+		}
+		out = append(out, m)
+	}
+	return out, total, rows.Err()
+}
+
 func (s *MachineStore) GetByMAC(ctx context.Context, mac string) (machine.Machine, error) {
 	row := s.b.queryRow(ctx, `
 		SELECT name, hostname, mac, ip, arch, firmware, spec, status, created_at, updated_at

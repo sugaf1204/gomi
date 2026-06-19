@@ -107,34 +107,79 @@ func (s *Server) CreateVirtualMachine(c echo.Context) error {
 
 func (s *Server) ListVirtualMachines(c echo.Context) error {
 	ctx := c.Request().Context()
+
+	// Fast path: with no filters, page at the store layer (SQL LIMIT/OFFSET)
+	// and runtime-sync only that page. Runtime sync is expensive (a hypervisor
+	// lookup plus a libvirt round-trip per VM), so syncing only the returned
+	// page rather than the whole collection is the key win here.
+	if !vmFilterActive(c) {
+		start, size, err := parsePageRequest(c)
+		if err != nil {
+			return c.JSON(gohttp.StatusBadRequest, jsonErrorErr(err))
+		}
+		items, total, ok, err := s.vms.ListPage(ctx, start, size)
+		if err != nil {
+			return c.JSON(gohttp.StatusInternalServerError, jsonErrorErr(err))
+		}
+		if ok {
+			p, _ := parsePagination(c, total)
+			pageItems := s.syncVirtualMachines(ctx, items)
+			return c.JSON(gohttp.StatusOK, ListVirtualMachinesResponse{
+				VirtualMachines: virtualMachineResponses(pageItems),
+				NextPageToken:   p.nextPageToken,
+				TotalSize:       p.totalSize,
+			})
+		}
+	}
+
 	items, err := s.vms.List(ctx)
 	if err != nil {
 		return c.JSON(gohttp.StatusInternalServerError, jsonErrorErr(err))
 	}
-	if s.vmRuntimeSyncer != nil {
-		leaseIPByMAC, leaseErr := s.leaseIPsByMAC(ctx)
-		if leaseErr != nil {
-			log.Printf("vm-sync: list lease lookup failed: %v", leaseErr)
+
+	// A phase filter must see freshly-synced phases, so the whole set is synced
+	// before filtering. Other filters operate on spec fields that sync never
+	// changes, so for them we filter first and sync only the resulting page.
+	if filterByFreshPhase := stringFilter(c, "phase") != ""; filterByFreshPhase {
+		items = s.syncVirtualMachines(ctx, items)
+		items = filterVirtualMachines(c, items)
+		p, perr := parsePagination(c, len(items))
+		if perr != nil {
+			return c.JSON(gohttp.StatusBadRequest, jsonErrorErr(perr))
 		}
-		for i := range items {
-			synced, syncErr := s.vmRuntimeSyncer.Sync(ctx, items[i], leaseIPByMAC)
-			if syncErr != nil {
-				log.Printf("vm-sync: list %s: %v", items[i].Name, syncErr)
-				continue
-			}
-			items[i] = synced
-		}
+		return c.JSON(gohttp.StatusOK, ListVirtualMachinesResponse{
+			VirtualMachines: virtualMachineResponses(paginate(items, p)),
+			NextPageToken:   p.nextPageToken,
+			TotalSize:       p.totalSize,
+		})
 	}
+
 	items = filterVirtualMachines(c, items)
 	p, err := parsePagination(c, len(items))
 	if err != nil {
 		return c.JSON(gohttp.StatusBadRequest, jsonErrorErr(err))
 	}
+	pageItems := s.syncVirtualMachines(ctx, paginate(items, p))
 	return c.JSON(gohttp.StatusOK, ListVirtualMachinesResponse{
-		VirtualMachines: virtualMachineResponses(paginate(items, p)),
+		VirtualMachines: virtualMachineResponses(pageItems),
 		NextPageToken:   p.nextPageToken,
 		TotalSize:       p.totalSize,
 	})
+}
+
+// syncVirtualMachines refreshes runtime status (phase, IP addresses, network
+// interfaces) for the given VMs against their hypervisors. It returns items
+// unchanged when no runtime syncer is configured. The lease lookup is done once
+// for the whole batch.
+func (s *Server) syncVirtualMachines(ctx context.Context, items []vm.VirtualMachine) []vm.VirtualMachine {
+	if s.vmRuntimeSyncer == nil || len(items) == 0 {
+		return items
+	}
+	leaseIPByMAC, leaseErr := s.leaseIPsByMAC(ctx)
+	if leaseErr != nil {
+		log.Printf("vm-sync: list lease lookup failed: %v", leaseErr)
+	}
+	return s.vmRuntimeSyncer.SyncList(ctx, items, leaseIPByMAC)
 }
 
 func (s *Server) GetVirtualMachine(c echo.Context) error {
@@ -294,6 +339,15 @@ func normalizeVirtualMachineRequestRefs(v *vm.VirtualMachine) {
 	v.CloudInitRefs = resourceIDs("cloudInitTemplates", v.CloudInitRefs)
 	v.SubnetRef = resourceID("subnets", v.SubnetRef)
 	v.SSHKeyRefs = resourceIDs("sshKeys", v.SSHKeyRefs)
+}
+
+// vmFilterActive reports whether any list filter query parameter is set. When
+// false, the list can be served straight from the store's paged reader.
+func vmFilterActive(c echo.Context) bool {
+	return stringFilter(c, "phase") != "" ||
+		stringFilter(c, "hypervisorRef") != "" ||
+		stringFilter(c, "subnetRef") != "" ||
+		stringFilter(c, "ipAssignment") != ""
 }
 
 func filterVirtualMachines(c echo.Context, items []vm.VirtualMachine) []vm.VirtualMachine {

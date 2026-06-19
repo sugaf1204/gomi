@@ -153,6 +153,36 @@ func (s *VMStore) List(ctx context.Context) ([]vm.VirtualMachine, error) {
 	return out, rows.Err()
 }
 
+// ListPage returns one page of virtual machines (ordered by name) plus the
+// total row count, using SQL LIMIT/OFFSET so only the requested rows are
+// scanned and decoded. It implements vm.PageLister.
+func (s *VMStore) ListPage(ctx context.Context, offset, limit int) ([]vm.VirtualMachine, int, error) {
+	var total int
+	if err := s.b.queryRow(ctx, `SELECT COUNT(*) FROM virtual_machines`).Scan(&total); err != nil {
+		return nil, 0, err
+	}
+	if limit <= 0 || offset >= total {
+		return []vm.VirtualMachine{}, total, nil
+	}
+	rows, err := s.b.query(ctx,
+		`SELECT name, hypervisor_ref, spec, status, created_at, updated_at
+		 FROM virtual_machines ORDER BY name LIMIT ? OFFSET ?`, limit, offset)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+
+	out := make([]vm.VirtualMachine, 0, limit)
+	for rows.Next() {
+		v, err := scanVMRow(rows)
+		if err != nil {
+			return nil, 0, err
+		}
+		out = append(out, v)
+	}
+	return out, total, rows.Err()
+}
+
 func (s *VMStore) ListByHypervisor(ctx context.Context, hypervisorName string) ([]vm.VirtualMachine, error) {
 	rows, err := s.b.query(ctx,
 		`SELECT name, hypervisor_ref, spec, status, created_at, updated_at

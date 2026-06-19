@@ -46,6 +46,18 @@ func (s *Service) List(ctx context.Context) ([]VirtualMachine, error) {
 	return s.store.List(ctx)
 }
 
+// ListPage returns a single page of virtual machines (ordered by name) plus the
+// total count. ok reports whether the underlying store supports paged reads;
+// when it is false callers should fall back to List.
+func (s *Service) ListPage(ctx context.Context, offset, limit int) (items []VirtualMachine, total int, ok bool, err error) {
+	pl, ok := s.store.(PageLister)
+	if !ok {
+		return nil, 0, false, nil
+	}
+	items, total, err = pl.ListPage(ctx, offset, limit)
+	return items, total, true, err
+}
+
 func (s *Service) ListByHypervisor(ctx context.Context, hypervisorName string) ([]VirtualMachine, error) {
 	return s.store.ListByHypervisor(ctx, hypervisorName)
 }

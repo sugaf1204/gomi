@@ -102,7 +102,30 @@ func (s *Server) CreateMachine(c echo.Context) error {
 }
 
 func (s *Server) ListMachines(c echo.Context) error {
-	machines, err := s.machines.List(c.Request().Context())
+	ctx := c.Request().Context()
+
+	// Fast path: with no filters, page at the store layer (SQL LIMIT/OFFSET)
+	// instead of loading and decoding the whole table for every page request.
+	if !machineFilterActive(c) {
+		start, size, err := parsePageRequest(c)
+		if err != nil {
+			return c.JSON(gohttp.StatusBadRequest, jsonErrorErr(err))
+		}
+		items, total, ok, err := s.machines.ListPage(ctx, start, size)
+		if err != nil {
+			return c.JSON(gohttp.StatusInternalServerError, jsonErrorErr(err))
+		}
+		if ok {
+			p, _ := parsePagination(c, total)
+			return c.JSON(gohttp.StatusOK, ListMachinesResponse{
+				Machines:      machineResponses(items),
+				NextPageToken: p.nextPageToken,
+				TotalSize:     p.totalSize,
+			})
+		}
+	}
+
+	machines, err := s.machines.List(ctx)
 	if err != nil {
 		return c.JSON(gohttp.StatusInternalServerError, jsonErrorErr(err))
 	}
@@ -189,6 +212,15 @@ func normalizeMachineRequestRefs(m *machine.Machine) {
 	m.CloudInitRefs = resourceIDs("cloudInitTemplates", m.CloudInitRefs)
 	m.SubnetRef = resourceID("subnets", m.SubnetRef)
 	m.SSHKeyRefs = resourceIDs("sshKeys", m.SSHKeyRefs)
+}
+
+// machineFilterActive reports whether any list filter query parameter is set.
+// When false, the list can be served straight from the store's paged reader.
+func machineFilterActive(c echo.Context) bool {
+	return stringFilter(c, "phase") != "" ||
+		stringFilter(c, "role") != "" ||
+		stringFilter(c, "subnetRef") != "" ||
+		stringFilter(c, "ipAssignment") != ""
 }
 
 func filterMachines(c echo.Context, machines []machine.Machine) []machine.Machine {

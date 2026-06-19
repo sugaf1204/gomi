@@ -2,6 +2,11 @@ import type { AuditEvent, BootEnvironmentStatus, CloudInitTemplate, DHCPLease, D
 
 const API_BASE = import.meta.env.VITE_API_BASE ?? `${window.location.origin}/api/v1`
 
+// Page size used when fetching whole collections via listAll. Matches the
+// server's maxPageSize so collections come back in as few round-trips as
+// possible (each page request is a full re-scan server-side).
+const LIST_PAGE_SIZE = 500
+
 type ListResponse<K extends string, T> = Record<K, T[]> & {
   nextPageToken?: string
   totalSize?: number
@@ -218,10 +223,13 @@ class ApiClient {
   private async listAll<K extends string, T>(path: string, key: K): Promise<T[]> {
     const items: T[] = []
     let pageToken = ''
+    const hasPageSize = path.includes('pageSize=')
     do {
-      const separator = path.includes('?') ? '&' : '?'
-      const tokenParam = pageToken ? `${separator}pageToken=${encodeURIComponent(pageToken)}` : ''
-      const response = await this.request<ListResponse<K, T>>(`${path}${tokenParam}`)
+      const params: string[] = []
+      if (!hasPageSize) params.push(`pageSize=${LIST_PAGE_SIZE}`)
+      if (pageToken) params.push(`pageToken=${encodeURIComponent(pageToken)}`)
+      const query = params.length ? `${path.includes('?') ? '&' : '?'}${params.join('&')}` : ''
+      const response = await this.request<ListResponse<K, T>>(`${path}${query}`)
       items.push(...response[key])
       pageToken = response.nextPageToken ?? ''
     } while (pageToken)

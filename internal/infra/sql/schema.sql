@@ -46,6 +46,10 @@ CREATE TABLE IF NOT EXISTS audit_events (
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 CREATE INDEX IF NOT EXISTS idx_audit_machine ON audit_events (machine, created_at DESC);
+-- Serves the unfiltered activity feed (ORDER BY created_at DESC) without a full
+-- table scan + temp B-tree sort; idx_audit_machine cannot satisfy that ordering
+-- when no machine filter is present.
+CREATE INDEX IF NOT EXISTS idx_audit_created_at ON audit_events (created_at DESC, id DESC);
 
 CREATE TABLE IF NOT EXISTS ssh_keys (
     name TEXT NOT NULL PRIMARY KEY,
