@@ -1,3 +1,9 @@
+gomi (0.0.24) unstable; urgency=medium
+
+  * Add unauthenticated runtime profiling endpoints.
+
+ -- sugaf1204 <sugaf1204@example.invalid>  Sat, 20 Jun 2026 02:07:22 +0900
+
 gomi (0.0.23) unstable; urgency=medium
 
   * Fix Debian 12 VM NoCloud boot and password login.

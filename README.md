@@ -59,6 +59,7 @@ Open the web console at `http://<host>:5392/` and sign in.
 | API base | `/api/v1` |
 | Health check | `/healthz` |
 | OpenAPI spec | [`openapi/openapi.yaml`](openapi/openapi.yaml) |
+| Debug profiles | `/debug/pprof/`, `/debug/fgprof` |
 
 ### Roles
 
@@ -67,6 +68,19 @@ Open the web console at `http://<host>:5392/` and sign in.
 | `admin` | Full access including user management and secret-backed resources |
 | `operator` | Operational write access for provisioning and lifecycle actions |
 | `viewer` | Read-only |
+
+### Profiling
+
+Runtime profiling endpoints are exposed on the main HTTP server.
+
+```bash
+curl "http://127.0.0.1:5392/debug/pprof/profile?seconds=30" > cpu.pprof
+
+curl "http://127.0.0.1:5392/debug/fgprof?seconds=30" > fgprof.pprof
+
+go tool pprof cpu.pprof
+go tool pprof fgprof.pprof
+```
 
 ---
 

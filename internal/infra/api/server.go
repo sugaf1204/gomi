@@ -158,6 +158,7 @@ func NewServer(cfg ServerConfig) *Server {
 		}
 		return c.JSON(gohttp.StatusOK, healthResponse{Status: "ok"})
 	})
+	s.registerDebugRoutes()
 
 	v1 := e.Group("/api/v1")
 	v1.POST("/auth/login", s.Login)
