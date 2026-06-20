@@ -15,6 +15,14 @@ type Store interface {
 	Delete(ctx context.Context, name string) error
 }
 
+// PageLister is optionally implemented by Store backends that can return a
+// single page of machines (ordered by name) together with the total count,
+// without materializing the whole collection. Backends that do not implement
+// it fall back to List + in-memory pagination.
+type PageLister interface {
+	ListPage(ctx context.Context, offset, limit int) (items []Machine, total int, err error)
+}
+
 // PowerActionStatusUpdater updates only power-action status fields. Store
 // backends should implement this to avoid overwriting provisioning state from
 // stale Machine snapshots.

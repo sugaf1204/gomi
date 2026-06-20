@@ -64,6 +64,24 @@ func (s *VMStore) List(_ context.Context) ([]vm.VirtualMachine, error) {
 	return out, nil
 }
 
+// ListPage returns one page of virtual machines (ordered by name) plus the
+// total count. It implements vm.PageLister.
+func (s *VMStore) ListPage(ctx context.Context, offset, limit int) ([]vm.VirtualMachine, int, error) {
+	all, err := s.List(ctx)
+	if err != nil {
+		return nil, 0, err
+	}
+	total := len(all)
+	if limit <= 0 || offset >= total {
+		return []vm.VirtualMachine{}, total, nil
+	}
+	end := offset + limit
+	if end > total {
+		end = total
+	}
+	return all[offset:end], total, nil
+}
+
 func (s *VMStore) ListByHypervisor(_ context.Context, hypervisorName string) ([]vm.VirtualMachine, error) {
 	s.b.mu.RLock()
 	defer s.b.mu.RUnlock()

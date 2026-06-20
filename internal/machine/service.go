@@ -66,6 +66,19 @@ func (s *Service) List(ctx context.Context) ([]Machine, error) {
 	return s.store.List(ctx)
 }
 
+// ListPage returns a single page of machines (ordered by name) plus the total
+// count. ok reports whether the underlying store supports paged reads; when it
+// is false callers should fall back to List. This lets list endpoints avoid
+// loading the entire collection just to return one page.
+func (s *Service) ListPage(ctx context.Context, offset, limit int) (items []Machine, total int, ok bool, err error) {
+	pl, ok := s.store.(PageLister)
+	if !ok {
+		return nil, 0, false, nil
+	}
+	items, total, err = pl.ListPage(ctx, offset, limit)
+	return items, total, true, err
+}
+
 func (s *Service) UpdateSettings(ctx context.Context, name string, powerCfg power.PowerConfig) (Machine, error) {
 	m, err := s.store.Get(ctx, name)
 	if err != nil {

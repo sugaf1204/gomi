@@ -28,6 +28,7 @@ func New(driver, dsn string) (*Backend, error) {
 	case "sqlite", "sqlite3":
 		dialect = DialectSQLite
 		driverName = "sqlite"
+		dsn = sqliteDSN(dsn)
 	default:
 		return nil, fmt.Errorf("unsupported db driver: %s", driver)
 	}
@@ -37,7 +38,7 @@ func New(driver, dsn string) (*Backend, error) {
 		return nil, err
 	}
 
-	if err := dialect.Init(db); err != nil {
+	if err := dialect.Init(db, dsn); err != nil {
 		db.Close()
 		return nil, err
 	}

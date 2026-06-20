@@ -106,10 +106,46 @@ func (s *Server) CreateVirtualMachine(c echo.Context) error {
 
 func (s *Server) ListVirtualMachines(c echo.Context) error {
 	ctx := c.Request().Context()
+
+	// Fast path: with no filters, page at the store layer (SQL LIMIT/OFFSET)
+	// instead of loading and decoding the whole table for every page request.
+	if !vmFilterActive(c) {
+		start, size, err := parsePageRequest(c)
+		if err != nil {
+			return c.JSON(gohttp.StatusBadRequest, jsonErrorErr(err))
+		}
+		items, total, ok, err := s.vms.ListPage(ctx, start, size)
+		if err != nil {
+			return c.JSON(gohttp.StatusInternalServerError, jsonErrorErr(err))
+		}
+		if ok {
+			p, _ := parsePagination(c, total)
+			return c.JSON(gohttp.StatusOK, ListVirtualMachinesResponse{
+				VirtualMachines: virtualMachineResponses(items),
+				NextPageToken:   p.nextPageToken,
+				TotalSize:       p.totalSize,
+			})
+		}
+	}
+
 	items, err := s.vms.List(ctx)
 	if err != nil {
 		return c.JSON(gohttp.StatusInternalServerError, jsonErrorErr(err))
 	}
+
+	if filterByFreshPhase := stringFilter(c, "phase") != ""; filterByFreshPhase {
+		items = filterVirtualMachines(c, items)
+		p, perr := parsePagination(c, len(items))
+		if perr != nil {
+			return c.JSON(gohttp.StatusBadRequest, jsonErrorErr(perr))
+		}
+		return c.JSON(gohttp.StatusOK, ListVirtualMachinesResponse{
+			VirtualMachines: virtualMachineResponses(paginate(items, p)),
+			NextPageToken:   p.nextPageToken,
+			TotalSize:       p.totalSize,
+		})
+	}
+
 	items = filterVirtualMachines(c, items)
 	p, err := parsePagination(c, len(items))
 	if err != nil {
@@ -268,6 +304,15 @@ func normalizeVirtualMachineRequestRefs(v *vm.VirtualMachine) {
 	v.CloudInitRefs = resourceIDs("cloudInitTemplates", v.CloudInitRefs)
 	v.SubnetRef = resourceID("subnets", v.SubnetRef)
 	v.SSHKeyRefs = resourceIDs("sshKeys", v.SSHKeyRefs)
+}
+
+// vmFilterActive reports whether any list filter query parameter is set. When
+// false, the list can be served straight from the store's paged reader.
+func vmFilterActive(c echo.Context) bool {
+	return stringFilter(c, "phase") != "" ||
+		stringFilter(c, "hypervisorRef") != "" ||
+		stringFilter(c, "subnetRef") != "" ||
+		stringFilter(c, "ipAssignment") != ""
 }
 
 func filterVirtualMachines(c echo.Context, items []vm.VirtualMachine) []vm.VirtualMachine {
