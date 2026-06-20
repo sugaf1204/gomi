@@ -108,9 +108,7 @@ func (s *Server) ListVirtualMachines(c echo.Context) error {
 	ctx := c.Request().Context()
 
 	// Fast path: with no filters, page at the store layer (SQL LIMIT/OFFSET)
-	// and runtime-sync only that page. Runtime sync is expensive (a hypervisor
-	// lookup plus a libvirt round-trip per VM), so syncing only the returned
-	// page rather than the whole collection is the key win here.
+	// instead of loading and decoding the whole table for every page request.
 	if !vmFilterActive(c) {
 		start, size, err := parsePageRequest(c)
 		if err != nil {
@@ -122,9 +120,8 @@ func (s *Server) ListVirtualMachines(c echo.Context) error {
 		}
 		if ok {
 			p, _ := parsePagination(c, total)
-			pageItems := s.syncVirtualMachines(ctx, items)
 			return c.JSON(gohttp.StatusOK, ListVirtualMachinesResponse{
-				VirtualMachines: virtualMachineResponses(pageItems),
+				VirtualMachines: virtualMachineResponses(items),
 				NextPageToken:   p.nextPageToken,
 				TotalSize:       p.totalSize,
 			})
@@ -136,11 +133,7 @@ func (s *Server) ListVirtualMachines(c echo.Context) error {
 		return c.JSON(gohttp.StatusInternalServerError, jsonErrorErr(err))
 	}
 
-	// A phase filter must see freshly-synced phases, so the whole set is synced
-	// before filtering. Other filters operate on spec fields that sync never
-	// changes, so for them we filter first and sync only the resulting page.
 	if filterByFreshPhase := stringFilter(c, "phase") != ""; filterByFreshPhase {
-		items = s.syncVirtualMachines(ctx, items)
 		items = filterVirtualMachines(c, items)
 		p, perr := parsePagination(c, len(items))
 		if perr != nil {
@@ -158,27 +151,11 @@ func (s *Server) ListVirtualMachines(c echo.Context) error {
 	if err != nil {
 		return c.JSON(gohttp.StatusBadRequest, jsonErrorErr(err))
 	}
-	pageItems := s.syncVirtualMachines(ctx, paginate(items, p))
 	return c.JSON(gohttp.StatusOK, ListVirtualMachinesResponse{
-		VirtualMachines: virtualMachineResponses(pageItems),
+		VirtualMachines: virtualMachineResponses(paginate(items, p)),
 		NextPageToken:   p.nextPageToken,
 		TotalSize:       p.totalSize,
 	})
-}
-
-// syncVirtualMachines refreshes runtime status (phase, IP addresses, network
-// interfaces) for the given VMs against their hypervisors. It returns items
-// unchanged when no runtime syncer is configured. The lease lookup is done once
-// for the whole batch.
-func (s *Server) syncVirtualMachines(ctx context.Context, items []vm.VirtualMachine) []vm.VirtualMachine {
-	if s.vmRuntimeSyncer == nil || len(items) == 0 {
-		return items
-	}
-	leaseIPByMAC, leaseErr := s.leaseIPsByMAC(ctx)
-	if leaseErr != nil {
-		log.Printf("vm-sync: list lease lookup failed: %v", leaseErr)
-	}
-	return s.vmRuntimeSyncer.SyncList(ctx, items, leaseIPByMAC)
 }
 
 func (s *Server) GetVirtualMachine(c echo.Context) error {
