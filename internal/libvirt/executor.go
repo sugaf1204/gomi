@@ -62,6 +62,12 @@ type rpcExecutor struct {
 // NewExecutor creates a new libvirt executor that connects to the hypervisor via TCP RPC.
 // The caller should call Close() when done with the executor.
 func NewExecutor(cfg LibvirtConfig) (Executor, error) {
+	return NewExecutorContext(context.Background(), cfg)
+}
+
+// NewExecutorContext creates a new libvirt executor and bounds the TCP dial and
+// libvirt connect handshake with ctx.
+func NewExecutorContext(ctx context.Context, cfg LibvirtConfig) (Executor, error) {
 	if err := cfg.Validate(); err != nil {
 		return nil, fmt.Errorf("invalid libvirt config: %w", err)
 	}
@@ -72,18 +78,28 @@ func NewExecutor(cfg LibvirtConfig) (Executor, error) {
 	}
 
 	addr := net.JoinHostPort(cfg.Host, strconv.Itoa(port))
-	conn, err := net.DialTimeout("tcp", addr, dialTimeout)
+	dialer := net.Dialer{Timeout: dialTimeout}
+	conn, err := dialer.DialContext(ctx, "tcp", addr)
 	if err != nil {
 		return nil, fmt.Errorf("dial libvirtd %s: %w", addr, err)
 	}
 
 	l := golibvirt.New(conn)
-	if err := l.Connect(); err != nil {
+	connectErr := make(chan error, 1)
+	go func() {
+		connectErr <- l.Connect()
+	}()
+	select {
+	case err := <-connectErr:
+		if err == nil {
+			return &rpcExecutor{l: l}, nil
+		}
 		conn.Close()
 		return nil, fmt.Errorf("libvirt connect: %w", err)
+	case <-ctx.Done():
+		conn.Close()
+		return nil, fmt.Errorf("libvirt connect: %w", ctx.Err())
 	}
-
-	return &rpcExecutor{l: l}, nil
 }
 
 func (e *rpcExecutor) Close() error {

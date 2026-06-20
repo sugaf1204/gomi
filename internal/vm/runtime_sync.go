@@ -1,6 +1,8 @@
 package vm
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"log"
 	"reflect"
@@ -8,21 +10,28 @@ import (
 	"strings"
 	"time"
 
-	"context"
-
 	"github.com/sugaf1204/gomi/internal/hypervisor"
 	"github.com/sugaf1204/gomi/internal/libvirt"
 )
 
+const (
+	defaultLibvirtOperationTimeout = 5 * time.Second
+	defaultHypervisorRetryInterval = 30 * time.Second
+)
+
 type RuntimeSyncer struct {
-	Hypervisors *hypervisor.Service
-	VMs         *Service
+	Hypervisors      *hypervisor.Service
+	VMs              *Service
+	ExecutorFactory  ExecutorFactory
+	OperationTimeout time.Duration
+	RetryInterval    time.Duration
 }
 
 // hypervisorGetter resolves a hypervisor by reference. It lets a list sync
 // memoize lookups so a hypervisor shared by many VMs is read from the store
 // once per request instead of once per VM.
 type hypervisorGetter func(ctx context.Context, ref string) (hypervisor.Hypervisor, error)
+type ExecutorFactory func(context.Context, libvirt.LibvirtConfig) (libvirt.Executor, error)
 
 func (s *RuntimeSyncer) Sync(ctx context.Context, v VirtualMachine, leaseIPByMAC map[string]string) (VirtualMachine, error) {
 	return s.sync(ctx, v, leaseIPByMAC, s.Hypervisors.Get)
@@ -69,13 +78,184 @@ func (s *RuntimeSyncer) sync(ctx context.Context, v VirtualMachine, leaseIPByMAC
 		return v, fmt.Errorf("get hypervisor %s: %w", v.HypervisorRef, err)
 	}
 
-	cfg := BuildLibvirtConfig(hv)
-	exec, err := libvirt.NewExecutor(cfg)
+	exec, err := s.connectExecutor(ctx, hv)
 	if err != nil {
 		return v, fmt.Errorf("connect hypervisor %s: %w", hv.Name, err)
 	}
 	defer exec.Close()
 
+	return s.syncVMWithTimeout(ctx, hv, exec, v, leaseIPByMAC)
+}
+
+func (s *RuntimeSyncer) SyncAll(ctx context.Context, leaseIPByMAC map[string]string) error {
+	if s == nil || s.Hypervisors == nil || s.VMs == nil {
+		return nil
+	}
+	items, err := s.VMs.List(ctx)
+	if err != nil {
+		return fmt.Errorf("list virtual machines: %w", err)
+	}
+	hypervisors, err := s.Hypervisors.List(ctx)
+	if err != nil {
+		return fmt.Errorf("list hypervisors: %w", err)
+	}
+
+	byHypervisor := make(map[string][]VirtualMachine)
+	for _, v := range items {
+		ref := strings.TrimSpace(v.HypervisorRef)
+		if ref == "" {
+			continue
+		}
+		byHypervisor[ref] = append(byHypervisor[ref], v)
+	}
+	if len(byHypervisor) == 0 {
+		return nil
+	}
+
+	hypervisorByName := make(map[string]hypervisor.Hypervisor, len(hypervisors))
+	for _, hv := range hypervisors {
+		hypervisorByName[hv.Name] = hv
+	}
+
+	names := make([]string, 0, len(byHypervisor))
+	for name := range byHypervisor {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+
+	for _, name := range names {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		hv, ok := hypervisorByName[name]
+		if !ok {
+			log.Printf("vm-sync: hypervisor %s referenced by VM but not found", name)
+			continue
+		}
+		if s.skipUnreachableHypervisor(hv, time.Now().UTC()) {
+			continue
+		}
+		if err := s.syncHypervisor(ctx, hv, byHypervisor[name], leaseIPByMAC); err != nil {
+			if ctx.Err() != nil && (errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)) {
+				return ctx.Err()
+			}
+			if changed := s.markHypervisorUnreachable(ctx, hv, err); changed {
+				log.Printf("vm-sync: hypervisor %s unreachable: %v", hv.Name, err)
+			}
+		}
+	}
+	return nil
+}
+
+func (s *RuntimeSyncer) executorFactory() ExecutorFactory {
+	if s.ExecutorFactory != nil {
+		return s.ExecutorFactory
+	}
+	return libvirt.NewExecutorContext
+}
+
+func (s *RuntimeSyncer) operationTimeout() time.Duration {
+	if s.OperationTimeout > 0 {
+		return s.OperationTimeout
+	}
+	return defaultLibvirtOperationTimeout
+}
+
+func (s *RuntimeSyncer) retryInterval() time.Duration {
+	if s.RetryInterval > 0 {
+		return s.RetryInterval
+	}
+	return defaultHypervisorRetryInterval
+}
+
+func (s *RuntimeSyncer) skipUnreachableHypervisor(hv hypervisor.Hypervisor, now time.Time) bool {
+	if hv.Phase != hypervisor.PhaseUnreachable || strings.TrimSpace(hv.LastError) == "" {
+		return false
+	}
+	return now.Sub(hv.UpdatedAt) < s.retryInterval()
+}
+
+func (s *RuntimeSyncer) syncHypervisor(ctx context.Context, hv hypervisor.Hypervisor, items []VirtualMachine, leaseIPByMAC map[string]string) error {
+	exec, err := s.connectExecutor(ctx, hv)
+	if err != nil {
+		return err
+	}
+	defer exec.Close()
+
+	successCount := 0
+	var firstErr error
+	for _, v := range items {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if _, syncErr := s.syncVMWithTimeout(ctx, hv, exec, v, leaseIPByMAC); syncErr != nil {
+			if errors.Is(syncErr, context.Canceled) || errors.Is(syncErr, context.DeadlineExceeded) {
+				return syncErr
+			}
+			if firstErr == nil {
+				firstErr = syncErr
+			}
+			log.Printf("vm-sync: %s: %v", v.Name, syncErr)
+			continue
+		}
+		successCount++
+	}
+	if successCount == 0 && firstErr != nil {
+		return fmt.Errorf("all VM runtime queries failed: %w", firstErr)
+	}
+	if successCount > 0 {
+		s.markHypervisorReachable(ctx, hv)
+	}
+	return nil
+}
+
+func (s *RuntimeSyncer) connectExecutor(ctx context.Context, hv hypervisor.Hypervisor) (libvirt.Executor, error) {
+	timeout := s.operationTimeout()
+	connectCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	exec, err := s.executorFactory()(connectCtx, BuildLibvirtConfig(hv))
+	if err != nil {
+		if errors.Is(err, context.DeadlineExceeded) {
+			return nil, fmt.Errorf("libvirt connect timed out after %s: %w", timeout, err)
+		}
+		return nil, err
+	}
+	return exec, nil
+}
+
+type vmSyncResult struct {
+	vm  VirtualMachine
+	err error
+}
+
+func (s *RuntimeSyncer) syncVMWithTimeout(ctx context.Context, hv hypervisor.Hypervisor, exec libvirt.Executor, v VirtualMachine, leaseIPByMAC map[string]string) (VirtualMachine, error) {
+	timeout := s.operationTimeout()
+	opCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	done := make(chan vmSyncResult, 1)
+	go func() {
+		updated, err := s.syncWithExecutor(opCtx, hv, exec, v, leaseIPByMAC)
+		done <- vmSyncResult{vm: updated, err: err}
+	}()
+
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+
+	select {
+	case result := <-done:
+		return result.vm, result.err
+	case <-ctx.Done():
+		_ = exec.Close()
+		return v, ctx.Err()
+	case <-timer.C:
+		_ = exec.Close()
+		return v, fmt.Errorf("runtime query timed out after %s: %w", timeout, context.DeadlineExceeded)
+	}
+}
+
+func (s *RuntimeSyncer) syncWithExecutor(ctx context.Context, hv hypervisor.Hypervisor, exec libvirt.Executor, v VirtualMachine, leaseIPByMAC map[string]string) (VirtualMachine, error) {
 	domainName := strings.TrimSpace(v.LibvirtDomain)
 	if domainName == "" {
 		domainName = v.Name
@@ -118,6 +298,27 @@ func (s *RuntimeSyncer) sync(ctx context.Context, v VirtualMachine, leaseIPByMAC
 		return v, fmt.Errorf("persist synced vm status: %w", err)
 	}
 	return updated, nil
+}
+
+func (s *RuntimeSyncer) markHypervisorReachable(ctx context.Context, hv hypervisor.Hypervisor) {
+	if s.Hypervisors == nil || (hv.Phase == hypervisor.PhaseReady && strings.TrimSpace(hv.LastError) == "") {
+		return
+	}
+	if _, err := s.Hypervisors.UpdateStatus(ctx, hv.Name, hypervisor.PhaseReady, nil, nil, "", ""); err != nil {
+		log.Printf("vm-sync: update hypervisor %s reachable status: %v", hv.Name, err)
+	}
+}
+
+func (s *RuntimeSyncer) markHypervisorUnreachable(ctx context.Context, hv hypervisor.Hypervisor, cause error) bool {
+	if s.Hypervisors == nil {
+		return false
+	}
+	changed := hv.Phase != hypervisor.PhaseUnreachable || hv.LastError != cause.Error()
+	if _, err := s.Hypervisors.UpdateStatus(ctx, hv.Name, hypervisor.PhaseUnreachable, nil, nil, "", cause.Error()); err != nil {
+		log.Printf("vm-sync: update hypervisor %s unreachable status: %v", hv.Name, err)
+		return false
+	}
+	return changed
 }
 
 func IsProvisioningTimedOut(status ProvisioningStatus, now time.Time) bool {

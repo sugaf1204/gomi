@@ -30,6 +30,53 @@ func (r *Runtime) runSyncLoop(ctx context.Context) {
 	}
 }
 
+func (r *Runtime) runVMRuntimeSyncLoop(ctx context.Context, syncer *vm.RuntimeSyncer) {
+	if syncer == nil {
+		return
+	}
+	r.syncVMRuntimeStates(ctx, syncer)
+
+	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			r.syncVMRuntimeStates(ctx, syncer)
+		}
+	}
+}
+
+func (r *Runtime) syncVMRuntimeStates(ctx context.Context, syncer *vm.RuntimeSyncer) {
+	leaseIPByMAC := r.vmLeaseIPsByMAC(ctx)
+	if err := syncer.SyncAll(ctx, leaseIPByMAC); err != nil {
+		log.Printf("vm-sync: runtime sync failed: %v", err)
+	}
+}
+
+func (r *Runtime) vmLeaseIPsByMAC(ctx context.Context) map[string]string {
+	if r.leaseStore == nil {
+		return nil
+	}
+	leases, err := r.leaseStore.List(ctx)
+	if err != nil {
+		log.Printf("vm-sync: lease lookup failed: %v", err)
+		return nil
+	}
+	leaseIPByMAC := make(map[string]string, len(leases))
+	for _, lease := range leases {
+		mac := strings.ToLower(strings.TrimSpace(lease.MAC))
+		ip := strings.TrimSpace(lease.IP)
+		if mac == "" || ip == "" {
+			continue
+		}
+		leaseIPByMAC[mac] = ip
+	}
+	return leaseIPByMAC
+}
+
 func (r *Runtime) syncProvisioningStates(ctx context.Context) {
 	machines, err := r.machineStore.List(ctx)
 	if err != nil {

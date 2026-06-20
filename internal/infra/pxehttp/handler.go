@@ -37,7 +37,6 @@ type Handler struct {
 	pxeFilesDir      string
 	pxeTFTPRoot      string
 	provisionTimeout time.Duration
-	vmRuntimeSyncer  *vm.RuntimeSyncer
 	machineSSHProbe  func(context.Context, string) error
 }
 
@@ -57,7 +56,6 @@ type Config struct {
 	PXEFilesDir      string
 	PXETFTPRoot      string
 	ProvisionTimeout time.Duration
-	VMRuntimeSyncer  *vm.RuntimeSyncer
 }
 
 func NewHandler(cfg Config) *Handler {
@@ -77,7 +75,6 @@ func NewHandler(cfg Config) *Handler {
 		pxeFilesDir:      cfg.PXEFilesDir,
 		pxeTFTPRoot:      cfg.PXETFTPRoot,
 		provisionTimeout: cfg.ProvisionTimeout,
-		vmRuntimeSyncer:  cfg.VMRuntimeSyncer,
 	}
 	if h.provisionTimeout <= 0 {
 		h.provisionTimeout = 30 * time.Minute

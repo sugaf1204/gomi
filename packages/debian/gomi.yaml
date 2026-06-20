@@ -7,7 +7,6 @@ data_dir: /var/lib/gomi/data
 
 # listen_addr: ":5392"
 # session_ttl: 12h
-# background_sync_enabled: true
 
 # Optional: pre-create an admin user at startup.
 # Leave unset to use the first-run setup UI/API.

@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
 	gohttp "net/http"
 	"strings"
 	"time"
@@ -191,17 +190,6 @@ func (s *Server) GetVirtualMachine(c echo.Context) error {
 			return c.JSON(gohttp.StatusNotFound, jsonError("not found"))
 		}
 		return c.JSON(gohttp.StatusInternalServerError, jsonErrorErr(err))
-	}
-	if s.vmRuntimeSyncer != nil {
-		leaseIPByMAC, leaseErr := s.leaseIPsByMAC(ctx)
-		if leaseErr != nil {
-			log.Printf("vm-sync: get %s lease lookup failed: %v", name, leaseErr)
-		}
-		if synced, syncErr := s.vmRuntimeSyncer.Sync(ctx, v, leaseIPByMAC); syncErr != nil {
-			log.Printf("vm-sync: get %s: %v", name, syncErr)
-		} else {
-			v = synced
-		}
 	}
 	return c.JSON(gohttp.StatusOK, virtualMachineResponse(v))
 }

@@ -41,7 +41,6 @@ func runServer() {
 	listen := flag.String("listen", envCfg.ListenAddr, "listen address")
 	dbDriver := flag.String("db-driver", envCfg.DBDriver, "database driver: sqlite or postgres")
 	dbDsn := flag.String("db-dsn", envCfg.DBDsn, "database DSN")
-	bgSyncEnabled := flag.Bool("background-sync-enabled", envCfg.BackgroundSyncEnabled, "enable background sync loops")
 	dataDir := flag.String("data-dir", envCfg.DataDir, "data directory")
 	adminUser := flag.String("admin-user", envCfg.AdminUsername, "optional bootstrap admin username")
 	adminPassword := flag.String("admin-password", envCfg.AdminPassword, "optional bootstrap admin password")
@@ -71,36 +70,35 @@ func runServer() {
 	flag.Parse()
 
 	cfg := config.Config{
-		DBDriver:              *dbDriver,
-		DBDsn:                 *dbDsn,
-		ListenAddr:            *listen,
-		DataDir:               *dataDir,
-		SessionTTL:            envCfg.SessionTTL,
-		BackgroundSyncEnabled: *bgSyncEnabled,
-		AdminUsername:         *adminUser,
-		AdminPassword:         *adminPassword,
-		DNSMode:               config.NormalizeDNSMode(*dnsMode),
-		DNSEmbeddedAddr:       *dnsEmbeddedAddr,
-		DNSTTL:                *dnsTTL,
-		PowerDNSBaseURL:       *powerdnsBaseURL,
-		PowerDNSAPIToken:      *powerdnsToken,
-		PowerDNSServerID:      *powerdnsServerID,
-		RFC2136Server:         *rfc2136Server,
-		RFC2136Zone:           *rfc2136Zone,
-		RFC2136TSIGName:       *rfc2136TSIGName,
-		RFC2136TSIGSecret:     *rfc2136TSIGSecret,
-		RFC2136TSIGAlgorithm:  *rfc2136TSIGAlgorithm,
-		RFC2136Transport:      *rfc2136Transport,
-		BootHTTPBaseURL:       *bootBaseURL,
-		DHCPMode:              *dhcpMode,
-		DHCPIface:             *dhcpIface,
-		TFTPAddr:              *tftpAddr,
-		TFTPRoot:              *tftpRoot,
-		PXEHTTPBaseURL:        *pxeHTTPBaseURL,
-		PXEBootFileBIOS:       *pxeBootFileBIOS,
-		PXEBootFileUEFI:       *pxeBootFileUEFI,
-		BootenvSourceURL:      *bootenvSourceURL,
-		ProvisionTimeout:      *vmProvisionTimeout,
+		DBDriver:             *dbDriver,
+		DBDsn:                *dbDsn,
+		ListenAddr:           *listen,
+		DataDir:              *dataDir,
+		SessionTTL:           envCfg.SessionTTL,
+		AdminUsername:        *adminUser,
+		AdminPassword:        *adminPassword,
+		DNSMode:              config.NormalizeDNSMode(*dnsMode),
+		DNSEmbeddedAddr:      *dnsEmbeddedAddr,
+		DNSTTL:               *dnsTTL,
+		PowerDNSBaseURL:      *powerdnsBaseURL,
+		PowerDNSAPIToken:     *powerdnsToken,
+		PowerDNSServerID:     *powerdnsServerID,
+		RFC2136Server:        *rfc2136Server,
+		RFC2136Zone:          *rfc2136Zone,
+		RFC2136TSIGName:      *rfc2136TSIGName,
+		RFC2136TSIGSecret:    *rfc2136TSIGSecret,
+		RFC2136TSIGAlgorithm: *rfc2136TSIGAlgorithm,
+		RFC2136Transport:     *rfc2136Transport,
+		BootHTTPBaseURL:      *bootBaseURL,
+		DHCPMode:             *dhcpMode,
+		DHCPIface:            *dhcpIface,
+		TFTPAddr:             *tftpAddr,
+		TFTPRoot:             *tftpRoot,
+		PXEHTTPBaseURL:       *pxeHTTPBaseURL,
+		PXEBootFileBIOS:      *pxeBootFileBIOS,
+		PXEBootFileUEFI:      *pxeBootFileUEFI,
+		BootenvSourceURL:     *bootenvSourceURL,
+		ProvisionTimeout:     *vmProvisionTimeout,
 	}
 	config.Finalize(&cfg)
 
