@@ -49,7 +49,6 @@ type Server struct {
 	provisionTimeout time.Duration
 	startTime        time.Time
 	vmDeployer       *vm.Deployer
-	vmRuntimeSyncer  *vm.RuntimeSyncer
 	vmMigrator       *vm.Migrator
 	vmRuntimeDeleter func(ctx context.Context, v vm.VirtualMachine) error
 	bootenvs         *bootenv.Manager
@@ -105,7 +104,6 @@ type ServerConfig struct {
 	HealthCheck      func(ctx context.Context) error
 	FrontendFS       fs.FS // embedded frontend assets (optional)
 	VMDeployer       *vm.Deployer
-	VMRuntimeSyncer  *vm.RuntimeSyncer
 	VMMigrator       *vm.Migrator
 	VMRuntimeDeleter func(ctx context.Context, v vm.VirtualMachine) error
 	BootEnvs         *bootenv.Manager
@@ -140,7 +138,6 @@ func NewServer(cfg ServerConfig) *Server {
 		provisionTimeout: cfg.ProvisionTimeout,
 		startTime:        time.Now(),
 		vmDeployer:       cfg.VMDeployer,
-		vmRuntimeSyncer:  cfg.VMRuntimeSyncer,
 		vmMigrator:       cfg.VMMigrator,
 		vmRuntimeDeleter: cfg.VMRuntimeDeleter,
 		bootenvs:         cfg.BootEnvs,
@@ -189,7 +186,6 @@ func NewServer(cfg ServerConfig) *Server {
 		PXEFilesDir:      cfg.FilesDir,
 		PXETFTPRoot:      cfg.PXETFTPRoot,
 		ProvisionTimeout: cfg.ProvisionTimeout,
-		VMRuntimeSyncer:  cfg.VMRuntimeSyncer,
 	})
 	e.GET("/pxe/boot.ipxe", pxeH.PXEBootScript)
 	e.GET("/pxe/preseed.cfg", pxeH.PXEPreseed)

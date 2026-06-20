@@ -776,7 +776,7 @@ class LabRunner:
                 "Environment=GOMI_BOOT_HTTP_BASE_URL=http://10.77.0.1:8080",
                 f"Environment=GOMI_BOOTENV_SOURCE_URL={self.config['bootenv_source_url']}",
                 "Environment=GOMI_PXE_SERIAL_CONSOLE=1",
-                "ExecStart=/usr/bin/gomi --listen=:8080 --background-sync-enabled=true",
+                "ExecStart=/usr/bin/gomi --listen=:8080",
                 "Restart=always",
                 "",
                 "[Install]",

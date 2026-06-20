@@ -38,12 +38,7 @@ tasks:
       - task: vet
 
   run:
-    desc: Run GOMI locally with background sync
-    cmds:
-      - go run ./cmd/gomi --listen=:5392 --background-sync-enabled=true
-
-  operator:
-    desc: Run GOMI locally without background sync
+    desc: Run GOMI locally
     cmds:
       - go run ./cmd/gomi --listen=:5392
 
