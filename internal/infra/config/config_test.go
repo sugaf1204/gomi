@@ -96,7 +96,6 @@ func TestLoadYAMLConfig(t *testing.T) {
 listen_addr: "127.0.0.1:18080"
 data_dir: /tmp/gomi-data
 session_ttl: 2h
-background_sync_enabled: false
 admin:
   username: root
   password: secret
@@ -149,9 +148,6 @@ vm:
 	}
 	if cfg.SessionTTL != 2*time.Hour {
 		t.Fatalf("unexpected session ttl: %s", cfg.SessionTTL)
-	}
-	if cfg.BackgroundSyncEnabled {
-		t.Fatalf("expected background sync disabled")
 	}
 	if cfg.AdminUsername != "root" || cfg.AdminPassword != "secret" {
 		t.Fatalf("unexpected admin config: %q/%q", cfg.AdminUsername, cfg.AdminPassword)
@@ -242,7 +238,6 @@ func clearConfigEnv(t *testing.T) {
 		"GOMI_LISTEN_ADDR",
 		"GOMI_DATA_DIR",
 		"GOMI_SESSION_TTL",
-		"GOMI_BACKGROUND_SYNC_ENABLED",
 		"GOMI_ADMIN_USERNAME",
 		"GOMI_ADMIN_PASSWORD",
 		"GOMI_DNS_MODE",

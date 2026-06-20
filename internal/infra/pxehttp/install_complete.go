@@ -82,15 +82,6 @@ func (h *Handler) PXEInstallComplete(c echo.Context) error {
 		if err := h.vms.Store().Upsert(c.Request().Context(), updated); err != nil {
 			return c.JSON(gohttp.StatusInternalServerError, jsonErrorErr(err))
 		}
-		if h.vmRuntimeSyncer != nil {
-			leaseIPByMAC, leaseErr := h.leaseIPsByMAC(c.Request().Context())
-			if leaseErr != nil {
-				leaseIPByMAC = nil
-			}
-			if synced, syncErr := h.vmRuntimeSyncer.Sync(c.Request().Context(), updated, leaseIPByMAC); syncErr == nil {
-				updated = synced
-			}
-		}
 		if updated.Phase == vm.PhaseProvisioning {
 			updated.Phase = vm.PhaseRunning
 			updated.UpdatedAt = now

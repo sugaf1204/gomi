@@ -199,15 +199,13 @@ func (r *Runtime) StartServer(ctx context.Context) error {
 		PXETFTPRoot:      r.Config.TFTPRoot,
 		ProvisionTimeout: r.Config.ProvisionTimeout,
 		VMDeployer:       vmDeployer,
-		VMRuntimeSyncer:  vmRuntimeSyncer,
 		VMMigrator:       vmMigrator,
 		BootEnvs:         r.bootenvMgr,
 	})
 
-	if r.Config.BackgroundSyncEnabled {
-		go r.runSyncLoop(ctx)
-		go r.runPowerPollLoop(ctx)
-	}
+	go r.runSyncLoop(ctx)
+	go r.runPowerPollLoop(ctx)
+	go r.runVMRuntimeSyncLoop(ctx, vmRuntimeSyncer)
 
 	go r.runPXEManager(ctx)
 	if r.Config.DNSMode != config.DNSModeOff {
