@@ -11,6 +11,8 @@ import (
 	"strings"
 )
 
+const netplanFilePath = "/etc/netplan/50-gomi-network.yaml"
+
 type netplanParams struct {
 	IP          string
 	MAC         string
@@ -180,7 +182,7 @@ func injectNetplanConfigFromParams(cloudConfig string, params netplanParams, spe
 		writeFiles = existing
 	}
 	writeFiles = append(writeFiles, map[string]any{
-		"path":        "/etc/netplan/99-gomi-network.yaml",
+		"path":        netplanFilePath,
 		"content":     netplanYAML,
 		"permissions": "0600",
 	})
@@ -260,7 +262,7 @@ func injectBridgedNetplanConfig(cloudConfig string, m *machine.Machine, osFamily
 		writeFiles = existing
 	}
 	writeFiles = append(writeFiles, map[string]any{
-		"path":        "/etc/netplan/99-gomi-network.yaml",
+		"path":        netplanFilePath,
 		"content":     netplanYAML,
 		"permissions": "0600",
 	})
@@ -313,7 +315,7 @@ func injectNetplanConfigForHost(cloudConfig string, h node.Node, osFamily, pxeBa
 
 func netplanActivationCommands(osFamily string) []any {
 	cmds := []any{
-		"rm -f /etc/cloud/cloud.cfg.d/50-curtin-networking.cfg /etc/netplan/50-cloud-init.yaml /etc/netplan/01-netcfg.yaml /etc/netplan/00-installer-config.yaml",
+		"rm -f /etc/cloud/cloud.cfg.d/50-curtin-networking.cfg /etc/netplan/50-cloud-init.yaml /etc/netplan/01-netcfg.yaml /etc/netplan/00-installer-config.yaml /etc/netplan/99-gomi-network.yaml",
 	}
 	if isDebianOSFamily(osFamily) {
 		return append(cmds, "/usr/local/sbin/gomi-apply-netplan-networkd")

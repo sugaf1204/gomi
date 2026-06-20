@@ -63,7 +63,7 @@ func TestPXENocloudUserData_UbuntuVMStaticEnablesNetworkdBeforeNetplan(t *testin
 	}
 	body := rec.Body.String()
 	for _, want := range []string{
-		"99-gomi-network.yaml",
+		"50-gomi-network.yaml",
 		"renderer: networkd",
 		"192.168.2.232/24",
 		"systemctl enable --now systemd-networkd.service systemd-networkd.socket",
@@ -218,7 +218,7 @@ func TestPXENocloudUserData_QCOW2MachineDoesNotDisableResizeBeforeImageApplied(t
 	}
 	if body := rec.Body.String(); strings.Contains(body, "resize_rootfs: false") {
 		t.Fatalf("non-rootfs deploy must not disable resize_rootfs, got:\n%s", body)
-	} else if strings.Contains(body, "99-gomi-network.yaml") ||
+	} else if strings.Contains(body, "50-gomi-network.yaml") ||
 		strings.Contains(body, "netplan apply") ||
 		strings.Contains(body, "NetworkManager/system-connections") ||
 		strings.Contains(body, ".nmconnection") {
@@ -292,7 +292,7 @@ func TestPXENocloudUserData_FedoraHypervisorWritesNetworkManagerBridge(t *testin
 			t.Fatalf("expected Fedora hypervisor user-data to contain %q, got:\n%s", want, body)
 		}
 	}
-	if strings.Contains(body, "99-gomi-network.yaml") || strings.Contains(body, "netplan apply") {
+	if strings.Contains(body, "50-gomi-network.yaml") || strings.Contains(body, "netplan apply") {
 		t.Fatalf("Fedora hypervisor must not receive netplan user-data, got:\n%s", body)
 	}
 }
@@ -339,7 +339,7 @@ func TestPXENocloudUserData_DHCPMachineInjectsWakeOnLANNetplan(t *testing.T) {
 		t.Fatalf("PXENocloudUserData: %v", err)
 	}
 	body := rec.Body.String()
-	if !strings.Contains(body, "99-gomi-network.yaml") {
+	if !strings.Contains(body, "50-gomi-network.yaml") {
 		t.Fatalf("expected netplan write_files entry in user-data, got:\n%s", body)
 	}
 	if !strings.Contains(body, "permissions: \"0600\"") {
