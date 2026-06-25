@@ -1,3 +1,9 @@
+gomi (0.0.25) unstable; urgency=medium
+
+  * Improve VM runtime sync handling and hypervisor reachability recovery.
+
+ -- sugaf1204 <sugaf1204@example.invalid>  Fri, 26 Jun 2026 01:04:26 +0900
+
 gomi (0.0.24) unstable; urgency=medium
 
   * Add unauthenticated runtime profiling endpoints.
