@@ -3,6 +3,7 @@ package osimage
 import (
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 )
 
@@ -52,12 +53,15 @@ func ValidateOSImage(img OSImage) error {
 	if img.Source == SourceURL && strings.TrimSpace(img.URL) == "" {
 		return errors.New("url is required for url source")
 	}
-	if format == FormatQCOW2 && (img.Variant == VariantBareMetal || manifestDeclaresDeploymentTarget(img.Manifest, DeploymentTargetBareMetal)) {
+	if format == FormatQCOW2 && SupportsDeploymentTarget(img, DeploymentTargetBareMetal) {
 		if img.Manifest == nil || strings.TrimSpace(img.Manifest.Root.Path) == "" {
 			return errors.New("manifest.root.path is required for bare-metal qcow2 images")
 		}
 		if img.Manifest.Root.RootPartition.Number <= 0 {
 			return errors.New("manifest.root.rootPartition.number is required for bare-metal qcow2 images")
+		}
+		if err := validateBareMetalQCOW2ModuleMetadata(img); err != nil {
+			return err
 		}
 	}
 	if format == FormatSquashFS && manifestDeclaresDeploymentTarget(img.Manifest, DeploymentTargetBareMetal) {
@@ -66,6 +70,50 @@ func ValidateOSImage(img OSImage) error {
 		}
 	}
 	return nil
+}
+
+func validateBareMetalQCOW2ModuleMetadata(img OSImage) error {
+	if img.Manifest == nil || !strings.EqualFold(strings.TrimSpace(img.OSFamily), "ubuntu") {
+		return nil
+	}
+	if !ubuntuRequiresBareMetalExtraModules(img.OSVersion) {
+		return nil
+	}
+	targetKernelVersion := strings.TrimSpace(img.Manifest.TargetKernel.Version)
+	for _, pkg := range img.Manifest.Build.ModulePackages {
+		pkg = strings.TrimSpace(pkg)
+		if pkg == "linux-modules-extra-{kernel_release}" {
+			return nil
+		}
+		if targetKernelVersion != "" && pkg == "linux-modules-extra-"+targetKernelVersion {
+			return nil
+		}
+	}
+	return errors.New("ubuntu bare-metal qcow2 images require manifest.build.modulePackages to provide linux-modules-extra for the target kernel")
+}
+
+func ubuntuRequiresBareMetalExtraModules(version string) bool {
+	major, minor, ok := parseMajorMinorVersion(version)
+	if !ok {
+		return true
+	}
+	return major < 25 || (major == 25 && minor < 10)
+}
+
+func parseMajorMinorVersion(version string) (int, int, bool) {
+	parts := strings.Split(strings.TrimSpace(version), ".")
+	if len(parts) < 2 {
+		return 0, 0, false
+	}
+	major, err := strconv.Atoi(parts[0])
+	if err != nil {
+		return 0, 0, false
+	}
+	minor, err := strconv.Atoi(parts[1])
+	if err != nil {
+		return 0, 0, false
+	}
+	return major, minor, true
 }
 
 func manifestDeclaresDeploymentTarget(manifest *Manifest, target DeploymentTarget) bool {

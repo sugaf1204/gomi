@@ -214,6 +214,9 @@ func TestVirtualMachineCRUD(t *testing.T) {
 					"filesystem": "ext4",
 				},
 			},
+			"build": map[string]any{
+				"modulePackages": []string{"linux-modules-extra-{kernel_release}"},
+			},
 		},
 	}
 	rec = doRequest(env.echo, http.MethodPost, "/api/v1/os-images", bareMetalQCOW2Body, env.token)

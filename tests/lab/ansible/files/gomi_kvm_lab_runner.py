@@ -865,7 +865,7 @@ class LabRunner:
         if manifest is not None:
             payload["manifest"] = manifest
         try:
-            http_json(
+            existing = http_json(
                 "GET",
                 f"http://127.0.0.1:{self.gomi_vm['api_port']}/api/v1/os-images/{urlparse.quote(image_ref)}",
                 token=self.api_token,
@@ -879,12 +879,43 @@ class LabRunner:
                 token=self.api_token,
                 payload=payload,
             )
+        else:
+            mismatches = self.os_image_mismatches(existing, payload)
+            if mismatches:
+                log(
+                    f"refreshing existing OS image {image_ref}; "
+                    f"lab config changed: {', '.join(mismatches)}"
+                )
+                http_json(
+                    "DELETE",
+                    f"http://127.0.0.1:{self.gomi_vm['api_port']}/api/v1/os-images/{urlparse.quote(image_ref)}",
+                    token=self.api_token,
+                )
+                http_json(
+                    "POST",
+                    f"http://127.0.0.1:{self.gomi_vm['api_port']}/api/v1/os-images",
+                    token=self.api_token,
+                    payload=payload,
+                )
         http_json(
             "PATCH",
             f"http://127.0.0.1:{self.gomi_vm['api_port']}/api/v1/os-images/{urlparse.quote(image_ref)}/status",
             token=self.api_token,
             payload={"ready": True, "localPath": local_path, "error": ""},
         )
+
+    def os_image_mismatches(self, existing: dict[str, Any], expected: dict[str, Any]) -> list[str]:
+        mismatches = []
+        for field in ("osFamily", "osVersion", "arch", "format", "source", "variant"):
+            if existing.get(field) != expected.get(field):
+                mismatches.append(field)
+        if self.canonical_json(existing.get("manifest")) != self.canonical_json(expected.get("manifest")):
+            mismatches.append("manifest")
+        return mismatches
+
+    @staticmethod
+    def canonical_json(value: Any) -> str:
+        return json.dumps(value, sort_keys=True, separators=(",", ":"))
 
     def prepare_vm_suite_apt(self, suite: str) -> None:
         lists_dir = f"/tmp/gomi-{suite}-lists"
@@ -944,22 +975,28 @@ class LabRunner:
             if image_format == "qcow2":
                 local_path = self.download_disk_image(image)
                 root_path = str(image.get("artifact_path") or "root.qcow2").lstrip("/")
+                manifest = {
+                    "capabilities": {
+                        "deployTargets": ["baremetal"],
+                    },
+                    "root": {
+                        "format": "qcow2",
+                        "path": root_path,
+                        "rootPartition": {
+                            "number": int(image.get("root_partition_number") or 1),
+                        },
+                    },
+                }
+                module_packages = image.get("module_packages") or image.get("modulePackages") or []
+                if module_packages:
+                    manifest["build"] = {
+                        "modulePackages": module_packages,
+                    }
                 self.ensure_os_image_registered(
                     image,
                     local_path,
                     "qcow2",
-                    manifest={
-                        "capabilities": {
-                            "deployTargets": ["baremetal"],
-                        },
-                        "root": {
-                            "format": "qcow2",
-                            "path": root_path,
-                            "rootPartition": {
-                                "number": int(image.get("root_partition_number") or 1),
-                            },
-                        },
-                    },
+                    manifest=manifest,
                 )
                 continue
             if image_format != "squashfs":

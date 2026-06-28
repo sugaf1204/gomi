@@ -96,6 +96,7 @@ func TestValidateOSImage_BareMetalQCOW2RequiresManifestRootPartition(t *testing.
 		t.Fatalf("expected bare-metal qcow2 root partition error, got %v", err)
 	}
 	img.Manifest.Root.RootPartition.Number = 1
+	img.Manifest.Build.ModulePackages = []string{"linux-modules-extra-{kernel_release}"}
 	if err := ValidateOSImage(img); err != nil {
 		t.Fatalf("expected bare-metal qcow2 with manifest to validate, got %v", err)
 	}
@@ -110,6 +111,7 @@ func TestValidateOSImage_BareMetalQCOW2UsesManifestRootFormat(t *testing.T) {
 		t.Fatalf("expected bare-metal qcow2 root partition error from manifest format, got %v", err)
 	}
 	img.Manifest.Root.RootPartition.Number = 1
+	img.Manifest.Build.ModulePackages = []string{"linux-modules-extra-{kernel_release}"}
 	if err := ValidateOSImage(img); err != nil {
 		t.Fatalf("expected manifest qcow2 format to validate, got %v", err)
 	}
@@ -125,8 +127,129 @@ func TestValidateOSImage_BareMetalCapabilityRequiresRootPartition(t *testing.T) 
 		t.Fatalf("expected bare-metal capability root partition error, got %v", err)
 	}
 	img.Manifest.Root.RootPartition.Number = 1
+	img.Manifest.Build.ModulePackages = []string{"linux-modules-extra-{kernel_release}"}
 	if err := ValidateOSImage(img); err != nil {
 		t.Fatalf("expected bare-metal capability image to validate, got %v", err)
+	}
+}
+
+func TestValidateOSImage_UbuntuBareMetalQCOW2RequiresKernelExtraModules(t *testing.T) {
+	img := validImage()
+	img.Manifest = &Manifest{
+		Capabilities: Capabilities{DeployTargets: []DeploymentTarget{DeploymentTargetBareMetal}},
+		Root: RootArtifact{
+			Format:        FormatQCOW2,
+			Path:          "root.qcow2",
+			RootPartition: Partition{Number: 1},
+		},
+	}
+	if err := ValidateOSImage(img); err == nil || !strings.Contains(err.Error(), "linux-modules-extra") {
+		t.Fatalf("expected ubuntu bare-metal module package error, got %v", err)
+	}
+
+	img.Manifest.Build.ModulePackages = []string{"linux-modules-extra-{kernel_release}"}
+	if err := ValidateOSImage(img); err != nil {
+		t.Fatalf("expected ubuntu bare-metal module package metadata to validate, got %v", err)
+	}
+}
+
+func TestValidateOSImage_UbuntuBareMetalQCOW2MatchesKernelExtraModulesToTargetKernel(t *testing.T) {
+	img := validImage()
+	img.Manifest = &Manifest{
+		Capabilities: Capabilities{DeployTargets: []DeploymentTarget{DeploymentTargetBareMetal}},
+		Root: RootArtifact{
+			Format:        FormatQCOW2,
+			Path:          "root.qcow2",
+			RootPartition: Partition{Number: 1},
+		},
+		TargetKernel: TargetKernel{Version: "6.8.0-124-generic"},
+		Build: BuildMetadata{
+			ModulePackages: []string{"linux-modules-extra-6.8.0-123-generic"},
+		},
+	}
+	if err := ValidateOSImage(img); err == nil || !strings.Contains(err.Error(), "target kernel") {
+		t.Fatalf("expected stale module package to be rejected, got %v", err)
+	}
+
+	img.Manifest.Build.ModulePackages = []string{"linux-modules-extra-6.8.0-124-generic"}
+	if err := ValidateOSImage(img); err != nil {
+		t.Fatalf("expected target-kernel module package metadata to validate, got %v", err)
+	}
+}
+
+func TestValidateOSImage_UbuntuBareMetalQCOW2RejectsKernelModuleBundleOnly(t *testing.T) {
+	img := validImage()
+	img.Manifest = &Manifest{
+		Capabilities: Capabilities{DeployTargets: []DeploymentTarget{DeploymentTargetBareMetal}},
+		Root: RootArtifact{
+			Format:        FormatQCOW2,
+			Path:          "root.qcow2",
+			RootPartition: Partition{Number: 1},
+		},
+		TargetKernel: TargetKernel{Version: "6.8.0-124-generic"},
+		Bundles: []Bundle{
+			{
+				ID:              "modules",
+				Type:            "kernel-modules",
+				KernelVersion:   "6.8.0-124-generic",
+				Path:            "bundles/modules.tar.zst",
+				ProvidesModules: []string{"e1000e"},
+			},
+		},
+	}
+	if err := ValidateOSImage(img); err == nil || !strings.Contains(err.Error(), "target kernel") {
+		t.Fatalf("expected bundle-only module metadata to be rejected, got %v", err)
+	}
+}
+
+func TestValidateOSImage_UbuntuBareMetalQCOW2RequiresKernelExtraModulesWhenBareMetalIsInferred(t *testing.T) {
+	img := validImage()
+	img.Manifest = &Manifest{
+		Root: RootArtifact{
+			Format:        FormatQCOW2,
+			Path:          "root.qcow2",
+			RootPartition: Partition{Number: 1},
+		},
+	}
+	if err := ValidateOSImage(img); err == nil || !strings.Contains(err.Error(), "linux-modules-extra") {
+		t.Fatalf("expected inferred bare-metal module package error, got %v", err)
+	}
+
+	img.Manifest.Build.ModulePackages = []string{"linux-modules-extra-{kernel_release}"}
+	if err := ValidateOSImage(img); err != nil {
+		t.Fatalf("expected inferred bare-metal module package metadata to validate, got %v", err)
+	}
+}
+
+func TestValidateOSImage_UbuntuBareMetalQCOW2DoesNotRequireExtraModulesFor2510AndLater(t *testing.T) {
+	img := validImage()
+	img.OSVersion = "26.04"
+	img.Manifest = &Manifest{
+		Capabilities: Capabilities{DeployTargets: []DeploymentTarget{DeploymentTargetBareMetal}},
+		Root: RootArtifact{
+			Format:        FormatQCOW2,
+			Path:          "root.qcow2",
+			RootPartition: Partition{Number: 1},
+		},
+	}
+	if err := ValidateOSImage(img); err != nil {
+		t.Fatalf("expected ubuntu 26.04 bare-metal qcow2 image to validate without extra modules package, got %v", err)
+	}
+}
+
+func TestValidateOSImage_DebianBareMetalQCOW2DoesNotRequireUbuntuModulePackage(t *testing.T) {
+	img := validImage()
+	img.OSFamily = "debian"
+	img.Manifest = &Manifest{
+		Capabilities: Capabilities{DeployTargets: []DeploymentTarget{DeploymentTargetBareMetal}},
+		Root: RootArtifact{
+			Format:        FormatQCOW2,
+			Path:          "root.qcow2",
+			RootPartition: Partition{Number: 1},
+		},
+	}
+	if err := ValidateOSImage(img); err != nil {
+		t.Fatalf("expected non-ubuntu bare-metal qcow2 image to validate, got %v", err)
 	}
 }
 
