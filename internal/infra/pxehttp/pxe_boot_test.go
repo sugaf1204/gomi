@@ -133,6 +133,26 @@ func TestPXEFileRecordsProvisionedTransferTiming(t *testing.T) {
 	if !strings.Contains(timing.Message, "4 bytes") {
 		t.Fatalf("expected served size in timing message, got %q", timing.Message)
 	}
+
+	req = httptest.NewRequest(http.MethodHead, "/pxe/files/images/rootfs.squashfs?attempt_id=attempt-transfer&token=token-transfer", nil)
+	rec = httptest.NewRecorder()
+	c = e.NewContext(req, rec)
+	c.SetParamNames("*")
+	c.SetParamValues("images/rootfs.squashfs")
+
+	if err := h.PXEFile(c); err != nil {
+		t.Fatalf("PXEFile HEAD: %v", err)
+	}
+	if rec.Code != http.StatusOK {
+		t.Fatalf("unexpected HEAD status: %d body=%s", rec.Code, rec.Body.String())
+	}
+	stored, err = backend.Machines().Get(context.Background(), target.Name)
+	if err != nil {
+		t.Fatalf("get machine after HEAD: %v", err)
+	}
+	if len(stored.Provision.Timings) != 1 {
+		t.Fatalf("HEAD probe must not add transfer timing, got %#v", stored.Provision.Timings)
+	}
 }
 
 func TestSanitizePXEPath(t *testing.T) {

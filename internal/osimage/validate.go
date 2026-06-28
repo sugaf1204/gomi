@@ -38,6 +38,9 @@ func ValidateOSImage(img OSImage) error {
 			}
 		}
 	}
+	if format != FormatQCOW2 && manifestDeclaresDeploymentTarget(img.Manifest, DeploymentTargetVM) {
+		return fmt.Errorf("deployment target %s requires qcow2 image, got %s", DeploymentTargetVM, format)
+	}
 	if img.Source != "" && img.Source != SourceUpload && img.Source != SourceURL {
 		return fmt.Errorf("unsupported source: %s", img.Source)
 	}

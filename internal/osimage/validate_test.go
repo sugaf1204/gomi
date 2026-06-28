@@ -146,6 +146,18 @@ func TestValidateOSImage_BareMetalSquashFSRequiresManifestRootPath(t *testing.T)
 	}
 }
 
+func TestValidateOSImage_RejectsVMSquashFS(t *testing.T) {
+	img := validImage()
+	img.Format = FormatSquashFS
+	img.Manifest = &Manifest{
+		Capabilities: Capabilities{DeployTargets: []DeploymentTarget{DeploymentTargetVM}},
+		Root:         RootArtifact{Format: FormatSquashFS, Path: "rootfs.squashfs"},
+	}
+	if err := ValidateOSImage(img); err == nil || !strings.Contains(err.Error(), "deployment target vm requires qcow2 image") {
+		t.Fatalf("expected vm squashfs rejection, got %v", err)
+	}
+}
+
 func TestSupportsDeploymentTarget_ManifestCapabilitiesOverrideVariant(t *testing.T) {
 	img := validImage()
 	img.Variant = VariantBareMetal

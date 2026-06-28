@@ -15,8 +15,12 @@ export function supportsDeploymentTarget(image: OSImage, target: DeploymentTarge
   if (target === 'vm') {
     return format === 'qcow2' && (!image.variant || image.variant === 'cloud')
   }
-  return format === 'qcow2' && (
-    image.variant === 'baremetal' ||
-    Boolean(image.manifest?.root?.path && image.manifest?.root?.rootPartition?.number)
-  )
+  if (format === 'qcow2') {
+    return image.variant === 'baremetal' ||
+      Boolean(image.manifest?.root?.path && image.manifest?.root?.rootPartition?.number)
+  }
+  if (format === 'squashfs') {
+    return Boolean(image.manifest?.root?.path)
+  }
+  return false
 }
