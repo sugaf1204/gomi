@@ -38,6 +38,23 @@ ansible-playbook playbooks/run-gomi-kvm-lab.yml
 
 The result summary is fetched to `tests/lab/ansible/artifacts/<inventory_hostname>/summary.json`.
 
+## Ubuntu Desktop PXE experiment
+
+Use `vars/ubuntu-desktop.yml` to narrow the matrix to a single Ubuntu 24.04 Desktop qcow2 image. The image must be a GOMI bare-metal qcow2 artifact, such as the `root.qcow2` output from `sugaf1204/os-images` `ubuntu-24.04-desktop`.
+
+```bash
+cd tests/lab/ansible
+export GOMI_LAB_SSH_USER=gomi
+export GOMI_LAB_SSH_PASSWORD=gomi
+export GOMI_LAB_SUDO_PASSWORD=gomi
+export GOMI_LAB_DEB=/path/to/gomi_*.deb
+export GOMI_LAB_BOOTENV_SOURCE_URL=http://example.local/bootenv
+export GOMI_LAB_DESKTOP_IMAGE_URL=http://example.local/root.qcow2
+ansible-playbook playbooks/run-gomi-kvm-lab.yml -e @vars/ubuntu-desktop.yml
+```
+
+The Desktop case additionally verifies that `ubuntu-desktop-minimal` is installed and a display manager is enabled after first boot. It records display-manager active state, but does not fail on inactive state because the QEMU target is headless.
+
 ## Molecule smoke test
 
 Molecule runs the existing playbooks with the local `molecule-qemu-kvm` driver from `molecule_plugins/qemu_kvm`. The default scenario is a smoke test that creates one GOMI server VM and one PXE target VM on the same KVM host.

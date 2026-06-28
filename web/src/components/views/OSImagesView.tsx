@@ -5,7 +5,7 @@ import { formatDate, phaseClass } from '../../lib/formatters'
 import { usePersistentStringState } from '../../hooks/usePersistentStringState'
 import { notifyError } from '../../lib/toast'
 import { ModalOverlay } from '../ui/ModalOverlay'
-import type { OSImage } from '../../types'
+import type { OSImage, OSImageManifest } from '../../types'
 
 export type OSImagesViewProps = {
   osImages: OSImage[]
@@ -18,9 +18,11 @@ type OSImageForm = {
   osVersion: string
   arch: string
   format: 'qcow2'
+  variant: '' | NonNullable<OSImage['variant']>
   source: 'upload' | 'url'
   url: string
   checksum: string
+  manifestText: string
   file: File | null
 }
 
@@ -30,9 +32,11 @@ const initialImageForm: OSImageForm = {
   osVersion: '13',
   arch: 'amd64',
   format: 'qcow2',
+  variant: '',
   source: 'url',
   url: '',
   checksum: '',
+  manifestText: '',
   file: null
 }
 
@@ -67,6 +71,7 @@ export function OSImagesView({ osImages, onRefresh }: OSImagesViewProps) {
     e.preventDefault()
     setCreatingImage(true)
     try {
+      const manifest = parseManifestText(imageForm.manifestText)
       const created = await api.createOSImage({
         name: imageForm.name,
         osFamily: imageForm.osFamily,
@@ -74,6 +79,8 @@ export function OSImagesView({ osImages, onRefresh }: OSImagesViewProps) {
         arch: imageForm.arch,
         format: imageForm.format,
         source: imageForm.source,
+        variant: imageForm.variant || undefined,
+        manifest,
         url: imageForm.source === 'url' ? imageForm.url : undefined,
         checksum: imageForm.checksum || undefined
       })
@@ -156,6 +163,18 @@ export function OSImagesView({ osImages, onRefresh }: OSImagesViewProps) {
                   <input value="qcow2" disabled readOnly />
                 </label>
                 <label className="text-[0.84rem]">
+                  Variant
+                  <select value={imageForm.variant} onChange={(e) => setImageForm((f) => ({ ...f, variant: e.target.value as OSImageForm['variant'] }))}>
+                    <option value="">Default</option>
+                    <option value="cloud">Cloud VM</option>
+                    <option value="baremetal">Bare Metal</option>
+                    <option value="server">Server</option>
+                    <option value="desktop">Desktop</option>
+                  </select>
+                </label>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-[0.45rem]">
+                <label className="text-[0.84rem]">
                   Source
                   <select value={imageForm.source} onChange={(e) => setImageForm((f) => ({ ...f, source: e.target.value as 'upload' | 'url' }))}>
                     <option value="url">URL</option>
@@ -190,6 +209,16 @@ export function OSImagesView({ osImages, onRefresh }: OSImagesViewProps) {
                   <input value={imageForm.checksum} onChange={(e) => setImageForm((f) => ({ ...f, checksum: e.target.value }))} placeholder="sha256:..." />
                 </label>
               )}
+
+              <label className="text-[0.84rem]">
+                Manifest JSON <span className="text-ink-soft">(optional, required for bare-metal qcow2 artifacts)</span>
+                <textarea
+                  value={imageForm.manifestText}
+                  onChange={(e) => setImageForm((f) => ({ ...f, manifestText: e.target.value }))}
+                  rows={7}
+                  placeholder={'{"capabilities":{"deployTargets":["baremetal"]},"root":{"format":"qcow2","path":"root.qcow2","rootPartition":{"number":1},"efiPartition":{"number":15}}}'}
+                />
+              </label>
 
               <div className="flex justify-end gap-[0.45rem] pt-[0.2rem]">
                 <button type="button" onClick={() => { setImageFormOpen(false) }}>Cancel</button>
@@ -228,7 +257,7 @@ export function OSImagesView({ osImages, onRefresh }: OSImagesViewProps) {
               >
                 <div>
                   <p className="m-0 font-ui font-medium tracking-normal">{img.name}</p>
-                  <p className="m-0 text-ink-soft text-[0.82rem]">{img.osFamily} {img.osVersion} - {img.format}</p>
+                  <p className="m-0 text-ink-soft text-[0.82rem]">{img.osFamily} {img.osVersion}{img.variant ? ` ${img.variant}` : ''} - {img.format}</p>
                 </div>
                 <span className={readyBadge(img.ready)}>{img.ready ? 'Ready' : 'Not Ready'}</span>
               </button>
@@ -251,7 +280,7 @@ export function OSImagesView({ osImages, onRefresh }: OSImagesViewProps) {
                 <div>
                   <p className="m-0 font-ui font-medium text-[0.72rem] uppercase tracking-[0.08em] text-ink-soft">OS Image</p>
                   <h2 className="mt-[0.22rem] text-[1.8rem]">{selectedImageData.name}</h2>
-                  <p className="m-0 text-ink-soft">{selectedImageData.osFamily} {selectedImageData.osVersion} - {selectedImageData.arch}</p>
+                  <p className="m-0 text-ink-soft">{selectedImageData.osFamily} {selectedImageData.osVersion}{selectedImageData.variant ? ` ${selectedImageData.variant}` : ''} - {selectedImageData.arch}</p>
                 </div>
                 <div className="flex flex-col items-end gap-[0.55rem]">
                   <span className={readyBadge(selectedImageData.ready)}>{selectedImageData.ready ? 'Ready' : 'Not Ready'}</span>
@@ -272,6 +301,9 @@ export function OSImagesView({ osImages, onRefresh }: OSImagesViewProps) {
                     <dt className="text-ink-soft text-[0.84rem]">Version</dt><dd className="m-0">{selectedImageData.osVersion}</dd>
                     <dt className="text-ink-soft text-[0.84rem]">Arch</dt><dd className="m-0">{selectedImageData.arch}</dd>
                     <dt className="text-ink-soft text-[0.84rem]">Format</dt><dd className="m-0">{selectedImageData.format}</dd>
+                    {selectedImageData.variant && (
+                      <><dt className="text-ink-soft text-[0.84rem]">Variant</dt><dd className="m-0">{selectedImageData.variant}</dd></>
+                    )}
                     <dt className="text-ink-soft text-[0.84rem]">Source</dt><dd className="m-0">{selectedImageData.source}</dd>
                     {selectedImageData.sizeBytes != null && (
                       <><dt className="text-ink-soft text-[0.84rem]">Size</dt><dd className="m-0">{formatSize(selectedImageData.sizeBytes)}</dd></>
@@ -340,4 +372,14 @@ function formatSize(bytes: number): string {
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
   if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
   return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`
+}
+
+function parseManifestText(value: string): OSImageManifest | undefined {
+  const trimmed = value.trim()
+  if (!trimmed) return undefined
+  const parsed = JSON.parse(trimmed) as OSImageManifest
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new Error('Manifest JSON must be an object')
+  }
+  return parsed
 }

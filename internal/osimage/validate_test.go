@@ -46,6 +46,19 @@ func TestValidateOSImage_UnsupportedSource(t *testing.T) {
 	}
 }
 
+func TestValidateOSImage_Variant(t *testing.T) {
+	img := validImage()
+	img.Variant = VariantDesktop
+	if err := ValidateOSImage(img); err != nil {
+		t.Fatalf("expected desktop variant to validate, got %v", err)
+	}
+
+	img.Variant = Variant("workstation")
+	if err := ValidateOSImage(img); err == nil || !strings.Contains(err.Error(), "unsupported variant") {
+		t.Fatalf("expected unsupported variant error, got %v", err)
+	}
+}
+
 func TestValidateOSImage_UnsupportedTopLevelFormat(t *testing.T) {
 	img := validImage()
 	img.Format = ImageFormat("vhdx")

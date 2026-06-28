@@ -1,0 +1,27 @@
+gomi_kvm_lab_bootenv_source_url: "{{ lookup('env', 'GOMI_LAB_BOOTENV_SOURCE_URL') | default('https://github.com/sugaf1204/gomi/releases/download/v0.0.2', true) }}"
+
+gomi_kvm_lab_os_images:
+  - image_ref: ubuntu-24.04-desktop-amd64-baremetal
+    description: Ubuntu 24.04 Desktop qcow2 image for PXE deployment
+    os_family: ubuntu
+    os_version: "24.04"
+    login_user: ubuntu
+    variant: desktop
+    image_format: qcow2
+    artifact_path: root.qcow2
+    disk_image_url: "{{ lookup('env', 'GOMI_LAB_DESKTOP_IMAGE_URL') }}"
+    root_partition_number: 1
+    desktop_checks: true
+
+gomi_kvm_lab_target_defaults:
+  arch: amd64
+  firmware: bios
+  memory_mb: 6144
+  cpus: 2
+  disk_gb: 64
+
+gomi_kvm_lab_target_nics:
+  - name: e1000e
+    qemu_model: e1000e
+    expected_driver: e1000e
+    exact: true

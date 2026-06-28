@@ -92,6 +92,28 @@ func TestPXEArtifact_OnlyServesManifestArtifactsAndRejectsSymlinkEscape(t *testi
 		}
 	})
 
+	t.Run("serves manifest root metadata with HEAD", func(t *testing.T) {
+		e := echo.New()
+		req := httptest.NewRequest(http.MethodHead, "/pxe/artifacts/os-images/debian-13-amd64/rootfs.squashfs", nil)
+		rec := httptest.NewRecorder()
+		c := e.NewContext(req, rec)
+		c.SetParamNames("name", "*")
+		c.SetParamValues("debian-13-amd64", "rootfs.squashfs")
+
+		if err := h.PXEArtifact(c); err != nil {
+			t.Fatalf("PXEArtifact: %v", err)
+		}
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d body=%q", rec.Code, rec.Body.String())
+		}
+		if rec.Body.Len() != 0 {
+			t.Fatalf("HEAD response must not include a body, got %q", rec.Body.String())
+		}
+		if got := rec.Header().Get("Content-Length"); got != "4" {
+			t.Fatalf("expected content length 4, got %q", got)
+		}
+	})
+
 	t.Run("rejects file outside manifest", func(t *testing.T) {
 		e := echo.New()
 		req := httptest.NewRequest(http.MethodGet, "/pxe/artifacts/os-images/debian-13-amd64/debug.log", nil)

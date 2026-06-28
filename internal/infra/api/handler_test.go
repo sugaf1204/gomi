@@ -130,6 +130,21 @@ func (r *recordingPowerExecutor) CheckStatus(_ context.Context, _ power.MachineI
 	return power.PowerStateStopped, nil
 }
 
+func bareMetalQCOW2Manifest() map[string]any {
+	return map[string]any{
+		"capabilities": map[string]any{
+			"deployTargets": []string{"baremetal"},
+		},
+		"root": map[string]any{
+			"format": "qcow2",
+			"path":   "root.qcow2",
+			"rootPartition": map[string]any{
+				"number": 1,
+			},
+		},
+	}
+}
+
 func (r *recordingPowerExecutor) ConfigureBootOrder(_ context.Context, _ power.MachineInfo, _ power.BootOrder) error {
 	return nil
 }

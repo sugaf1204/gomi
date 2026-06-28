@@ -11,6 +11,7 @@ import (
 	"github.com/labstack/echo/v4"
 	"github.com/sugaf1204/gomi/internal/infra/httputil"
 	"github.com/sugaf1204/gomi/internal/machine"
+	"github.com/sugaf1204/gomi/internal/osimage"
 	"github.com/sugaf1204/gomi/internal/power"
 	"github.com/sugaf1204/gomi/internal/resource"
 )
@@ -250,5 +251,8 @@ func (s *Server) resolveOSPreset(ctx context.Context, m *machine.Machine) error 
 	}
 	m.OSPreset.Family = machine.OSType(img.OSFamily)
 	m.OSPreset.Version = img.OSVersion
+	if !osimage.SupportsDeploymentTarget(img, osimage.DeploymentTargetBareMetal) {
+		return fmt.Errorf("referenced os image %s does not support bare-metal deployment", ref)
+	}
 	return nil
 }

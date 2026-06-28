@@ -199,6 +199,7 @@ func NewServer(cfg ServerConfig) *Server {
 	e.POST("/pxe/install-complete", pxeH.PXEInstallComplete)
 	e.GET("/pxe/install-complete", pxeH.PXEInstallComplete)
 	e.GET("/pxe/artifacts/os-images/:name/*", pxeH.PXEArtifact)
+	e.HEAD("/pxe/artifacts/os-images/:name/*", pxeH.PXEArtifact)
 	e.GET("/pxe/files/*", pxeH.PXEFile)
 
 	authed := v1.Group("", s.AuthMiddleware())

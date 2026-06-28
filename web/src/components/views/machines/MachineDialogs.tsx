@@ -1,5 +1,6 @@
 import type { Dispatch, FormEvent, ReactNode, SetStateAction } from 'react'
 import clsx from 'clsx'
+import { supportsDeploymentTarget } from '../../../lib/osImages'
 import { ModalOverlay } from '../../ui/ModalOverlay'
 import type { CloudInitTemplate, Machine, OSImage, PowerType, SSHKey, Subnet } from '../../../types'
 import {
@@ -300,7 +301,7 @@ function ImagePresetFields({ preset, setPreset, osImages }: { preset: MachineQui
         setPreset((current) => ({ ...current, imageRef: e.target.value, osFamily: selected?.osFamily || '', osVersion: selected?.osVersion || '' }))
       }}>
         <option value="">Select...</option>
-        {osImages.map((img) => <option key={img.name} value={img.name}>{img.name} ({img.osFamily} {img.osVersion})</option>)}
+        {osImages.filter((img) => supportsDeploymentTarget(img, 'baremetal')).map((img) => <option key={img.name} value={img.name}>{img.name} ({img.osFamily} {img.osVersion}{img.variant ? ` ${img.variant}` : ''})</option>)}
       </select>
     </label>
   )

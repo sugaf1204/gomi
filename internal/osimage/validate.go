@@ -41,6 +41,11 @@ func ValidateOSImage(img OSImage) error {
 	if img.Source != "" && img.Source != SourceUpload && img.Source != SourceURL {
 		return fmt.Errorf("unsupported source: %s", img.Source)
 	}
+	switch img.Variant {
+	case "", VariantCloud, VariantBareMetal, VariantServer, VariantDesktop:
+	default:
+		return fmt.Errorf("unsupported variant: %s", img.Variant)
+	}
 	if img.Source == SourceURL && strings.TrimSpace(img.URL) == "" {
 		return errors.New("url is required for url source")
 	}
