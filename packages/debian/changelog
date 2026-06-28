@@ -1,3 +1,10 @@
+gomi (0.0.26) unstable; urgency=medium
+
+  * Add Ubuntu Desktop bare-metal deployment support.
+  * Preserve squashfs bare-metal deploys while adding qcow2 disk-image deploys.
+
+ -- sugaf1204 <sugaf1204@example.invalid>  Mon, 29 Jun 2026 04:36:01 +0900
+
 gomi (0.0.24) unstable; urgency=medium
 
   * Add unauthenticated runtime profiling endpoints.
