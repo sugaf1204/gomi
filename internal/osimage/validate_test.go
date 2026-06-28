@@ -153,6 +153,60 @@ func TestValidateOSImage_UbuntuBareMetalQCOW2RequiresKernelExtraModules(t *testi
 	}
 }
 
+func TestValidateOSImage_UbuntuBareMetalQCOW2MatchesKernelExtraModulesToTargetKernel(t *testing.T) {
+	img := validImage()
+	img.Manifest = &Manifest{
+		Capabilities: Capabilities{DeployTargets: []DeploymentTarget{DeploymentTargetBareMetal}},
+		Root: RootArtifact{
+			Format:        FormatQCOW2,
+			Path:          "root.qcow2",
+			RootPartition: Partition{Number: 1},
+		},
+		TargetKernel: TargetKernel{Version: "6.8.0-124-generic"},
+		Build: BuildMetadata{
+			ModulePackages: []string{"linux-modules-extra-6.8.0-123-generic"},
+		},
+	}
+	if err := ValidateOSImage(img); err == nil || !strings.Contains(err.Error(), "target kernel") {
+		t.Fatalf("expected stale module package to be rejected, got %v", err)
+	}
+
+	img.Manifest.Build.ModulePackages = []string{"linux-modules-extra-6.8.0-124-generic"}
+	if err := ValidateOSImage(img); err != nil {
+		t.Fatalf("expected target-kernel module package metadata to validate, got %v", err)
+	}
+}
+
+func TestValidateOSImage_UbuntuBareMetalQCOW2AcceptsKernelModuleBundle(t *testing.T) {
+	img := validImage()
+	img.Manifest = &Manifest{
+		Capabilities: Capabilities{DeployTargets: []DeploymentTarget{DeploymentTargetBareMetal}},
+		Root: RootArtifact{
+			Format:        FormatQCOW2,
+			Path:          "root.qcow2",
+			RootPartition: Partition{Number: 1},
+		},
+		TargetKernel: TargetKernel{Version: "6.8.0-124-generic"},
+		Bundles: []Bundle{
+			{
+				ID:              "modules",
+				Type:            "kernel-modules",
+				KernelVersion:   "6.8.0-124-generic",
+				Path:            "bundles/modules.tar.zst",
+				ProvidesModules: []string{"e1000e"},
+			},
+		},
+	}
+	if err := ValidateOSImage(img); err != nil {
+		t.Fatalf("expected target-kernel module bundle to validate, got %v", err)
+	}
+
+	img.Manifest.Bundles[0].KernelVersion = "6.8.0-123-generic"
+	if err := ValidateOSImage(img); err == nil || !strings.Contains(err.Error(), "target kernel") {
+		t.Fatalf("expected stale module bundle to be rejected, got %v", err)
+	}
+}
+
 func TestValidateOSImage_DebianBareMetalQCOW2DoesNotRequireUbuntuModulePackage(t *testing.T) {
 	img := validImage()
 	img.OSFamily = "debian"

@@ -75,13 +75,35 @@ func validateBareMetalQCOW2ModuleMetadata(img OSImage) error {
 	if img.Manifest == nil || !strings.EqualFold(strings.TrimSpace(img.OSFamily), "ubuntu") {
 		return nil
 	}
+	targetKernelVersion := strings.TrimSpace(img.Manifest.TargetKernel.Version)
 	for _, pkg := range img.Manifest.Build.ModulePackages {
 		pkg = strings.TrimSpace(pkg)
-		if strings.HasPrefix(pkg, "linux-modules-extra-") {
+		if pkg == "linux-modules-extra-{kernel_release}" {
+			return nil
+		}
+		if targetKernelVersion != "" && pkg == "linux-modules-extra-"+targetKernelVersion {
 			return nil
 		}
 	}
-	return errors.New("ubuntu bare-metal qcow2 images require manifest.build.modulePackages to include linux-modules-extra for the target kernel")
+	for _, bundle := range img.Manifest.Bundles {
+		if !strings.EqualFold(strings.TrimSpace(bundle.Type), "kernel-modules") {
+			continue
+		}
+		if strings.TrimSpace(bundle.Path) == "" || len(bundle.ProvidesModules) == 0 {
+			continue
+		}
+		bundleKernelVersion := strings.TrimSpace(bundle.KernelVersion)
+		if targetKernelVersion != "" {
+			if bundleKernelVersion == targetKernelVersion {
+				return nil
+			}
+			continue
+		}
+		if bundleKernelVersion != "" {
+			return nil
+		}
+	}
+	return errors.New("ubuntu bare-metal qcow2 images require manifest.build.modulePackages or manifest.bundles to provide linux-modules-extra for the target kernel")
 }
 
 func manifestDeclaresDeploymentTarget(manifest *Manifest, target DeploymentTarget) bool {
