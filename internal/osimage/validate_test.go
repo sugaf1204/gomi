@@ -130,6 +130,22 @@ func TestValidateOSImage_BareMetalCapabilityRequiresRootPartition(t *testing.T) 
 	}
 }
 
+func TestValidateOSImage_BareMetalSquashFSRequiresManifestRootPath(t *testing.T) {
+	img := validImage()
+	img.Format = FormatSquashFS
+	img.Manifest = &Manifest{
+		Capabilities: Capabilities{DeployTargets: []DeploymentTarget{DeploymentTargetBareMetal}},
+		Root:         RootArtifact{Format: FormatSquashFS},
+	}
+	if err := ValidateOSImage(img); err == nil || !strings.Contains(err.Error(), "manifest.root.path") {
+		t.Fatalf("expected bare-metal squashfs manifest path error, got %v", err)
+	}
+	img.Manifest.Root.Path = "rootfs.squashfs"
+	if err := ValidateOSImage(img); err != nil {
+		t.Fatalf("expected bare-metal squashfs image to validate, got %v", err)
+	}
+}
+
 func TestSupportsDeploymentTarget_ManifestCapabilitiesOverrideVariant(t *testing.T) {
 	img := validImage()
 	img.Variant = VariantBareMetal
@@ -142,5 +158,20 @@ func TestSupportsDeploymentTarget_ManifestCapabilitiesOverrideVariant(t *testing
 	}
 	if SupportsDeploymentTarget(img, DeploymentTargetBareMetal) {
 		t.Fatal("expected explicit capabilities to override baremetal variant")
+	}
+}
+
+func TestSupportsDeploymentTarget_SquashFSBareMetalOnly(t *testing.T) {
+	img := validImage()
+	img.Format = FormatSquashFS
+	img.Manifest = &Manifest{
+		Capabilities: Capabilities{DeployTargets: []DeploymentTarget{DeploymentTargetBareMetal}},
+		Root:         RootArtifact{Format: FormatSquashFS, Path: "rootfs.squashfs"},
+	}
+	if !SupportsDeploymentTarget(img, DeploymentTargetBareMetal) {
+		t.Fatal("expected squashfs bare-metal capability to be supported")
+	}
+	if SupportsDeploymentTarget(img, DeploymentTargetVM) {
+		t.Fatal("squashfs image must not be treated as VM-capable")
 	}
 }

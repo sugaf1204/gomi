@@ -101,11 +101,14 @@ func (h *Handler) PXEInventory(c echo.Context) error {
 		if err != nil {
 			return c.JSON(gohttp.StatusNotFound, jsonError(fmt.Sprintf("os image %q not found: %v", target.OSPreset.ImageRef, err)))
 		}
-		if rootImageFormat(img) != osimage.FormatQCOW2 {
-			return c.JSON(gohttp.StatusConflict, jsonError(fmt.Sprintf("bare-metal deploy requires qcow2 OS image, got %s", rootImageFormat(img))))
-		}
 		if !osimage.SupportsDeploymentTarget(img, osimage.DeploymentTargetBareMetal) {
 			return c.JSON(gohttp.StatusConflict, jsonError(fmt.Sprintf("os image %q does not support bare-metal deployment", target.OSPreset.ImageRef)))
+		}
+		if rootImageFormat(img) == osimage.FormatSquashFS {
+			return c.JSON(gohttp.StatusOK, response)
+		}
+		if rootImageFormat(img) != osimage.FormatQCOW2 {
+			return c.JSON(gohttp.StatusConflict, jsonError(fmt.Sprintf("bare-metal deploy requires qcow2 or squashfs OS image, got %s", rootImageFormat(img))))
 		}
 		deploy, err := h.buildDiskImageDeployResponse(base, token, attemptID, target, img, &info)
 		if err != nil {
