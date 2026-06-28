@@ -177,7 +177,7 @@ func TestValidateOSImage_UbuntuBareMetalQCOW2MatchesKernelExtraModulesToTargetKe
 	}
 }
 
-func TestValidateOSImage_UbuntuBareMetalQCOW2AcceptsKernelModuleBundle(t *testing.T) {
+func TestValidateOSImage_UbuntuBareMetalQCOW2RejectsKernelModuleBundleOnly(t *testing.T) {
 	img := validImage()
 	img.Manifest = &Manifest{
 		Capabilities: Capabilities{DeployTargets: []DeploymentTarget{DeploymentTargetBareMetal}},
@@ -197,13 +197,27 @@ func TestValidateOSImage_UbuntuBareMetalQCOW2AcceptsKernelModuleBundle(t *testin
 			},
 		},
 	}
-	if err := ValidateOSImage(img); err != nil {
-		t.Fatalf("expected target-kernel module bundle to validate, got %v", err)
+	if err := ValidateOSImage(img); err == nil || !strings.Contains(err.Error(), "target kernel") {
+		t.Fatalf("expected bundle-only module metadata to be rejected, got %v", err)
+	}
+}
+
+func TestValidateOSImage_UbuntuBareMetalQCOW2RequiresKernelExtraModulesWhenBareMetalIsInferred(t *testing.T) {
+	img := validImage()
+	img.Manifest = &Manifest{
+		Root: RootArtifact{
+			Format:        FormatQCOW2,
+			Path:          "root.qcow2",
+			RootPartition: Partition{Number: 1},
+		},
+	}
+	if err := ValidateOSImage(img); err == nil || !strings.Contains(err.Error(), "linux-modules-extra") {
+		t.Fatalf("expected inferred bare-metal module package error, got %v", err)
 	}
 
-	img.Manifest.Bundles[0].KernelVersion = "6.8.0-123-generic"
-	if err := ValidateOSImage(img); err == nil || !strings.Contains(err.Error(), "target kernel") {
-		t.Fatalf("expected stale module bundle to be rejected, got %v", err)
+	img.Manifest.Build.ModulePackages = []string{"linux-modules-extra-{kernel_release}"}
+	if err := ValidateOSImage(img); err != nil {
+		t.Fatalf("expected inferred bare-metal module package metadata to validate, got %v", err)
 	}
 }
 

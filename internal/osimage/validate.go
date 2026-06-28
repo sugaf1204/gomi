@@ -53,7 +53,7 @@ func ValidateOSImage(img OSImage) error {
 	if img.Source == SourceURL && strings.TrimSpace(img.URL) == "" {
 		return errors.New("url is required for url source")
 	}
-	if format == FormatQCOW2 && (img.Variant == VariantBareMetal || manifestDeclaresDeploymentTarget(img.Manifest, DeploymentTargetBareMetal)) {
+	if format == FormatQCOW2 && SupportsDeploymentTarget(img, DeploymentTargetBareMetal) {
 		if img.Manifest == nil || strings.TrimSpace(img.Manifest.Root.Path) == "" {
 			return errors.New("manifest.root.path is required for bare-metal qcow2 images")
 		}
@@ -89,25 +89,7 @@ func validateBareMetalQCOW2ModuleMetadata(img OSImage) error {
 			return nil
 		}
 	}
-	for _, bundle := range img.Manifest.Bundles {
-		if !strings.EqualFold(strings.TrimSpace(bundle.Type), "kernel-modules") {
-			continue
-		}
-		if strings.TrimSpace(bundle.Path) == "" || len(bundle.ProvidesModules) == 0 {
-			continue
-		}
-		bundleKernelVersion := strings.TrimSpace(bundle.KernelVersion)
-		if targetKernelVersion != "" {
-			if bundleKernelVersion == targetKernelVersion {
-				return nil
-			}
-			continue
-		}
-		if bundleKernelVersion != "" {
-			return nil
-		}
-	}
-	return errors.New("ubuntu bare-metal qcow2 images require manifest.build.modulePackages or manifest.bundles to provide linux-modules-extra for the target kernel")
+	return errors.New("ubuntu bare-metal qcow2 images require manifest.build.modulePackages to provide linux-modules-extra for the target kernel")
 }
 
 func ubuntuRequiresBareMetalExtraModules(version string) bool {
