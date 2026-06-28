@@ -59,6 +59,9 @@ func ValidateOSImage(img OSImage) error {
 		if img.Manifest.Root.RootPartition.Number <= 0 {
 			return errors.New("manifest.root.rootPartition.number is required for bare-metal qcow2 images")
 		}
+		if err := validateBareMetalQCOW2ModuleMetadata(img); err != nil {
+			return err
+		}
 	}
 	if format == FormatSquashFS && manifestDeclaresDeploymentTarget(img.Manifest, DeploymentTargetBareMetal) {
 		if img.Manifest == nil || strings.TrimSpace(img.Manifest.Root.Path) == "" {
@@ -66,6 +69,19 @@ func ValidateOSImage(img OSImage) error {
 		}
 	}
 	return nil
+}
+
+func validateBareMetalQCOW2ModuleMetadata(img OSImage) error {
+	if img.Manifest == nil || !strings.EqualFold(strings.TrimSpace(img.OSFamily), "ubuntu") {
+		return nil
+	}
+	for _, pkg := range img.Manifest.Build.ModulePackages {
+		pkg = strings.TrimSpace(pkg)
+		if strings.HasPrefix(pkg, "linux-modules-extra-") {
+			return nil
+		}
+	}
+	return errors.New("ubuntu bare-metal qcow2 images require manifest.build.modulePackages to include linux-modules-extra for the target kernel")
 }
 
 func manifestDeclaresDeploymentTarget(manifest *Manifest, target DeploymentTarget) bool {

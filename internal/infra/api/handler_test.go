@@ -142,6 +142,9 @@ func bareMetalQCOW2Manifest() map[string]any {
 				"number": 1,
 			},
 		},
+		"build": map[string]any{
+			"modulePackages": []string{"linux-modules-extra-{kernel_release}"},
+		},
 	}
 }
 

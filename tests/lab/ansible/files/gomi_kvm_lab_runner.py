@@ -944,22 +944,28 @@ class LabRunner:
             if image_format == "qcow2":
                 local_path = self.download_disk_image(image)
                 root_path = str(image.get("artifact_path") or "root.qcow2").lstrip("/")
+                manifest = {
+                    "capabilities": {
+                        "deployTargets": ["baremetal"],
+                    },
+                    "root": {
+                        "format": "qcow2",
+                        "path": root_path,
+                        "rootPartition": {
+                            "number": int(image.get("root_partition_number") or 1),
+                        },
+                    },
+                }
+                module_packages = image.get("module_packages") or image.get("modulePackages") or []
+                if module_packages:
+                    manifest["build"] = {
+                        "modulePackages": module_packages,
+                    }
                 self.ensure_os_image_registered(
                     image,
                     local_path,
                     "qcow2",
-                    manifest={
-                        "capabilities": {
-                            "deployTargets": ["baremetal"],
-                        },
-                        "root": {
-                            "format": "qcow2",
-                            "path": root_path,
-                            "rootPartition": {
-                                "number": int(image.get("root_partition_number") or 1),
-                            },
-                        },
-                    },
+                    manifest=manifest,
                 )
                 continue
             if image_format != "squashfs":
