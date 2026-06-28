@@ -19,6 +19,7 @@ func TestCreateMachine_ResolveOSPresetFromImage(t *testing.T) {
 		"arch":      "amd64",
 		"format":    "qcow2",
 		"source":    "upload",
+		"manifest":  bareMetalQCOW2Manifest(),
 	}
 	rec := doRequest(env.echo, http.MethodPost, "/api/v1/os-images", imgBody, env.token)
 	requireStatus(t, rec, http.StatusCreated)
@@ -67,6 +68,47 @@ func TestCreateMachine_ResolveOSPresetFromImage(t *testing.T) {
 	}
 }
 
+func TestCreateMachine_RejectsImageWithoutBareMetalSupport(t *testing.T) {
+	env := setupTestEnv(t)
+
+	rec := doRequest(env.echo, http.MethodPost, "/api/v1/os-images", map[string]any{
+		"name":      "ubuntu-cloud-only",
+		"osFamily":  "ubuntu",
+		"osVersion": "24.04",
+		"arch":      "amd64",
+		"format":    "qcow2",
+		"source":    "upload",
+		"variant":   "cloud",
+		"manifest": map[string]any{
+			"capabilities": map[string]any{
+				"deployTargets": []string{"vm"},
+			},
+		},
+	}, env.token)
+	requireStatus(t, rec, http.StatusCreated)
+
+	rec = doRequest(env.echo, http.MethodPost, "/api/v1/machines", map[string]any{
+		"name":     "machine-cloud-only",
+		"hostname": "machine-cloud-only",
+		"mac":      "52:54:00:aa:cc:01",
+		"arch":     "amd64",
+		"firmware": "uefi",
+		"power":    map[string]any{"type": "manual"},
+		"osPreset": map[string]any{
+			"family":   "ubuntu",
+			"version":  "24.04",
+			"imageRef": "ubuntu-cloud-only",
+		},
+	}, env.token)
+	requireStatus(t, rec, http.StatusBadRequest)
+
+	body := parseBody(t, rec)
+	errMsg, _ := body["error"].(string)
+	if !strings.Contains(errMsg, "does not support bare-metal deployment") {
+		t.Fatalf("expected bare-metal support error, got: %s", errMsg)
+	}
+}
+
 func TestMachineAPIResponsesRedactSensitiveFields(t *testing.T) {
 	env := setupTestEnv(t)
 
@@ -77,6 +119,7 @@ func TestMachineAPIResponsesRedactSensitiveFields(t *testing.T) {
 		"arch":      "amd64",
 		"format":    "qcow2",
 		"source":    "upload",
+		"manifest":  bareMetalQCOW2Manifest(),
 	}, env.token)
 	requireStatus(t, rec, http.StatusCreated)
 

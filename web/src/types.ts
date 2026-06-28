@@ -275,7 +275,7 @@ export type OSImage = {
   osFamily: string
   osVersion: string
   arch: string
-  format: 'qcow2'
+  format: 'qcow2' | 'squashfs'
   variant?: 'cloud' | 'baremetal' | 'server' | 'desktop'
   source: 'upload' | 'url'
   url?: string
@@ -305,7 +305,7 @@ export type OSImageManifest = {
     defaultUser?: string
   }
   root?: {
-    format?: 'qcow2'
+    format?: 'qcow2' | 'squashfs'
     path?: string
     compression?: string
     sha256?: string

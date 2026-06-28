@@ -19,6 +19,7 @@ func TestReportMachinePowerEvent_StoresSignedAuditEvent(t *testing.T) {
 		"arch":      "amd64",
 		"format":    "qcow2",
 		"source":    "upload",
+		"manifest":  bareMetalQCOW2Manifest(),
 	}, env.token)
 	requireStatus(t, rec, http.StatusCreated)
 
@@ -94,6 +95,7 @@ func TestReportMachinePowerEvent_RejectsSignatureMismatch(t *testing.T) {
 		"arch":      "amd64",
 		"format":    "qcow2",
 		"source":    "upload",
+		"manifest":  bareMetalQCOW2Manifest(),
 	}, env.token)
 	requireStatus(t, rec, http.StatusCreated)
 

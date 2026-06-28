@@ -949,6 +949,9 @@ class LabRunner:
                     local_path,
                     "qcow2",
                     manifest={
+                        "capabilities": {
+                            "deployTargets": ["baremetal"],
+                        },
                         "root": {
                             "format": "qcow2",
                             "path": root_path,
@@ -967,6 +970,9 @@ class LabRunner:
                 local_path,
                 "squashfs",
                 manifest={
+                    "capabilities": {
+                        "deployTargets": ["baremetal"],
+                    },
                     "root": {
                         "format": "squashfs",
                         "path": "rootfs.squashfs",
@@ -1168,7 +1174,7 @@ class LabRunner:
 
         return wait_for(f"machine ready {name}", timeout=1800, interval=5, fn=probe)
 
-    def verify_target(self, ip_addr: str, login_user: str) -> dict[str, str]:
+    def verify_target(self, ip_addr: str, login_user: str, image: dict[str, Any]) -> dict[str, str]:
         module_checks = ""
         for module in self.config.get("required_kernel_modules", []):
             module_name = str(module).strip()
@@ -1182,6 +1188,16 @@ class LabRunner:
                 f"find /lib/modules/$(uname -r) -name '{module_name}.ko*' -print -quit 2>/dev/null | grep -q .; then "
                 f"printf '{key}=present\\n'; else printf '{key}=missing\\n'; fi; "
             )
+        desktop_checks = ""
+        if image.get("desktop_checks") or image.get("variant") == "desktop":
+            desktop_checks = (
+                "if dpkg-query -W -f='${Status}' ubuntu-desktop-minimal 2>/dev/null | grep -q 'install ok installed'; then "
+                "printf 'DESKTOP_PACKAGE=present\\n'; else printf 'DESKTOP_PACKAGE=missing\\n'; fi; "
+                "if systemctl is-enabled gdm3 >/dev/null 2>&1 || systemctl is-enabled display-manager >/dev/null 2>&1; then "
+                "printf 'DISPLAY_MANAGER=enabled\\n'; else printf 'DISPLAY_MANAGER=missing\\n'; fi; "
+                "if systemctl is-active gdm3 >/dev/null 2>&1 || systemctl is-active display-manager >/dev/null 2>&1; then "
+                "printf 'DISPLAY_MANAGER_ACTIVE=active\\n'; else printf 'DISPLAY_MANAGER_ACTIVE=inactive\\n'; fi; "
+            )
         guest_cmd = (
             "set -euo pipefail; "
             "iface=$(ls /sys/class/net | grep -v '^lo$' | head -n1); "
@@ -1189,6 +1205,7 @@ class LabRunner:
             ". /etc/os-release; "
             "printf 'VERSION_ID=%s\\nDRIVER=%s\\nIFACE=%s\\n' \"$VERSION_ID\" \"$driver\" \"$iface\""
             + ("; " + module_checks if module_checks else "")
+            + ("; " + desktop_checks if desktop_checks else "")
         )
         ssh_cmd = (
             "ssh -i /opt/gomi-lab/target_key -o BatchMode=yes "
@@ -1239,7 +1256,7 @@ class LabRunner:
             f"target ssh {name}",
             timeout=900,
             interval=10,
-            fn=lambda: self.verify_target(machine["ip"], login_user),
+            fn=lambda: self.verify_target(machine["ip"], login_user, image),
         )
 
         status = "passed"
@@ -1273,6 +1290,20 @@ class LabRunner:
                 status = "failed"
                 notes.append(f"kernel module {module_name} is {state}")
 
+        desktop = {}
+        if image.get("desktop_checks") or image.get("variant") == "desktop":
+            desktop = {
+                "package": verification.get("DESKTOP_PACKAGE", ""),
+                "display_manager": verification.get("DISPLAY_MANAGER", ""),
+                "display_manager_active": verification.get("DISPLAY_MANAGER_ACTIVE", ""),
+            }
+            if desktop["package"] != "present":
+                status = "failed"
+                notes.append("ubuntu-desktop-minimal package is not installed")
+            if desktop["display_manager"] != "enabled":
+                status = "failed"
+                notes.append("display manager is not enabled")
+
         result = {
             "name": name,
             "mac": mac,
@@ -1286,6 +1317,7 @@ class LabRunner:
             "actual_driver": verification.get("DRIVER", ""),
             "iface": verification.get("IFACE", ""),
             "kernel_modules": kernel_modules,
+            "desktop": desktop,
             "notes": notes,
         }
         try:

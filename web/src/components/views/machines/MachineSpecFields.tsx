@@ -78,7 +78,7 @@ export function MachineSpecFields({ formState, updateForm, radioName, osImages, 
         }}>
           <option value="">None</option>
           {osImages.filter((img) => supportsDeploymentTarget(img, 'baremetal')).map((img) => (
-            <option key={img.name} value={img.name}>{img.name} ({img.osFamily} {img.osVersion})</option>
+            <option key={img.name} value={img.name}>{img.name} ({img.osFamily} {img.osVersion}{img.variant ? ` ${img.variant}` : ''})</option>
           ))}
         </select>
       </label>

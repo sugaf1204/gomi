@@ -11,13 +11,17 @@ func renderPXEInstallScriptWithVariant(base string, installType vm.InstallConfig
 	if _, ok := n.(*machine.Machine); ok {
 		profiles = defaultBareMetalPXEBootScriptProfiles
 	}
+	serialConsole := envBool("GOMI_PXE_SERIAL_CONSOLE")
+	if osImageVariantIsDesktop(variant) {
+		serialConsole = false
+	}
 	return profiles.Script(installType, pxeBootScriptContext{
 		baseURL:            base,
 		mac:                mac,
 		bootIF:             bootIFParam(mac),
 		installCompleteURL: completeURL,
 		variant:            variant,
-		serialConsole:      envBool("GOMI_PXE_SERIAL_CONSOLE"),
+		serialConsole:      serialConsole,
 	})
 }
 

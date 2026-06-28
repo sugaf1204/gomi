@@ -538,7 +538,7 @@ class ApiClient {
       .then(fromApiOSImage)
   }
 
-  createOSImage(data: { name: string; osFamily: string; osVersion: string; arch: string; format: string; source: string; url?: string; checksum?: string }) {
+  createOSImage(data: { name: string; osFamily: string; osVersion: string; arch: string; format: string; source: string; variant?: OSImage['variant']; manifest?: OSImage['manifest']; url?: string; checksum?: string }) {
     return this.request<NamedApi<OSImage, 'osImageId'>>('/os-images', {
       method: 'POST',
       body: JSON.stringify(data)

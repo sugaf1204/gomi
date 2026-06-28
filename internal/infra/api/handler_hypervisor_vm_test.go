@@ -163,18 +163,38 @@ func TestVirtualMachineCRUD(t *testing.T) {
 		t.Fatalf("expected provisioning.completionToken to be redacted, got %v", provisioning)
 	}
 
-	unsupportedBody := map[string]any{
+	bareMetalSquashFSBody := map[string]any{
 		"name":      "ubuntu-22.04-baremetal",
 		"osFamily":  "ubuntu",
 		"osVersion": "22.04",
 		"arch":      "amd64",
 		"format":    "squashfs",
 		"source":    "upload",
+		"manifest": map[string]any{
+			"capabilities": map[string]any{
+				"deployTargets": []string{"baremetal"},
+			},
+			"root": map[string]any{
+				"format": "squashfs",
+				"path":   "rootfs.squashfs",
+			},
+		},
 	}
-	rec = doRequest(env.echo, http.MethodPost, "/api/v1/os-images", unsupportedBody, env.token)
+	rec = doRequest(env.echo, http.MethodPost, "/api/v1/os-images", bareMetalSquashFSBody, env.token)
+	requireStatus(t, rec, http.StatusCreated)
+	rec = doRequest(env.echo, http.MethodPost, "/api/v1/virtual-machines", map[string]any{
+		"name":          "vm-baremetal-squashfs",
+		"hypervisorRef": "hv-for-vm",
+		"resources": map[string]any{
+			"cpuCores": 1,
+			"memoryMB": 1024,
+			"diskGB":   10,
+		},
+		"osImageRef": "ubuntu-22.04-baremetal",
+	}, env.token)
 	requireStatus(t, rec, http.StatusBadRequest)
-	if !strings.Contains(rec.Body.String(), "unsupported format: squashfs") {
-		t.Fatalf("expected unsupported squashfs validation error, got: %s", rec.Body.String())
+	if !strings.Contains(rec.Body.String(), "cloudimage deployment requires qcow2 OS image") {
+		t.Fatalf("expected VM qcow2 validation error, got: %s", rec.Body.String())
 	}
 
 	bareMetalQCOW2Body := map[string]any{

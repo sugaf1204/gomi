@@ -112,6 +112,8 @@ func TestPXEBootScript_CurtinInitrdForLinuxMachineProvisioning(t *testing.T) {
 }
 
 func TestPXEBootScript_DesktopMachineStillUsesArtifactCurtinPath(t *testing.T) {
+	t.Setenv("GOMI_PXE_SERIAL_CONSOLE", "true")
+
 	backend := memory.New()
 	machineSvc := machine.NewService(backend.Machines())
 	osImageSvc := osimage.NewService(backend.OSImages())
@@ -187,5 +189,8 @@ func TestPXEBootScript_DesktopMachineStillUsesArtifactCurtinPath(t *testing.T) {
 	}
 	if strings.Contains(body, "ubuntu.iso") {
 		t.Fatalf("desktop machine must not reference ISO deploy path, got: %s", body)
+	}
+	if strings.Contains(body, "console=ttyS0") {
+		t.Fatalf("desktop machine must not force serial console, got: %s", body)
 	}
 }

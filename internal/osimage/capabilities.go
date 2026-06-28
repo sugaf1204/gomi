@@ -20,15 +20,19 @@ func SupportsDeploymentTarget(img OSImage, target DeploymentTarget) bool {
 	case DeploymentTargetVM:
 		return format == FormatQCOW2 && (img.Variant == "" || img.Variant == VariantCloud)
 	case DeploymentTargetBareMetal:
-		if format != FormatQCOW2 {
+		switch format {
+		case FormatQCOW2:
+			if img.Variant == VariantBareMetal {
+				return true
+			}
+			return img.Manifest != nil &&
+				strings.TrimSpace(img.Manifest.Root.Path) != "" &&
+				img.Manifest.Root.RootPartition.Number > 0
+		case FormatSquashFS:
+			return img.Manifest != nil && strings.TrimSpace(img.Manifest.Root.Path) != ""
+		default:
 			return false
 		}
-		if img.Variant == VariantBareMetal {
-			return true
-		}
-		return img.Manifest != nil &&
-			strings.TrimSpace(img.Manifest.Root.Path) != "" &&
-			img.Manifest.Root.RootPartition.Number > 0
 	default:
 		return false
 	}

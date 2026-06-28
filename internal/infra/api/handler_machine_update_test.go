@@ -16,6 +16,7 @@ func TestRedeployMachine_UpdatesSpecAndNetwork(t *testing.T) {
 		"arch":      "amd64",
 		"format":    "qcow2",
 		"source":    "upload",
+		"manifest":  bareMetalQCOW2Manifest(),
 	}, env.token)
 	requireStatus(t, rec, http.StatusCreated)
 
@@ -26,6 +27,7 @@ func TestRedeployMachine_UpdatesSpecAndNetwork(t *testing.T) {
 		"arch":      "amd64",
 		"format":    "qcow2",
 		"source":    "upload",
+		"manifest":  bareMetalQCOW2Manifest(),
 	}, env.token)
 	requireStatus(t, rec, http.StatusCreated)
 
@@ -169,6 +171,7 @@ func TestUpdateMachineSettings_PreservesWoLGeneratedFields(t *testing.T) {
 		"arch":      "amd64",
 		"format":    "qcow2",
 		"source":    "upload",
+		"manifest":  bareMetalQCOW2Manifest(),
 	}, env.token)
 	requireStatus(t, rec, http.StatusCreated)
 
@@ -245,6 +248,7 @@ func TestRedeployMachine_PreservesWoLGeneratedFieldsOnPowerOverride(t *testing.T
 		"arch":      "amd64",
 		"format":    "qcow2",
 		"source":    "upload",
+		"manifest":  bareMetalQCOW2Manifest(),
 	}, env.token)
 	requireStatus(t, rec, http.StatusCreated)
 
@@ -319,6 +323,7 @@ func TestUpdateMachineSettings_PreservesIPMIPasswordWhenOmitted(t *testing.T) {
 		"arch":      "amd64",
 		"format":    "qcow2",
 		"source":    "upload",
+		"manifest":  bareMetalQCOW2Manifest(),
 	}, env.token)
 	requireStatus(t, rec, http.StatusCreated)
 
@@ -383,6 +388,7 @@ func TestUpdateMachineSettings_PreservesAndClearsWebhookHiddenMaps(t *testing.T)
 		"arch":      "amd64",
 		"format":    "qcow2",
 		"source":    "upload",
+		"manifest":  bareMetalQCOW2Manifest(),
 	}, env.token)
 	requireStatus(t, rec, http.StatusCreated)
 
