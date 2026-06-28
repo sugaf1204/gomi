@@ -207,6 +207,22 @@ func TestValidateOSImage_UbuntuBareMetalQCOW2AcceptsKernelModuleBundle(t *testin
 	}
 }
 
+func TestValidateOSImage_UbuntuBareMetalQCOW2DoesNotRequireExtraModulesFor2510AndLater(t *testing.T) {
+	img := validImage()
+	img.OSVersion = "26.04"
+	img.Manifest = &Manifest{
+		Capabilities: Capabilities{DeployTargets: []DeploymentTarget{DeploymentTargetBareMetal}},
+		Root: RootArtifact{
+			Format:        FormatQCOW2,
+			Path:          "root.qcow2",
+			RootPartition: Partition{Number: 1},
+		},
+	}
+	if err := ValidateOSImage(img); err != nil {
+		t.Fatalf("expected ubuntu 26.04 bare-metal qcow2 image to validate without extra modules package, got %v", err)
+	}
+}
+
 func TestValidateOSImage_DebianBareMetalQCOW2DoesNotRequireUbuntuModulePackage(t *testing.T) {
 	img := validImage()
 	img.OSFamily = "debian"

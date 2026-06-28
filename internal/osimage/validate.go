@@ -3,6 +3,7 @@ package osimage
 import (
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 )
 
@@ -75,6 +76,9 @@ func validateBareMetalQCOW2ModuleMetadata(img OSImage) error {
 	if img.Manifest == nil || !strings.EqualFold(strings.TrimSpace(img.OSFamily), "ubuntu") {
 		return nil
 	}
+	if !ubuntuRequiresBareMetalExtraModules(img.OSVersion) {
+		return nil
+	}
 	targetKernelVersion := strings.TrimSpace(img.Manifest.TargetKernel.Version)
 	for _, pkg := range img.Manifest.Build.ModulePackages {
 		pkg = strings.TrimSpace(pkg)
@@ -104,6 +108,30 @@ func validateBareMetalQCOW2ModuleMetadata(img OSImage) error {
 		}
 	}
 	return errors.New("ubuntu bare-metal qcow2 images require manifest.build.modulePackages or manifest.bundles to provide linux-modules-extra for the target kernel")
+}
+
+func ubuntuRequiresBareMetalExtraModules(version string) bool {
+	major, minor, ok := parseMajorMinorVersion(version)
+	if !ok {
+		return true
+	}
+	return major < 25 || (major == 25 && minor < 10)
+}
+
+func parseMajorMinorVersion(version string) (int, int, bool) {
+	parts := strings.Split(strings.TrimSpace(version), ".")
+	if len(parts) < 2 {
+		return 0, 0, false
+	}
+	major, err := strconv.Atoi(parts[0])
+	if err != nil {
+		return 0, 0, false
+	}
+	minor, err := strconv.Atoi(parts[1])
+	if err != nil {
+		return 0, 0, false
+	}
+	return major, minor, true
 }
 
 func manifestDeclaresDeploymentTarget(manifest *Manifest, target DeploymentTarget) bool {
