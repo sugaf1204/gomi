@@ -57,6 +57,9 @@ func (h *Handler) serveProvisionedPXEFile(c echo.Context, full, name, message st
 	if c.Request().Method == gohttp.MethodHead {
 		return c.File(full)
 	}
+	if strings.TrimSpace(c.Request().Header.Get("Range")) != "" {
+		return c.File(full)
+	}
 	sizeBytes := int64(0)
 	if st, err := os.Stat(full); err == nil {
 		sizeBytes = st.Size()

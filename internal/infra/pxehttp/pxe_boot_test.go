@@ -153,6 +153,27 @@ func TestPXEFileRecordsProvisionedTransferTiming(t *testing.T) {
 	if len(stored.Provision.Timings) != 1 {
 		t.Fatalf("HEAD probe must not add transfer timing, got %#v", stored.Provision.Timings)
 	}
+
+	req = httptest.NewRequest(http.MethodGet, "/pxe/files/images/rootfs.squashfs?attempt_id=attempt-transfer&token=token-transfer", nil)
+	req.Header.Set("Range", "bytes=0-1")
+	rec = httptest.NewRecorder()
+	c = e.NewContext(req, rec)
+	c.SetParamNames("*")
+	c.SetParamValues("images/rootfs.squashfs")
+
+	if err := h.PXEFile(c); err != nil {
+		t.Fatalf("PXEFile range GET: %v", err)
+	}
+	if rec.Code != http.StatusPartialContent {
+		t.Fatalf("unexpected range GET status: %d body=%s", rec.Code, rec.Body.String())
+	}
+	stored, err = backend.Machines().Get(context.Background(), target.Name)
+	if err != nil {
+		t.Fatalf("get machine after range GET: %v", err)
+	}
+	if len(stored.Provision.Timings) != 1 {
+		t.Fatalf("Range GET probe must not add transfer timing, got %#v", stored.Provision.Timings)
+	}
 }
 
 func TestSanitizePXEPath(t *testing.T) {
@@ -201,8 +222,8 @@ func TestPXEBootScript_LocalBootWhenVMNotProvisioning(t *testing.T) {
 	}
 	body := rec.Body.String()
 	if !strings.Contains(body, "iseq ${platform} efi && goto local_efi || goto local_bios") ||
-		!strings.Contains(body, "sanboot --no-describe --drive 0 || exit 1") {
-		t.Fatalf("expected UEFI local boot to use arch-neutral sanboot with firmware fallback, got: %s", body)
+		!strings.Contains(body, ":local_efi\nexit\n") {
+		t.Fatalf("expected UEFI local boot to exit back to firmware, got: %s", body)
 	}
 	if strings.Contains(body, "BOOTX64.EFI") {
 		t.Fatalf("UEFI local boot must not force an x86-only EFI filename, got: %s", body)
@@ -234,8 +255,8 @@ func TestPXEBootScript_LocalBootWhenNoProvisioningTarget(t *testing.T) {
 	}
 	body := rec.Body.String()
 	if !strings.Contains(body, "iseq ${platform} efi && goto local_efi || goto local_bios") ||
-		!strings.Contains(body, "sanboot --no-describe --drive 0 || exit 1") {
-		t.Fatalf("expected UEFI local boot to use arch-neutral sanboot with firmware fallback, got: %s", body)
+		!strings.Contains(body, ":local_efi\nexit\n") {
+		t.Fatalf("expected UEFI local boot to exit back to firmware, got: %s", body)
 	}
 	if strings.Contains(body, "BOOTX64.EFI") {
 		t.Fatalf("UEFI local boot must not force an x86-only EFI filename, got: %s", body)
@@ -347,8 +368,8 @@ func TestPXEBootScript_CurtinForUbuntuVMUsesLocalBootScript(t *testing.T) {
 
 	body := rec.Body.String()
 	if !strings.Contains(body, "iseq ${platform} efi && goto local_efi || goto local_bios") ||
-		!strings.Contains(body, "sanboot --no-describe --drive 0 || exit 1") {
-		t.Fatalf("expected UEFI local boot to use arch-neutral sanboot with firmware fallback for curtin, got: %s", body)
+		!strings.Contains(body, ":local_efi\nexit\n") {
+		t.Fatalf("expected UEFI local boot to exit back to firmware for curtin, got: %s", body)
 	}
 	if strings.Contains(body, "BOOTX64.EFI") {
 		t.Fatalf("UEFI local boot must not force an x86-only EFI filename for curtin, got: %s", body)

@@ -166,8 +166,8 @@ func TestPXEDeployEvents_ImageAppliedLocalBootsAndConfiguresBIOSBootOrder(t *tes
 	}
 	body := bootRec.Body.String()
 	if !strings.Contains(body, "iseq ${platform} efi && goto local_efi || goto local_bios") ||
-		!strings.Contains(body, "sanboot --no-describe --drive 0 || exit 1") {
-		t.Fatalf("expected local arch-neutral sanboot script after image_applied, got: %s", body)
+		!strings.Contains(body, ":local_efi\nexit\n") {
+		t.Fatalf("expected UEFI local boot to exit back to firmware after image_applied, got: %s", body)
 	}
 	if strings.Contains(body, "BOOTX64.EFI") {
 		t.Fatalf("UEFI local boot must not force an x86-only EFI filename after image_applied, got: %s", body)
