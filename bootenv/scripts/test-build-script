@@ -57,7 +57,7 @@ grep -q 'PTTYPE' "$runner" || fail "deploy runner does not detect partition tabl
 grep -q "sgdisk -e \"\\\$disk\"" "$runner" || fail "deploy runner does not use sgdisk GPT repair"
 grep -q 'runner.repair_partition_table' "$runner" || fail "deploy runner does not report partition table repair timing"
 grep -q 'invalidate_target_disk_boot_metadata' "$runner" || fail "deploy runner does not invalidate target disk before image write"
-grep -q 'wipefs -a "$disk"' "$runner" || fail "deploy runner does not wipe old target disk signatures"
+grep -q "wipefs -a \"\\\$disk\"" "$runner" || fail "deploy runner does not wipe old target disk signatures"
 grep -q 'runner.invalidate_target_disk' "$runner" || fail "deploy runner does not report target disk invalidation timing"
 grep -q 'resize_root_filesystem' "$runner" || fail "deploy runner does not resize root filesystem"
 grep -q "parted -s \"\\\$disk\" resizepart" "$runner" || fail "deploy runner does not grow target root partition"

@@ -1,3 +1,10 @@
+gomi (0.0.29) unstable; urgency=medium
+
+  * Reissue the UEFI local boot and boot environment diagnostics release with
+    the boot environment release lint check fixed.
+
+ -- sugaf1204 <sugaf1204@example.invalid>  Wed, 01 Jul 2026 21:59:32 +0900
+
 gomi (0.0.28) unstable; urgency=medium
 
   * Fix UEFI local boot handoff after provisioning.
