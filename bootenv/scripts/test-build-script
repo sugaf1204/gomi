@@ -56,6 +56,9 @@ grep -q 'repair_partition_table' "$runner" || fail "deploy runner does not repai
 grep -q 'PTTYPE' "$runner" || fail "deploy runner does not detect partition table type"
 grep -q "sgdisk -e \"\\\$disk\"" "$runner" || fail "deploy runner does not use sgdisk GPT repair"
 grep -q 'runner.repair_partition_table' "$runner" || fail "deploy runner does not report partition table repair timing"
+grep -q 'invalidate_target_disk_boot_metadata' "$runner" || fail "deploy runner does not invalidate target disk before image write"
+grep -q 'wipefs -a "$disk"' "$runner" || fail "deploy runner does not wipe old target disk signatures"
+grep -q 'runner.invalidate_target_disk' "$runner" || fail "deploy runner does not report target disk invalidation timing"
 grep -q 'resize_root_filesystem' "$runner" || fail "deploy runner does not resize root filesystem"
 grep -q "parted -s \"\\\$disk\" resizepart" "$runner" || fail "deploy runner does not grow target root partition"
 grep -q "resize2fs \"\\\$root_device\"" "$runner" || fail "deploy runner does not grow ext root filesystems"
@@ -88,5 +91,13 @@ require_package() {
 
 require_package rsync
 require_package sudo
+require_package openssh-server
 require_package gdisk
 require_package linux-image-generic-hwe-22.04
+
+grep -q 'configure_debug_login' "$script" || fail "debug login configuration is missing"
+grep -q 'useradd -m -s /bin/bash -G sudo ubuntu' "$script" || fail "debug login user is not created"
+grep -q 'ubuntu:ubuntu' "$script" || fail "debug login password is not configured"
+grep -q 'PasswordAuthentication yes' "$script" || fail "debug SSH password login is not enabled"
+grep -q 'systemctl enable ssh.service' "$script" || fail "debug SSH service is not enabled"
+grep -q 'systemctl enable getty@tty1.service' "$script" || fail "debug console getty is not enabled"

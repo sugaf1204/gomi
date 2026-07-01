@@ -99,6 +99,19 @@ repair_partition_table() {
   udevadm settle || true
 }
 
+invalidate_target_disk_boot_metadata() {
+  local disk="$1" size tail_seek
+  size="$(blockdev --getsize64 "$disk")" || return 1
+  wipefs -a "$disk" >/dev/null 2>&1 || true
+  dd if=/dev/zero of="$disk" bs=1M count=16 conv=fsync status=none || return 1
+  if [ "$size" -gt $((32 * 1024 * 1024)) ]; then
+    tail_seek=$(((size / 1024 / 1024) - 16))
+    dd if=/dev/zero of="$disk" bs=1M seek="$tail_seek" count=16 conv=fsync status=none || return 1
+  fi
+  partprobe "$disk" >/dev/null 2>&1 || true
+  udevadm settle || true
+}
+
 is_unsupported_ext_resize_error() {
   local log_file="$1"
   grep -qiE 'unsupported feature|has unsupported feature|unsupported filesystem feature|Get a newer version of e2fsck|Get a newer version of resize2fs' "$log_file"
@@ -300,6 +313,9 @@ if [ "$deploy_mode" = "disk-image" ]; then
   virtual_size="$(printf '%s\n' "$image_info" | jq -r '.["virtual-size"] // 0')"
   target_size="$(blockdev --getsize64 "$target_disk")"
   [ "$virtual_size" -le "$target_size" ] || fail "qcow2 virtual size exceeds target disk"
+  post_event progress "invalidating target disk boot metadata"
+  invalidate_target_disk_boot_metadata "$target_disk" || fail "target disk boot metadata invalidation failed"
+  post_timing runner.invalidate_target_disk "invalidated target disk boot metadata"
   post_event progress "writing qcow2 image to target disk"
   qemu-img convert -f qcow2 -O raw "$image_input" "$target_disk" || fail "qemu-img convert failed"
   post_timing runner.write_disk_image "wrote qcow2 image to target disk"

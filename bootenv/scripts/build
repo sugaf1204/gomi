@@ -142,6 +142,43 @@ GOMI_WORKFLOW_URL=http://gomi.local/workflows
 EOF
 }
 
+configure_debug_login() {
+  echo "configuring debug login user ubuntu/ubuntu in bootenv rootfs"
+
+  if ! sudo chroot "$rootfs" id ubuntu >/dev/null 2>&1; then
+    sudo chroot "$rootfs" useradd -m -s /bin/bash -G sudo ubuntu
+  fi
+  printf 'ubuntu:ubuntu\n' | sudo chroot "$rootfs" chpasswd
+
+  sudo install -d -m 0755 "$rootfs/etc/sudoers.d"
+  echo 'ubuntu ALL=(ALL) NOPASSWD:ALL' | sudo tee "$rootfs/etc/sudoers.d/90-gomi-debug-login" >/dev/null
+  sudo chmod 0440 "$rootfs/etc/sudoers.d/90-gomi-debug-login"
+
+  echo 'gomi-installer' | sudo tee "$rootfs/etc/hostname" >/dev/null
+  sudo tee "$rootfs/etc/hosts" >/dev/null <<'EOF'
+127.0.0.1 localhost
+127.0.1.1 gomi-installer
+EOF
+  sudo tee "$rootfs/etc/motd" >/dev/null <<'EOF'
+GOMI deploy runtime
+
+Debug login is enabled for provisioning diagnostics:
+  user: ubuntu
+  password: ubuntu
+EOF
+
+  sudo install -d -m 0755 "$rootfs/etc/ssh/sshd_config.d"
+  sudo tee "$rootfs/etc/ssh/sshd_config.d/90-gomi-debug-login.conf" >/dev/null <<'EOF'
+PasswordAuthentication yes
+KbdInteractiveAuthentication no
+PermitRootLogin no
+EOF
+
+  sudo chroot "$rootfs" systemctl enable ssh.service
+  sudo chroot "$rootfs" systemctl enable getty@tty1.service
+  sudo chroot "$rootfs" systemctl enable serial-getty@ttyS0.service
+}
+
 with_chroot_mounts() {
   sudo mount -t proc proc "$rootfs/proc"
   sudo mount -t sysfs sysfs "$rootfs/sys"
@@ -266,6 +303,7 @@ report_artifact_sizes() {
 }
 
 install_into_rootfs
+configure_debug_login
 with_chroot_mounts generate_initramfs
 
 kernel="$(find "$rootfs/boot" -maxdepth 1 -type f -name 'vmlinuz-*' | sort -V | tail -n 1)"
