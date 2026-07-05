@@ -2,6 +2,8 @@ package api
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	gohttp "net/http"
 	"strings"
@@ -47,9 +49,27 @@ func (s *Server) AuthMiddleware() echo.MiddlewareFunc {
 				}
 			}
 
+			tokenHash := serviceAccountTokenHash(tokenValue)
+			account, saErr := s.authStore.GetServiceAccountByTokenHash(c.Request().Context(), tokenHash)
+			if saErr == nil {
+				usedAt := time.Now().UTC()
+				_ = s.authStore.MarkServiceAccountUsed(c.Request().Context(), account.Name, tokenHash, usedAt)
+				c.Set(httputil.UserContextKey, auth.User{
+					Username: "serviceaccount:" + account.Name,
+					Role:     account.Role,
+				})
+				c.Set(httputil.AuthMethodContextKey, httputil.AuthMethodServiceAccount)
+				return next(c)
+			}
+
 			return c.JSON(gohttp.StatusUnauthorized, jsonError("invalid session"))
 		}
 	}
+}
+
+func serviceAccountTokenHash(token string) string {
+	sum := sha256.Sum256([]byte(strings.TrimSpace(token)))
+	return hex.EncodeToString(sum[:])
 }
 
 func (s *Server) authenticate(ctx context.Context, token string) (auth.User, error) {

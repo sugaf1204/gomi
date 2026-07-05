@@ -105,6 +105,44 @@ func TestAuthStore(t *testing.T) {
 		t.Errorf("expired session: got %v, want ErrNotFound", err)
 	}
 
+	// Service account
+	account := auth.ServiceAccount{Name: "automation", TokenHash: "hash1", Role: auth.RoleOperator, CreatedAt: now}
+	if err := s.UpsertServiceAccount(ctx, account); err != nil {
+		t.Fatalf("UpsertServiceAccount: %v", err)
+	}
+	gotAccount, err := s.GetServiceAccountByTokenHash(ctx, "hash1")
+	if err != nil {
+		t.Fatalf("GetServiceAccountByTokenHash: %v", err)
+	}
+	if gotAccount.Name != "automation" || gotAccount.Role != auth.RoleOperator {
+		t.Fatalf("unexpected service account: %#v", gotAccount)
+	}
+	usedAt := now.Add(time.Minute)
+	if err := s.MarkServiceAccountUsed(ctx, "automation", "hash1", usedAt); err != nil {
+		t.Fatalf("MarkServiceAccountUsed: %v", err)
+	}
+	gotAccount, err = s.GetServiceAccount(ctx, "automation")
+	if err != nil {
+		t.Fatalf("GetServiceAccount: %v", err)
+	}
+	if gotAccount.LastUsedAt == nil || !gotAccount.LastUsedAt.Equal(usedAt) {
+		t.Fatalf("LastUsedAt = %v, want %v", gotAccount.LastUsedAt, usedAt)
+	}
+	accounts, err := s.ListServiceAccounts(ctx)
+	if err != nil {
+		t.Fatalf("ListServiceAccounts: %v", err)
+	}
+	if len(accounts) != 1 {
+		t.Fatalf("service accounts len = %d, want 1", len(accounts))
+	}
+	if err := s.DeleteServiceAccount(ctx, "automation"); err != nil {
+		t.Fatalf("DeleteServiceAccount: %v", err)
+	}
+	_, err = s.GetServiceAccountByTokenHash(ctx, "hash1")
+	if !errors.Is(err, resource.ErrNotFound) {
+		t.Fatalf("GetServiceAccountByTokenHash after delete: got %v, want ErrNotFound", err)
+	}
+
 	// AuditEvent
 	event := auth.AuditEvent{
 		ID: "ev1", Machine: "srv1",

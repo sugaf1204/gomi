@@ -16,8 +16,9 @@ const (
 )
 
 const (
-	AuthMethodSession = "session"
-	AuthMethodAgent   = "agent"
+	AuthMethodSession        = "session"
+	AuthMethodAgent          = "agent"
+	AuthMethodServiceAccount = "service_account"
 )
 
 func UserFromContext(c echo.Context) (auth.User, bool) {

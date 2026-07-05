@@ -244,6 +244,9 @@ func NewServer(cfg ServerConfig) *Server {
 
 	// User routes — admin only.
 	admin.POST("/users", s.CreateUser)
+	admin.GET("/service-accounts", s.ListServiceAccounts)
+	admin.POST("/service-accounts", s.CreateServiceAccount)
+	admin.DELETE("/service-accounts/:name", s.DeleteServiceAccount)
 
 	// Hypervisor routes — reads for all, management for admin only.
 	authed.GET("/hypervisors", s.ListHypervisors)

@@ -38,6 +38,26 @@ export const handlers = [
     return new HttpResponse(null, { status: 204 })
   }),
 
+  http.get(`${API_BASE}/service-accounts`, () => {
+    return HttpResponse.json({ serviceAccounts: [] })
+  }),
+
+  http.post(`${API_BASE}/service-accounts`, async ({ request }) => {
+    const body = await request.json() as { name?: string; role?: string }
+    return HttpResponse.json({
+      serviceAccount: {
+        name: body.name ?? 'automation',
+        role: body.role ?? 'viewer',
+        createdAt: new Date().toISOString()
+      },
+      token: 'gomi_sa_mocktoken'
+    }, { status: 201 })
+  }),
+
+  http.delete(`${API_BASE}/service-accounts/:name`, () => {
+    return new HttpResponse(null, { status: 204 })
+  }),
+
   http.get(`${API_BASE}/machines`, () => {
     return HttpResponse.json({ machines, totalSize: machines.length })
   }),

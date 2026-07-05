@@ -20,6 +20,7 @@ tags:
   - name: dns-records
   - name: audit
   - name: users
+  - name: service-accounts
 
 paths:
   /setup/status:
@@ -1218,6 +1219,60 @@ paths:
         '201':
           description: created
 
+  /service-accounts:
+    get:
+      summary: List service accounts
+      tags: [service-accounts]
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      responses:
+        '200':
+          description: success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListServiceAccountsResponse'
+    post:
+      summary: Create service account token
+      description: Creates or rotates a service account token. The token is returned only in this response.
+      tags: [service-accounts]
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateServiceAccountRequest'
+      responses:
+        '201':
+          description: created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CreateServiceAccountResponse'
+
+  /service-accounts/{name}:
+    delete:
+      summary: Delete service account
+      tags: [service-accounts]
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      parameters:
+        - in: path
+          name: name
+          required: true
+          schema:
+            type: string
+      responses:
+        '204':
+          description: deleted
+        '404':
+          $ref: '#/components/responses/NotFound'
+
 components:
   securitySchemes:
     bearerAuth:
@@ -1383,6 +1438,50 @@ components:
         role:
           type: string
           enum: [admin, operator, viewer]
+
+    ServiceAccount:
+      type: object
+      required: [name, role, createdAt]
+      properties:
+        name:
+          type: string
+        role:
+          type: string
+          enum: [admin, operator, viewer]
+        createdAt:
+          type: string
+          format: date-time
+        lastUsedAt:
+          type: string
+          format: date-time
+
+    CreateServiceAccountRequest:
+      type: object
+      required: [name, role]
+      properties:
+        name:
+          type: string
+        role:
+          type: string
+          enum: [admin, operator, viewer]
+
+    CreateServiceAccountResponse:
+      type: object
+      required: [serviceAccount, token]
+      properties:
+        serviceAccount:
+          $ref: '#/components/schemas/ServiceAccount'
+        token:
+          type: string
+
+    ListServiceAccountsResponse:
+      type: object
+      required: [serviceAccounts]
+      properties:
+        serviceAccounts:
+          type: array
+          items:
+            $ref: '#/components/schemas/ServiceAccount'
 
     ListMetadata:
       type: object

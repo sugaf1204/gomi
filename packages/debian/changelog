@@ -1,3 +1,9 @@
+gomi (0.0.30) unstable; urgency=medium
+
+  * Add service account token issuance for automation access.
+
+ -- sugaf1204 <sugaf1204@example.invalid>  Sun, 05 Jul 2026 17:59:09 +0900
+
 gomi (0.0.29) unstable; urgency=medium
 
   * Reissue the UEFI local boot and boot environment diagnostics release with

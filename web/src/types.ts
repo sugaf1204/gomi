@@ -151,6 +151,13 @@ export type Me = {
   role: string
 }
 
+export type ServiceAccount = {
+  name: string
+  role: 'admin' | 'operator' | 'viewer'
+  createdAt: string
+  lastUsedAt?: string
+}
+
 export type HardwareInfo = {
   name: string
   machineName: string

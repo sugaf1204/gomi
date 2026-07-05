@@ -35,6 +35,16 @@ CREATE TABLE IF NOT EXISTS sessions (
 );
 CREATE INDEX IF NOT EXISTS idx_sessions_expires ON sessions (expires_at);
 
+CREATE TABLE IF NOT EXISTS service_accounts (
+    name TEXT NOT NULL PRIMARY KEY,
+    token_hash TEXT NOT NULL UNIQUE,
+    role TEXT NOT NULL DEFAULT 'viewer',
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    last_used_at TIMESTAMP,
+    last_used_token TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_service_accounts_token_hash ON service_accounts (token_hash);
+
 CREATE TABLE IF NOT EXISTS audit_events (
     id TEXT NOT NULL PRIMARY KEY,
     machine TEXT NOT NULL DEFAULT '',

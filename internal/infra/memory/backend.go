@@ -21,6 +21,7 @@ type Backend struct {
 	subnets     map[string]subnet.Subnet
 	users       map[string]auth.User
 	sessions    map[string]auth.Session
+	svcAccounts map[string]auth.ServiceAccount
 	auditEvents map[string]auth.AuditEvent
 	sshkeys     map[string]sshkey.SSHKey
 	hwinfos     map[string]hwinfo.HardwareInfo
@@ -39,6 +40,7 @@ func New() *Backend {
 		subnets:     make(map[string]subnet.Subnet),
 		users:       make(map[string]auth.User),
 		sessions:    make(map[string]auth.Session),
+		svcAccounts: make(map[string]auth.ServiceAccount),
 		auditEvents: make(map[string]auth.AuditEvent),
 		sshkeys:     make(map[string]sshkey.SSHKey),
 		hwinfos:     make(map[string]hwinfo.HardwareInfo),

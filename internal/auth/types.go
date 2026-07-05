@@ -34,6 +34,15 @@ type Session struct {
 	ExpiresAt time.Time `json:"expiresAt"`
 }
 
+type ServiceAccount struct {
+	Name          string     `json:"name"`
+	TokenHash     string     `json:"tokenHash"`
+	Role          Role       `json:"role"`
+	CreatedAt     time.Time  `json:"createdAt"`
+	LastUsedAt    *time.Time `json:"lastUsedAt,omitempty"`
+	LastUsedToken string     `json:"lastUsedToken,omitempty"`
+}
+
 type AuditEvent struct {
 	ID        string            `json:"id"`
 	Machine   string            `json:"machine"`

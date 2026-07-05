@@ -86,6 +86,105 @@ func (s *AuthStore) DeleteSession(ctx context.Context, token string) error {
 	return err
 }
 
+func (s *AuthStore) UpsertServiceAccount(ctx context.Context, account auth.ServiceAccount) error {
+	_, err := s.b.exec(ctx, `
+		INSERT INTO service_accounts (name, token_hash, role, created_at, last_used_at, last_used_token)
+		VALUES (?, ?, ?, ?, ?, ?)
+		ON CONFLICT (name) DO UPDATE SET
+			token_hash = EXCLUDED.token_hash,
+			role = EXCLUDED.role,
+			created_at = EXCLUDED.created_at,
+			last_used_at = EXCLUDED.last_used_at,
+			last_used_token = EXCLUDED.last_used_token`,
+		account.Name, account.TokenHash, string(account.Role), account.CreatedAt, account.LastUsedAt, account.LastUsedToken,
+	)
+	return err
+}
+
+func (s *AuthStore) GetServiceAccount(ctx context.Context, name string) (auth.ServiceAccount, error) {
+	return s.getServiceAccount(ctx, `WHERE name = ?`, name)
+}
+
+func (s *AuthStore) GetServiceAccountByTokenHash(ctx context.Context, tokenHash string) (auth.ServiceAccount, error) {
+	return s.getServiceAccount(ctx, `WHERE token_hash = ?`, tokenHash)
+}
+
+func (s *AuthStore) getServiceAccount(ctx context.Context, where string, args ...any) (auth.ServiceAccount, error) {
+	var account auth.ServiceAccount
+	var role string
+	var lastUsedAt sql.NullTime
+	err := s.b.queryRow(ctx, `
+		SELECT name, token_hash, role, created_at, last_used_at, last_used_token
+		FROM service_accounts `+where,
+		args...,
+	).Scan(&account.Name, &account.TokenHash, &role, &account.CreatedAt, &lastUsedAt, &account.LastUsedToken)
+	if errors.Is(err, sql.ErrNoRows) {
+		return auth.ServiceAccount{}, resource.ErrNotFound
+	}
+	if err != nil {
+		return auth.ServiceAccount{}, err
+	}
+	account.Role = auth.Role(role)
+	if lastUsedAt.Valid {
+		account.LastUsedAt = &lastUsedAt.Time
+	}
+	return account, nil
+}
+
+func (s *AuthStore) ListServiceAccounts(ctx context.Context) ([]auth.ServiceAccount, error) {
+	rows, err := s.b.query(ctx, `
+		SELECT name, token_hash, role, created_at, last_used_at, last_used_token
+		FROM service_accounts
+		ORDER BY name`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []auth.ServiceAccount
+	for rows.Next() {
+		var account auth.ServiceAccount
+		var role string
+		var lastUsedAt sql.NullTime
+		if err := rows.Scan(&account.Name, &account.TokenHash, &role, &account.CreatedAt, &lastUsedAt, &account.LastUsedToken); err != nil {
+			return nil, err
+		}
+		account.Role = auth.Role(role)
+		if lastUsedAt.Valid {
+			account.LastUsedAt = &lastUsedAt.Time
+		}
+		out = append(out, account)
+	}
+	return out, rows.Err()
+}
+
+func (s *AuthStore) DeleteServiceAccount(ctx context.Context, name string) error {
+	result, err := s.b.exec(ctx, `DELETE FROM service_accounts WHERE name = ?`, name)
+	if err != nil {
+		return err
+	}
+	n, err := result.RowsAffected()
+	if err == nil && n == 0 {
+		return resource.ErrNotFound
+	}
+	return nil
+}
+
+func (s *AuthStore) MarkServiceAccountUsed(ctx context.Context, name string, tokenHash string, usedAt time.Time) error {
+	result, err := s.b.exec(ctx,
+		`UPDATE service_accounts SET last_used_at = ?, last_used_token = ? WHERE name = ? AND token_hash = ?`,
+		usedAt, tokenHash, name, tokenHash,
+	)
+	if err != nil {
+		return err
+	}
+	n, err := result.RowsAffected()
+	if err == nil && n == 0 {
+		return resource.ErrNotFound
+	}
+	return nil
+}
+
 func (s *AuthStore) CreateAuditEvent(ctx context.Context, event auth.AuditEvent) error {
 	detailsJSON := ""
 	if len(event.Details) > 0 {

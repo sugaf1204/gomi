@@ -1,4 +1,4 @@
-import type { AuditEvent, BootEnvironmentStatus, CloudInitTemplate, DHCPLease, DNSRecord, HardwareInfo, Hypervisor, Machine, Me, OSImage, PowerConfig, SSHKey, Subnet, SystemInfo, VirtualMachine } from './types'
+import type { AuditEvent, BootEnvironmentStatus, CloudInitTemplate, DHCPLease, DNSRecord, HardwareInfo, Hypervisor, Machine, Me, OSImage, PowerConfig, ServiceAccount, SSHKey, Subnet, SystemInfo, VirtualMachine } from './types'
 
 const API_BASE = import.meta.env.VITE_API_BASE ?? `${window.location.origin}/api/v1`
 
@@ -266,6 +266,23 @@ class ApiClient {
     return this.request<void>('/me/password', {
       method: 'POST',
       body: JSON.stringify({ currentPassword, newPassword })
+    })
+  }
+
+  listServiceAccounts() {
+    return this.request<{ serviceAccounts: ServiceAccount[] }>('/service-accounts')
+  }
+
+  createServiceAccount(name: string, role: ServiceAccount['role']) {
+    return this.request<{ serviceAccount: ServiceAccount; token: string }>('/service-accounts', {
+      method: 'POST',
+      body: JSON.stringify({ name, role })
+    })
+  }
+
+  deleteServiceAccount(name: string) {
+    return this.request<void>(`/service-accounts/${encodeURIComponent(name)}`, {
+      method: 'DELETE'
     })
   }
 
