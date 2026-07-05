@@ -477,6 +477,41 @@ paths:
         '204':
           description: deleted
 
+  /virtual-machines/{name}/console-sessions:
+    parameters:
+      - $ref: '#/components/parameters/VirtualMachineName'
+    post:
+      summary: Create a short-lived virtual machine console token
+      tags: [virtual-machines]
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      responses:
+        '201':
+          description: created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VirtualMachineConsoleSession'
+
+  /virtual-machines/{name}/vnc:
+    parameters:
+      - $ref: '#/components/parameters/VirtualMachineName'
+      - in: query
+        name: console_token
+        required: true
+        schema:
+          type: string
+        description: Short-lived token created by /virtual-machines/{name}/console-sessions.
+    get:
+      summary: Proxy virtual machine VNC as a WebSocket
+      tags: [virtual-machines]
+      responses:
+        '101':
+          description: switching protocols
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
   /virtual-machines/{name}:redeploy:
     parameters:
       - $ref: '#/components/parameters/VirtualMachineName'
@@ -1833,6 +1868,16 @@ components:
               type: array
               items:
                 $ref: '#/components/schemas/VirtualMachine'
+
+    VirtualMachineConsoleSession:
+      type: object
+      required: [token, expiresAt]
+      properties:
+        token:
+          type: string
+        expiresAt:
+          type: string
+          format: date-time
 
     LoginUserSpec:
       type: object

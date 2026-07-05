@@ -66,6 +66,12 @@ func TestGenerateDomainXML_BasicDomain(t *testing.T) {
 	if domain.Devices.Console.Target.Type != "serial" || domain.Devices.Console.Target.Port != 0 {
 		t.Errorf("console target = %+v, want serial port 0", domain.Devices.Console.Target)
 	}
+	if domain.Devices.Graphics.Type != "vnc" {
+		t.Errorf("graphics type = %q, want vnc", domain.Devices.Graphics.Type)
+	}
+	if strings.Contains(xmlStr, `listen="0.0.0.0"`) {
+		t.Fatalf("domain XML must not expose unauthenticated VNC on all interfaces: %s", xmlStr)
+	}
 
 	// Verify OS.
 	if domain.OS.Type.Value != "hvm" {

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
 import RFB from '@novnc/novnc'
+import { api } from '../../api'
 import type { VirtualMachine } from '../../types'
 
 type Props = {
@@ -17,25 +18,23 @@ export function VMConsolePanel({ vm, onClose }: Props) {
 
   const isRunning = vm.phase === 'Running' || vm.phase === 'Provisioning'
 
-  const connect = useCallback(() => {
+  const connect = useCallback(async () => {
     if (!containerRef.current || !isRunning) return
+    const target = containerRef.current
 
     if (rfbRef.current) {
       rfbRef.current.disconnect()
       rfbRef.current = null
     }
 
-    containerRef.current.innerHTML = ''
+    target.innerHTML = ''
     setStatus('connecting')
     setErrorMsg('')
 
-    const apiBase = import.meta.env.VITE_API_BASE ?? 'http://localhost:5392/api/v1'
-    const wsBase = apiBase.replace(/^http/, 'ws')
-    const name = vm.name
-    const wsUrl = `${wsBase}/virtual-machines/${encodeURIComponent(name)}/vnc`
-
     try {
-      const rfb = new RFB(containerRef.current, wsUrl, { shared: true })
+      const session = await api.createVirtualMachineConsoleSession(vm.name)
+      const wsUrl = api.virtualMachineConsoleUrl(vm.name, session.token)
+      const rfb = new RFB(target, wsUrl, { shared: true })
       rfb.viewOnly = false
       rfb.scaleViewport = true
       rfb.resizeSession = false
@@ -62,7 +61,7 @@ export function VMConsolePanel({ vm, onClose }: Props) {
       rfbRef.current = rfb
     } catch (err) {
       setStatus('error')
-      setErrorMsg(err instanceof Error ? err.message : 'Failed to initialize VNC.')
+      setErrorMsg(err instanceof Error ? err.message : 'Failed to initialize console.')
     }
   }, [isRunning, vm.name])
 

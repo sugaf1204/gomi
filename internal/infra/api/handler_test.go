@@ -34,6 +34,7 @@ type testEnv struct {
 	authStore auth.Store
 	machines  *machine.Service
 	osimages  *osimage.Service
+	vms       *vm.Service
 }
 
 // setupTestEnv creates a fully wired Server with in-memory backend and
@@ -105,6 +106,7 @@ func setupTestEnvWithOptions(t *testing.T, powerExecutor infraapi.PowerExecutor,
 		authStore: authStore,
 		machines:  machineSvc,
 		osimages:  osimageSvc,
+		vms:       vmSvc,
 	}
 }
 

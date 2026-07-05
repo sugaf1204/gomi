@@ -219,6 +219,25 @@ func TestParseDomainGraphicsFromXML_VNC(t *testing.T) {
 	}
 }
 
+func TestParseDomainGraphicsFromXML_VNCNestedListen(t *testing.T) {
+	domainXML := `<domain type="kvm">
+  <name>test</name>
+  <devices>
+    <graphics type="vnc" port="5902" autoport="yes">
+      <listen type="address" address="0.0.0.0"/>
+    </graphics>
+  </devices>
+</domain>`
+
+	info, err := parseDomainGraphicsFromXML(domainXML)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if info.Listen != "0.0.0.0" {
+		t.Errorf("expected nested listen 0.0.0.0, got %s", info.Listen)
+	}
+}
+
 func TestParseDomainGraphicsFromXML_NoVNC(t *testing.T) {
 	domainXML := `<domain type="kvm">
   <name>test</name>

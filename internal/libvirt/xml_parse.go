@@ -40,9 +40,12 @@ func parseDomainInterfacesFromXML(raw string) []InterfaceInfo {
 type graphicsXMLDesc struct {
 	Devices struct {
 		Graphics []struct {
-			Type   string `xml:"type,attr"`
-			Port   string `xml:"port,attr"`
-			Listen string `xml:"listen,attr"`
+			Type    string `xml:"type,attr"`
+			Port    string `xml:"port,attr"`
+			Listen  string `xml:"listen,attr"`
+			Listens []struct {
+				Address string `xml:"address,attr"`
+			} `xml:"listen"`
 		} `xml:"graphics"`
 	} `xml:"devices"`
 }
@@ -61,10 +64,19 @@ func parseDomainGraphicsFromXML(raw string) (*GraphicsInfo, error) {
 		if err != nil || port < 0 {
 			return nil, fmt.Errorf("invalid vnc port: %s", g.Port)
 		}
+		listen := strings.TrimSpace(g.Listen)
+		if listen == "" {
+			for _, item := range g.Listens {
+				if address := strings.TrimSpace(item.Address); address != "" {
+					listen = address
+					break
+				}
+			}
+		}
 		return &GraphicsInfo{
 			Type:   g.Type,
 			Port:   port,
-			Listen: g.Listen,
+			Listen: listen,
 		}, nil
 	}
 	return nil, fmt.Errorf("no vnc graphics found in domain xml")

@@ -53,6 +53,8 @@ type Server struct {
 	vmRuntimeDeleter func(ctx context.Context, v vm.VirtualMachine) error
 	bootenvs         *bootenv.Manager
 	setupMu          sync.Mutex
+	consoleMu        sync.Mutex
+	consoleSessions  map[string]vmConsoleSession
 }
 
 type DNSRecordManager interface {
@@ -141,6 +143,7 @@ func NewServer(cfg ServerConfig) *Server {
 		vmMigrator:       cfg.VMMigrator,
 		vmRuntimeDeleter: cfg.VMRuntimeDeleter,
 		bootenvs:         cfg.BootEnvs,
+		consoleSessions:  map[string]vmConsoleSession{},
 	}
 	if s.provisionTimeout <= 0 {
 		s.provisionTimeout = 30 * time.Minute
@@ -165,6 +168,7 @@ func NewServer(cfg ServerConfig) *Server {
 	v1.POST("/machines/:name/power-events", s.ReportMachinePowerEvent)     // authenticated by WoL HMAC signature
 	v1.POST("/hypervisors/register", s.RegisterHypervisor)                 // unauthenticated for hypervisor self-registration
 	v1.GET("/hypervisors/setup-and-register.sh", s.SetupAndRegisterScript) // public script
+	v1.GET("/virtual-machines/:name/vnc", s.VMVNCProxy)                    // authenticated by short-lived console token
 
 	// Static file routes are public so that setup scripts can download agent binaries.
 	e.GET("/files/*", s.ServeFile)
@@ -259,9 +263,9 @@ func NewServer(cfg ServerConfig) *Server {
 	// VirtualMachine routes — reads for all, writes for operator+.
 	authed.GET("/virtual-machines", s.ListVirtualMachines)
 	authed.GET("/virtual-machines/:name", s.GetVirtualMachine)
+	authed.POST("/virtual-machines/:name/console-sessions", s.CreateVMConsoleSession)
 	writer.POST("/virtual-machines", s.CreateVirtualMachine)
 	writer.DELETE("/virtual-machines/:name", s.DeleteVirtualMachine)
-	authed.GET("/virtual-machines/:name/vnc", s.VMVNCProxy)
 	writer.POST("/virtual-machines/*", s.DispatchVirtualMachineCustomMethod)
 
 	// CloudInitTemplate routes — reads for all, writes for operator+.

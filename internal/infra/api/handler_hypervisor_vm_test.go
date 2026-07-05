@@ -1,9 +1,12 @@
 package api_test
 
 import (
+	"context"
 	"net/http"
 	"strings"
 	"testing"
+
+	"github.com/sugaf1204/gomi/internal/vm"
 )
 
 func TestHypervisorCRUD(t *testing.T) {
@@ -101,6 +104,38 @@ func TestHypervisorRegistration(t *testing.T) {
 	regReq["token"] = "definitely-not-valid"
 	rec = doRequest(env.echo, http.MethodPost, "/api/v1/hypervisors/register", regReq, "")
 	requireStatus(t, rec, http.StatusBadRequest)
+}
+
+func TestVMConsoleSession(t *testing.T) {
+	env := setupTestEnv(t)
+	ctx := context.Background()
+	_, err := env.vms.Create(ctx, vm.VirtualMachine{
+		Name:          "vm-console",
+		HypervisorRef: "hypervisors/hv-console",
+		Resources:     vm.ResourceSpec{CPUCores: 1, MemoryMB: 1024, DiskGB: 10},
+		OSImageRef:    "osImages/ubuntu-console",
+		Phase:         vm.PhaseRunning,
+	})
+	if err != nil {
+		t.Fatalf("create vm fixture: %v", err)
+	}
+
+	rec := doRequest(env.echo, http.MethodPost, "/api/v1/virtual-machines/vm-console/console-sessions", nil, env.token)
+	requireStatus(t, rec, http.StatusCreated)
+	body := parseBody(t, rec)
+	consoleToken, _ := body["token"].(string)
+	if consoleToken == "" {
+		t.Fatalf("expected console token, got %v", body)
+	}
+	if _, ok := body["expiresAt"].(string); !ok {
+		t.Fatalf("expected console token expiry, got %v", body)
+	}
+
+	rec = doRequest(env.echo, http.MethodGet, "/api/v1/virtual-machines/vm-console/vnc", nil, "")
+	requireStatus(t, rec, http.StatusUnauthorized)
+
+	rec = doRequest(env.echo, http.MethodGet, "/api/v1/virtual-machines/other-vm/vnc?console_token="+consoleToken, nil, "")
+	requireStatus(t, rec, http.StatusUnauthorized)
 }
 
 // ---------------------------------------------------------------------------

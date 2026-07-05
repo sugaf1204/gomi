@@ -311,6 +311,15 @@ func TestSetupAndRegisterScriptPublic(t *testing.T) {
 	if !strings.Contains(body, `auth_tcp = "none"`) {
 		t.Fatalf("expected setup script to configure unauthenticated libvirt TCP, got:\n%s", body)
 	}
+	for _, forbidden := range []string{
+		`vnc_listen = "0.0.0.0"`,
+		`firewall-cmd --permanent --add-port=5900-5999/tcp`,
+		`ufw allow 5900:5999/tcp`,
+	} {
+		if strings.Contains(body, forbidden) {
+			t.Fatalf("setup script must not expose unauthenticated raw VNC console access %q, got:\n%s", forbidden, body)
+		}
+	}
 	for _, want := range []string{
 		"99-gomi-libvirt-bridge.conf",
 		"net.bridge.bridge-nf-call-iptables = 0",

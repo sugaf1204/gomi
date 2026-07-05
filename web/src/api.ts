@@ -98,6 +98,12 @@ function resourceIds(collection: string, names?: string[]) {
   return names?.map((name) => resourceId(collection, name)).filter(Boolean)
 }
 
+function absoluteApiBase() {
+  if (API_BASE.startsWith('http')) return API_BASE
+  const path = API_BASE.startsWith('/') ? API_BASE : `/${API_BASE}`
+  return `${window.location.origin}${path}`
+}
+
 function resourceNames(collection: string, ids?: string[]) {
   return ids?.map((id) => resourceName(collection, id)).filter(Boolean)
 }
@@ -484,6 +490,19 @@ class ApiClient {
     return this.request<VirtualMachineApi>(`/virtual-machines/${encodeURIComponent(name)}:powerOff`, {
       method: 'POST'
     }).then(fromApiVirtualMachine)
+  }
+
+  createVirtualMachineConsoleSession(name: string) {
+    return this.request<{ token: string; expiresAt: string }>(`/virtual-machines/${encodeURIComponent(name)}/console-sessions`, {
+      method: 'POST'
+    })
+  }
+
+  virtualMachineConsoleUrl(name: string, consoleToken: string) {
+    const wsBase = absoluteApiBase().replace(/^http/, 'ws')
+    const params = new URLSearchParams({ console_token: consoleToken })
+    const query = params.toString()
+    return `${wsBase}/virtual-machines/${encodeURIComponent(name)}/vnc?${query}`
   }
 
   async vmRedeploy(name: string, payload?: VMRedeployPayload) {
