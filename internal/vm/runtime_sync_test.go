@@ -317,6 +317,61 @@ func TestRuntimeSyncerSyncAllMarksVMMissingWhenDomainGone(t *testing.T) {
 	}
 }
 
+func TestRuntimeSyncerMarkVMMissingEndsProvisioning(t *testing.T) {
+	backend := memory.New()
+	hypervisors := hypervisor.NewService(backend.Hypervisors(), backend.HypervisorTokens(), backend.AgentTokens())
+	vms := vm.NewService(backend.VMs())
+	ctx := context.Background()
+
+	if _, err := hypervisors.Create(ctx, hypervisor.Hypervisor{
+		Name: "hv-prov-gone",
+		Connection: hypervisor.ConnectionSpec{
+			Type: hypervisor.ConnectionTCP,
+			Host: "192.0.2.53",
+			Port: 16509,
+		},
+		Phase: hypervisor.PhaseRegistered,
+	}); err != nil {
+		t.Fatalf("create hypervisor: %v", err)
+	}
+	created, err := vms.Create(ctx, vm.VirtualMachine{
+		Name:          "vm-prov-gone",
+		HypervisorRef: "hv-prov-gone",
+		Resources:     vm.ResourceSpec{CPUCores: 1, MemoryMB: 1024, DiskGB: 8},
+		OSImageRef:    "ubuntu-test",
+	})
+	if err != nil {
+		t.Fatalf("create vm: %v", err)
+	}
+	created.Phase = vm.PhaseProvisioning
+	created.Provisioning = vm.ProvisioningStatus{Active: true, CompletionToken: "prov-token"}
+	if err := vms.Store().Upsert(ctx, created); err != nil {
+		t.Fatalf("seed provisioning vm: %v", err)
+	}
+
+	syncer := &vm.RuntimeSyncer{
+		Hypervisors: hypervisors,
+		VMs:         vms,
+		ExecutorFactory: func(context.Context, libvirt.LibvirtConfig) (libvirt.Executor, error) {
+			return &fakeLibvirtExecutor{domains: map[string]*libvirt.DomainInfo{}}, nil
+		},
+	}
+	if err := syncer.SyncAll(ctx, nil); err != nil {
+		t.Fatalf("SyncAll: %v", err)
+	}
+
+	v, err := vms.Get(ctx, "vm-prov-gone")
+	if err != nil {
+		t.Fatalf("get vm: %v", err)
+	}
+	if v.Phase != vm.PhaseMissing {
+		t.Fatalf("expected vm phase Missing, got %s", v.Phase)
+	}
+	if v.Provisioning.Active {
+		t.Fatal("expected provisioning to be ended when the domain is gone")
+	}
+}
+
 func TestRuntimeSyncerMissingVMDoesNotFailHypervisor(t *testing.T) {
 	backend := memory.New()
 	hypervisors := hypervisor.NewService(backend.Hypervisors(), backend.HypervisorTokens(), backend.AgentTokens())

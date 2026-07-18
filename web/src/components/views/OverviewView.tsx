@@ -17,6 +17,7 @@ export type OverviewViewProps = {
     running: number
     stopped: number
     error: number
+    missing: number
   }
 }
 
@@ -72,7 +73,7 @@ export function OverviewView({
           <p className="m-0 text-[1.6rem] font-semibold mt-[0.2rem]">{vmCount}</p>
           {vmCount > 0 ? (
             <p className="m-0 text-ink-soft text-[0.78rem] mt-[0.3rem]">
-              {vmStats.running} running - {vmStats.stopped} stopped - {vmStats.error} error
+              {vmStats.running} running - {vmStats.stopped} stopped - {vmStats.error} error - {vmStats.missing} missing
             </p>
           ) : (
             <p className="m-0 text-ink-soft text-[0.78rem] mt-[0.3rem]">No VMs</p>

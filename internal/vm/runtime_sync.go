@@ -310,6 +310,9 @@ func (s *RuntimeSyncer) markVMMissing(ctx context.Context, hv hypervisor.Hypervi
 	updated.LibvirtDomain = domainName
 	updated.IPAddresses = nil
 	updated.NetworkInterfaces = nil
+	// The domain is gone, so any in-flight provisioning can never complete;
+	// end it so the machine's PXE config stops resolving to this VM.
+	updated.Provisioning.Active = false
 	return s.persistSyncedVM(ctx, v, updated)
 }
 
