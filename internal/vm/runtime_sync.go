@@ -264,6 +264,9 @@ func (s *RuntimeSyncer) syncWithExecutor(ctx context.Context, hv hypervisor.Hype
 	info, err := exec.DomainInfo(ctx, domainName)
 	if err != nil {
 		if libvirt.IsDomainNotFoundError(err) {
+			if vmDeployInFlight(v, time.Now().UTC()) {
+				return v, nil
+			}
 			return s.markVMMissing(ctx, hv, v, domainName)
 		}
 		return v, fmt.Errorf("domain info %s: %w", domainName, err)
@@ -289,6 +292,12 @@ func (s *RuntimeSyncer) syncWithExecutor(ctx context.Context, hv hypervisor.Hype
 	if v.Phase == PhaseMissing && updated.Phase != PhaseError {
 		updated.LastError = ""
 	}
+	// The domain exists, so the record must leave Missing even when the
+	// domain state maps to no specific phase; otherwise delete would keep
+	// skipping runtime teardown and orphan a live domain.
+	if updated.Phase == PhaseMissing {
+		updated.Phase = PhaseStopped
+	}
 	updated.HypervisorName = hv.Name
 	updated.CreatedOnHost = hv.Name
 	updated.LibvirtDomain = domainName
@@ -296,6 +305,16 @@ func (s *RuntimeSyncer) syncWithExecutor(ctx context.Context, hv hypervisor.Hype
 	updated.NetworkInterfaces = networkStatuses
 
 	return s.persistSyncedVM(ctx, v, updated)
+}
+
+// vmDeployInFlight reports whether the VM is inside a create or redeploy
+// window where the libvirt domain may legitimately not exist yet: both flows
+// upsert the record with an armed provisioning deadline before DefineDomain
+// runs, and redeploy undefines the old domain before defining the new one.
+// Such VMs must not be marked Missing; a deploy that never defines the domain
+// is caught once the provisioning deadline passes.
+func vmDeployInFlight(v VirtualMachine, now time.Time) bool {
+	return v.Provisioning.Active && !IsProvisioningTimedOut(v.Provisioning, now)
 }
 
 // markVMMissing records that the VM's libvirt domain no longer exists on the

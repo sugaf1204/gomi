@@ -343,8 +343,12 @@ func TestRuntimeSyncerMarkVMMissingEndsProvisioning(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create vm: %v", err)
 	}
+	// Provisioning is active but already past its deadline: the deploy is no
+	// longer in flight, so the missing domain must end provisioning.
+	started := time.Now().UTC().Add(-2 * time.Hour)
+	deadline := time.Now().UTC().Add(-time.Hour)
 	created.Phase = vm.PhaseProvisioning
-	created.Provisioning = vm.ProvisioningStatus{Active: true, CompletionToken: "prov-token"}
+	created.Provisioning = vm.ProvisioningStatus{Active: true, StartedAt: &started, DeadlineAt: &deadline, CompletionToken: "prov-token"}
 	if err := vms.Store().Upsert(ctx, created); err != nil {
 		t.Fatalf("seed provisioning vm: %v", err)
 	}
@@ -369,6 +373,131 @@ func TestRuntimeSyncerMarkVMMissingEndsProvisioning(t *testing.T) {
 	}
 	if v.Provisioning.Active {
 		t.Fatal("expected provisioning to be ended when the domain is gone")
+	}
+}
+
+func TestRuntimeSyncerDoesNotMarkVMMissingDuringActiveDeploy(t *testing.T) {
+	backend := memory.New()
+	hypervisors := hypervisor.NewService(backend.Hypervisors(), backend.HypervisorTokens(), backend.AgentTokens())
+	vms := vm.NewService(backend.VMs())
+	ctx := context.Background()
+
+	if _, err := hypervisors.Create(ctx, hypervisor.Hypervisor{
+		Name: "hv-deploying",
+		Connection: hypervisor.ConnectionSpec{
+			Type: hypervisor.ConnectionTCP,
+			Host: "192.0.2.54",
+			Port: 16509,
+		},
+		Phase: hypervisor.PhaseRegistered,
+	}); err != nil {
+		t.Fatalf("create hypervisor: %v", err)
+	}
+	created, err := vms.Create(ctx, vm.VirtualMachine{
+		Name:          "vm-deploying",
+		HypervisorRef: "hv-deploying",
+		Resources:     vm.ResourceSpec{CPUCores: 1, MemoryMB: 1024, DiskGB: 8},
+		OSImageRef:    "ubuntu-test",
+	})
+	if err != nil {
+		t.Fatalf("create vm: %v", err)
+	}
+	// Deploy in flight: provisioning armed with a future deadline while the
+	// domain has not been defined yet (create) or was just undefined (redeploy).
+	started := time.Now().UTC()
+	deadline := started.Add(time.Hour)
+	created.Phase = vm.PhaseProvisioning
+	created.Provisioning = vm.ProvisioningStatus{Active: true, StartedAt: &started, DeadlineAt: &deadline, CompletionToken: "prov-token"}
+	if err := vms.Store().Upsert(ctx, created); err != nil {
+		t.Fatalf("seed deploying vm: %v", err)
+	}
+
+	syncer := &vm.RuntimeSyncer{
+		Hypervisors: hypervisors,
+		VMs:         vms,
+		ExecutorFactory: func(context.Context, libvirt.LibvirtConfig) (libvirt.Executor, error) {
+			return &fakeLibvirtExecutor{domains: map[string]*libvirt.DomainInfo{}}, nil
+		},
+	}
+	if err := syncer.SyncAll(ctx, nil); err != nil {
+		t.Fatalf("SyncAll: %v", err)
+	}
+
+	v, err := vms.Get(ctx, "vm-deploying")
+	if err != nil {
+		t.Fatalf("get vm: %v", err)
+	}
+	if v.Phase != vm.PhaseProvisioning {
+		t.Fatalf("expected vm to stay Provisioning during active deploy, got %s", v.Phase)
+	}
+	if !v.Provisioning.Active {
+		t.Fatal("expected provisioning to stay active during deploy window")
+	}
+	hv, err := hypervisors.Get(ctx, "hv-deploying")
+	if err != nil {
+		t.Fatalf("get hypervisor: %v", err)
+	}
+	if hv.Phase != hypervisor.PhaseReady {
+		t.Fatalf("expected hypervisor Ready, got %s", hv.Phase)
+	}
+}
+
+func TestRuntimeSyncerMissingVMExitsMissingOnUnknownDomainState(t *testing.T) {
+	backend := memory.New()
+	hypervisors := hypervisor.NewService(backend.Hypervisors(), backend.HypervisorTokens(), backend.AgentTokens())
+	vms := vm.NewService(backend.VMs())
+	ctx := context.Background()
+
+	if _, err := hypervisors.Create(ctx, hypervisor.Hypervisor{
+		Name: "hv-unknown-state",
+		Connection: hypervisor.ConnectionSpec{
+			Type: hypervisor.ConnectionTCP,
+			Host: "192.0.2.55",
+			Port: 16509,
+		},
+		Phase: hypervisor.PhaseRegistered,
+	}); err != nil {
+		t.Fatalf("create hypervisor: %v", err)
+	}
+	created, err := vms.Create(ctx, vm.VirtualMachine{
+		Name:          "vm-unknown-state",
+		HypervisorRef: "hv-unknown-state",
+		Resources:     vm.ResourceSpec{CPUCores: 1, MemoryMB: 1024, DiskGB: 8},
+		OSImageRef:    "ubuntu-test",
+	})
+	if err != nil {
+		t.Fatalf("create vm: %v", err)
+	}
+	created.Phase = vm.PhaseMissing
+	created.LastError = "libvirt domain vm-unknown-state not found on hypervisor hv-unknown-state"
+	if err := vms.Store().Upsert(ctx, created); err != nil {
+		t.Fatalf("seed missing vm: %v", err)
+	}
+
+	syncer := &vm.RuntimeSyncer{
+		Hypervisors: hypervisors,
+		VMs:         vms,
+		ExecutorFactory: func(context.Context, libvirt.LibvirtConfig) (libvirt.Executor, error) {
+			return &fakeLibvirtExecutor{
+				domains: map[string]*libvirt.DomainInfo{
+					"vm-unknown-state": {Name: "vm-unknown-state", State: libvirt.StateUnknown},
+				},
+			}, nil
+		},
+	}
+	if err := syncer.SyncAll(ctx, nil); err != nil {
+		t.Fatalf("SyncAll: %v", err)
+	}
+
+	v, err := vms.Get(ctx, "vm-unknown-state")
+	if err != nil {
+		t.Fatalf("get vm: %v", err)
+	}
+	if v.Phase != vm.PhaseStopped {
+		t.Fatalf("expected existing domain with unknown state to leave Missing as Stopped, got %s", v.Phase)
+	}
+	if v.LastError != "" {
+		t.Fatalf("expected lastError cleared, got %q", v.LastError)
 	}
 }
 
