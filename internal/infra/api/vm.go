@@ -181,9 +181,12 @@ func (s *Server) DeleteVirtualMachine(c echo.Context) error {
 		}
 		return c.JSON(gohttp.StatusInternalServerError, jsonErrorErr(err))
 	}
-	if err := s.deleteVirtualMachineRuntime(ctx, v); err != nil {
-		httputil.CreateAudit(c, s.authStore, name, "delete-vm", "failure", err.Error(), nil)
-		return c.JSON(gohttp.StatusBadGateway, jsonErrorErr(err))
+	// A Missing VM has no domain on the host anymore; delete only the record.
+	if v.Phase != vm.PhaseMissing {
+		if err := s.deleteVirtualMachineRuntime(ctx, v); err != nil {
+			httputil.CreateAudit(c, s.authStore, name, "delete-vm", "failure", err.Error(), nil)
+			return c.JSON(gohttp.StatusBadGateway, jsonErrorErr(err))
+		}
 	}
 	if err := s.vms.Delete(ctx, name); err != nil {
 		if errors.Is(err, resource.ErrNotFound) {
@@ -208,6 +211,11 @@ func (s *Server) deleteVirtualMachineRuntime(ctx context.Context, v vm.VirtualMa
 	}
 	hv, err := s.hypervisors.Get(ctx, hvRef)
 	if err != nil {
+		if errors.Is(err, resource.ErrNotFound) {
+			// The hypervisor record is already gone; there is no host to
+			// clean up through GOMI, so delete only the record.
+			return nil
+		}
 		return fmt.Errorf("resolve hypervisor %s for delete: %w", hvRef, err)
 	}
 	cfg := vm.BuildLibvirtConfig(hv)
@@ -221,13 +229,13 @@ func (s *Server) deleteVirtualMachineRuntime(ctx context.Context, v vm.VirtualMa
 	if domainName == "" {
 		domainName = v.Name
 	}
-	if err := exec.DestroyDomain(ctx, domainName); err != nil && !vm.IsIgnorableDestroyError(err) {
+	if err := exec.DestroyDomain(ctx, domainName); err != nil && !vm.IsIgnorableDestroyError(err) && !libvirt.IsDomainNotFoundError(err) {
 		return fmt.Errorf("stop domain %s before delete: %w", domainName, err)
 	}
-	if err := exec.UndefineDomain(ctx, domainName); err != nil && !vm.IsIgnorableDestroyError(err) {
+	if err := exec.UndefineDomain(ctx, domainName); err != nil && !vm.IsIgnorableDestroyError(err) && !libvirt.IsDomainNotFoundError(err) {
 		return fmt.Errorf("undefine domain %s before delete: %w", domainName, err)
 	}
-	if err := exec.DeleteVolume(ctx, v.Name); err != nil {
+	if err := exec.DeleteVolume(ctx, v.Name); err != nil && !libvirt.IsVolumeNotFoundError(err) {
 		return fmt.Errorf("delete volume %s: %w", v.Name, err)
 	}
 	return nil

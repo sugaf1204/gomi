@@ -252,7 +252,18 @@ func filterMachines(c echo.Context, machines []machine.Machine) []machine.Machin
 
 func (s *Server) DeleteMachine(c echo.Context) error {
 	name := c.Param("name")
-	if err := s.machines.Delete(c.Request().Context(), name); err != nil {
+	ctx := c.Request().Context()
+	if _, err := s.machines.Get(ctx, name); err != nil {
+		if errors.Is(err, resource.ErrNotFound) {
+			return c.JSON(gohttp.StatusNotFound, jsonError("not found"))
+		}
+		return c.JSON(gohttp.StatusInternalServerError, jsonErrorErr(err))
+	}
+	if err := s.cascadeDeleteMachineRecords(ctx, c, name); err != nil {
+		httputil.CreateAudit(c, s.authStore, name, "delete-machine", "failure", err.Error(), nil)
+		return c.JSON(gohttp.StatusInternalServerError, jsonErrorErr(err))
+	}
+	if err := s.machines.Delete(ctx, name); err != nil {
 		if errors.Is(err, resource.ErrNotFound) {
 			return c.JSON(gohttp.StatusNotFound, jsonError("not found"))
 		}

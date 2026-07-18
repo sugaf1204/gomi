@@ -263,6 +263,9 @@ func (s *RuntimeSyncer) syncWithExecutor(ctx context.Context, hv hypervisor.Hype
 
 	info, err := exec.DomainInfo(ctx, domainName)
 	if err != nil {
+		if libvirt.IsDomainNotFoundError(err) {
+			return s.markVMMissing(ctx, hv, v, domainName)
+		}
 		return v, fmt.Errorf("domain info %s: %w", domainName, err)
 	}
 
@@ -283,19 +286,40 @@ func (s *RuntimeSyncer) syncWithExecutor(ctx context.Context, hv hypervisor.Hype
 	} else {
 		updated.Phase = MapVMPhaseFromDomainState(info.State, v.Phase, v.Provisioning)
 	}
+	if v.Phase == PhaseMissing && updated.Phase != PhaseError {
+		updated.LastError = ""
+	}
 	updated.HypervisorName = hv.Name
 	updated.CreatedOnHost = hv.Name
 	updated.LibvirtDomain = domainName
 	updated.IPAddresses = ipAddresses
 	updated.NetworkInterfaces = networkStatuses
 
-	if !VMStatusChanged(v, updated) {
-		return v, nil
-	}
+	return s.persistSyncedVM(ctx, v, updated)
+}
 
-	updated.UpdatedAt = now
+// markVMMissing records that the VM's libvirt domain no longer exists on the
+// hypervisor while keeping the GOMI record. It returns a nil error because the
+// libvirt connection worked; the missing domain is VM-level state, not a
+// hypervisor failure.
+func (s *RuntimeSyncer) markVMMissing(ctx context.Context, hv hypervisor.Hypervisor, v VirtualMachine, domainName string) (VirtualMachine, error) {
+	updated := v
+	updated.Phase = PhaseMissing
+	updated.LastError = fmt.Sprintf("libvirt domain %s not found on hypervisor %s", domainName, hv.Name)
+	updated.HypervisorName = hv.Name
+	updated.LibvirtDomain = domainName
+	updated.IPAddresses = nil
+	updated.NetworkInterfaces = nil
+	return s.persistSyncedVM(ctx, v, updated)
+}
+
+func (s *RuntimeSyncer) persistSyncedVM(ctx context.Context, before, updated VirtualMachine) (VirtualMachine, error) {
+	if !VMStatusChanged(before, updated) {
+		return before, nil
+	}
+	updated.UpdatedAt = time.Now().UTC()
 	if err := s.VMs.Store().Upsert(ctx, updated); err != nil {
-		return v, fmt.Errorf("persist synced vm status: %w", err)
+		return before, fmt.Errorf("persist synced vm status: %w", err)
 	}
 	return updated, nil
 }
@@ -466,6 +490,9 @@ func prependUniqueIP(primary string, ips []string) []string {
 
 func VMStatusChanged(before VirtualMachine, after VirtualMachine) bool {
 	if before.Phase != after.Phase {
+		return true
+	}
+	if before.LastError != after.LastError {
 		return true
 	}
 	if before.HypervisorName != after.HypervisorName {

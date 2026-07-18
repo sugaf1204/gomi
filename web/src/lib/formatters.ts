@@ -20,6 +20,8 @@ export function phaseClass(phase?: string) {
     case 'stopped':
     case 'migrating':
       return `${base} bg-[#f8e6cc] text-warn`
+    case 'missing':
+      return `${base} bg-[#e8e4df] text-ink-soft`
     default:
       return `${base} bg-[#f6dada] text-error`
   }

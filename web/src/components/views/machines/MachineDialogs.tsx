@@ -212,6 +212,7 @@ function BatchDeleteDialog({ batchDeleteConfirm, setBatchDeleteConfirm, submitBa
     <ConfirmTargetsDialog
       title="Confirm Batch Delete"
       titleClass="text-[#9b2d2d]"
+      description="Linked hypervisor records and their virtual machine records are also removed from GOMI. No changes are made on the hosts."
       targets={batchDeleteConfirm.targets}
       running={batchDeleteConfirm.running}
       onClose={() => setBatchDeleteConfirm(initialBatchDeleteConfirmState)}
@@ -376,11 +377,12 @@ function RedeployTargetList({ confirm, activeTarget, setConfirm }: { confirm: Ba
   )
 }
 
-function ConfirmTargetsDialog({ title, titleClass, targets, running, onClose, onConfirm, confirmClass, confirmLabel }: { title: string; titleClass?: string; targets: string[]; running: boolean; onClose: () => void; onConfirm: () => void; confirmClass: string; confirmLabel: string }) {
+function ConfirmTargetsDialog({ title, titleClass, description, targets, running, onClose, onConfirm, confirmClass, confirmLabel }: { title: string; titleClass?: string; description?: string; targets: string[]; running: boolean; onClose: () => void; onConfirm: () => void; confirmClass: string; confirmLabel: string }) {
   return (
     <ModalOverlay onBackdropClick={() => { if (!running) onClose() }}>
       <div className="w-[min(520px,100%)] bg-white border border-line-strong shadow-[0_20px_45px_rgba(52,43,34,0.2)] p-[1.1rem] grid gap-[0.65rem]">
         <h3 className={clsx('text-[1.2rem]', titleClass)}>{title}</h3>
+        {description && <p className="m-0 text-ink-soft text-[0.84rem]">{description}</p>}
         <p className="m-0 text-ink-soft text-[0.84rem]">Target machines ({targets.length}):</p>
         <div className="max-h-[180px] overflow-auto border border-line p-[0.55rem] bg-[#f9f7f4]"><ul className="m-0 pl-[1.1rem]">{targets.map((target) => <li key={target}><code>{target}</code></li>)}</ul></div>
         <div className="flex justify-end gap-[0.45rem]">

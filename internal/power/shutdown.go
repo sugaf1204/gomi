@@ -72,10 +72,12 @@ func ParseAndVerifyShutdownPacket(data []byte, secret string, now time.Time, ttl
 		return ShutdownPacket{}, fmt.Errorf("invalid signature")
 	}
 
-	const clockSkewAllowance = 5 * time.Second
+	// Accept a symmetric window so a node whose clock drifts up to ttl in
+	// either direction (e.g. before time sync settles after install) still
+	// honors the shutdown request.
 	diff := now.Sub(ts)
-	if diff < -clockSkewAllowance || diff > ttl {
-		return ShutdownPacket{}, fmt.Errorf("timestamp outside ttl window")
+	if diff < -ttl || diff > ttl {
+		return ShutdownPacket{}, fmt.Errorf("timestamp outside ttl window (skew=%s, ttl=%s)", diff, ttl)
 	}
 
 	return ShutdownPacket{

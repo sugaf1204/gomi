@@ -161,7 +161,7 @@ function VMList({
             <div className="min-w-0">
               <p className="m-0 font-ui font-medium tracking-normal truncate">{vm.name}</p>
               <p className="m-0 text-ink-soft text-[0.82rem]">{vm.hypervisorRef || 'Auto-placed'} - {vm.resources.cpuCores}CPU - {vm.resources.memoryMB}MB</p>
-              {vm.phase === 'Error' && vm.lastError && <p className="m-0 text-[#7f2727] text-[0.76rem] mt-[0.15rem] leading-tight">{vm.lastError}</p>}
+              {(vm.phase === 'Error' || vm.phase === 'Missing') && vm.lastError && <p className="m-0 text-[#7f2727] text-[0.76rem] mt-[0.15rem] leading-tight">{vm.lastError}</p>}
             </div>
             <span className={clsx(phaseClass(vm.phase), 'shrink-0')}>{vm.phase}</span>
           </button>

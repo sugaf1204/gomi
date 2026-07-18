@@ -17,6 +17,9 @@ const (
 	PhaseError        Phase = "Error"
 	PhaseDeleting     Phase = "Deleting"
 	PhaseMigrating    Phase = "Migrating"
+	// PhaseMissing means the VM record exists in GOMI but its libvirt domain
+	// no longer exists on the hypervisor (e.g. removed directly via virsh).
+	PhaseMissing Phase = "Missing"
 )
 
 type IPAssignmentMode = resource.IPAssignmentMode

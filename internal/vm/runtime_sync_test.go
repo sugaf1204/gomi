@@ -3,6 +3,7 @@ package vm_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"strings"
 	"sync/atomic"
@@ -247,6 +248,200 @@ func TestRuntimeSyncerSyncAllDoesNotMarkReadyWhenAllVMQueriesFail(t *testing.T) 
 	}
 }
 
+func TestRuntimeSyncerSyncAllMarksVMMissingWhenDomainGone(t *testing.T) {
+	backend := memory.New()
+	hypervisors := hypervisor.NewService(backend.Hypervisors(), backend.HypervisorTokens(), backend.AgentTokens())
+	vms := vm.NewService(backend.VMs())
+	ctx := context.Background()
+
+	if _, err := hypervisors.Create(ctx, hypervisor.Hypervisor{
+		Name: "hv-stale",
+		Connection: hypervisor.ConnectionSpec{
+			Type: hypervisor.ConnectionTCP,
+			Host: "192.0.2.50",
+			Port: 16509,
+		},
+		Phase: hypervisor.PhaseRegistered,
+	}); err != nil {
+		t.Fatalf("create hypervisor: %v", err)
+	}
+	if _, err := vms.Create(ctx, vm.VirtualMachine{
+		Name:          "vm-stale",
+		HypervisorRef: "hv-stale",
+		Resources:     vm.ResourceSpec{CPUCores: 1, MemoryMB: 1024, DiskGB: 8},
+		OSImageRef:    "ubuntu-test",
+	}); err != nil {
+		t.Fatalf("create vm: %v", err)
+	}
+
+	syncer := &vm.RuntimeSyncer{
+		Hypervisors: hypervisors,
+		VMs:         vms,
+		ExecutorFactory: func(context.Context, libvirt.LibvirtConfig) (libvirt.Executor, error) {
+			return &fakeLibvirtExecutor{domains: map[string]*libvirt.DomainInfo{}}, nil
+		},
+	}
+	if err := syncer.SyncAll(ctx, nil); err != nil {
+		t.Fatalf("SyncAll: %v", err)
+	}
+
+	v, err := vms.Get(ctx, "vm-stale")
+	if err != nil {
+		t.Fatalf("get vm: %v", err)
+	}
+	if v.Phase != vm.PhaseMissing {
+		t.Fatalf("expected vm phase Missing, got %s", v.Phase)
+	}
+	if !strings.Contains(v.LastError, "not found on hypervisor hv-stale") {
+		t.Fatalf("expected missing-domain lastError, got %q", v.LastError)
+	}
+	hv, err := hypervisors.Get(ctx, "hv-stale")
+	if err != nil {
+		t.Fatalf("get hypervisor: %v", err)
+	}
+	if hv.Phase != hypervisor.PhaseReady || hv.LastError != "" {
+		t.Fatalf("expected hypervisor Ready with empty lastError, got phase=%s lastError=%q", hv.Phase, hv.LastError)
+	}
+
+	// A second sync with unchanged state must not rewrite the record.
+	updatedAt := v.UpdatedAt
+	if err := syncer.SyncAll(ctx, nil); err != nil {
+		t.Fatalf("SyncAll second pass: %v", err)
+	}
+	again, err := vms.Get(ctx, "vm-stale")
+	if err != nil {
+		t.Fatalf("get vm after second sync: %v", err)
+	}
+	if !again.UpdatedAt.Equal(updatedAt) {
+		t.Fatalf("expected no upsert churn for unchanged Missing vm: %v != %v", again.UpdatedAt, updatedAt)
+	}
+}
+
+func TestRuntimeSyncerMissingVMDoesNotFailHypervisor(t *testing.T) {
+	backend := memory.New()
+	hypervisors := hypervisor.NewService(backend.Hypervisors(), backend.HypervisorTokens(), backend.AgentTokens())
+	vms := vm.NewService(backend.VMs())
+	ctx := context.Background()
+
+	if _, err := hypervisors.Create(ctx, hypervisor.Hypervisor{
+		Name: "hv-mixed",
+		Connection: hypervisor.ConnectionSpec{
+			Type: hypervisor.ConnectionTCP,
+			Host: "192.0.2.51",
+			Port: 16509,
+		},
+		Phase: hypervisor.PhaseRegistered,
+	}); err != nil {
+		t.Fatalf("create hypervisor: %v", err)
+	}
+	for _, name := range []string{"vm-mixed-live", "vm-mixed-stale"} {
+		if _, err := vms.Create(ctx, vm.VirtualMachine{
+			Name:          name,
+			HypervisorRef: "hv-mixed",
+			Resources:     vm.ResourceSpec{CPUCores: 1, MemoryMB: 1024, DiskGB: 8},
+			OSImageRef:    "ubuntu-test",
+		}); err != nil {
+			t.Fatalf("create vm %s: %v", name, err)
+		}
+	}
+
+	syncer := &vm.RuntimeSyncer{
+		Hypervisors: hypervisors,
+		VMs:         vms,
+		ExecutorFactory: func(context.Context, libvirt.LibvirtConfig) (libvirt.Executor, error) {
+			return &fakeLibvirtExecutor{
+				domains: map[string]*libvirt.DomainInfo{
+					"vm-mixed-live": {Name: "vm-mixed-live", State: libvirt.StateRunning},
+				},
+			}, nil
+		},
+	}
+	if err := syncer.SyncAll(ctx, nil); err != nil {
+		t.Fatalf("SyncAll: %v", err)
+	}
+
+	live, err := vms.Get(ctx, "vm-mixed-live")
+	if err != nil {
+		t.Fatalf("get live vm: %v", err)
+	}
+	if live.Phase != vm.PhaseRunning {
+		t.Fatalf("expected live vm Running, got %s", live.Phase)
+	}
+	stale, err := vms.Get(ctx, "vm-mixed-stale")
+	if err != nil {
+		t.Fatalf("get stale vm: %v", err)
+	}
+	if stale.Phase != vm.PhaseMissing {
+		t.Fatalf("expected stale vm Missing, got %s", stale.Phase)
+	}
+	hv, err := hypervisors.Get(ctx, "hv-mixed")
+	if err != nil {
+		t.Fatalf("get hypervisor: %v", err)
+	}
+	if hv.Phase != hypervisor.PhaseReady {
+		t.Fatalf("expected hypervisor Ready, got %s", hv.Phase)
+	}
+}
+
+func TestRuntimeSyncerMissingVMRecoversWhenDomainReturns(t *testing.T) {
+	backend := memory.New()
+	hypervisors := hypervisor.NewService(backend.Hypervisors(), backend.HypervisorTokens(), backend.AgentTokens())
+	vms := vm.NewService(backend.VMs())
+	ctx := context.Background()
+
+	if _, err := hypervisors.Create(ctx, hypervisor.Hypervisor{
+		Name: "hv-recover",
+		Connection: hypervisor.ConnectionSpec{
+			Type: hypervisor.ConnectionTCP,
+			Host: "192.0.2.52",
+			Port: 16509,
+		},
+		Phase: hypervisor.PhaseRegistered,
+	}); err != nil {
+		t.Fatalf("create hypervisor: %v", err)
+	}
+	created, err := vms.Create(ctx, vm.VirtualMachine{
+		Name:          "vm-recover",
+		HypervisorRef: "hv-recover",
+		Resources:     vm.ResourceSpec{CPUCores: 1, MemoryMB: 1024, DiskGB: 8},
+		OSImageRef:    "ubuntu-test",
+	})
+	if err != nil {
+		t.Fatalf("create vm: %v", err)
+	}
+	created.Phase = vm.PhaseMissing
+	created.LastError = "libvirt domain vm-recover not found on hypervisor hv-recover"
+	if err := vms.Store().Upsert(ctx, created); err != nil {
+		t.Fatalf("seed missing vm: %v", err)
+	}
+
+	syncer := &vm.RuntimeSyncer{
+		Hypervisors: hypervisors,
+		VMs:         vms,
+		ExecutorFactory: func(context.Context, libvirt.LibvirtConfig) (libvirt.Executor, error) {
+			return &fakeLibvirtExecutor{
+				domains: map[string]*libvirt.DomainInfo{
+					"vm-recover": {Name: "vm-recover", State: libvirt.StateRunning},
+				},
+			}, nil
+		},
+	}
+	if err := syncer.SyncAll(ctx, nil); err != nil {
+		t.Fatalf("SyncAll: %v", err)
+	}
+
+	v, err := vms.Get(ctx, "vm-recover")
+	if err != nil {
+		t.Fatalf("get vm: %v", err)
+	}
+	if v.Phase != vm.PhaseRunning {
+		t.Fatalf("expected recovered vm Running, got %s", v.Phase)
+	}
+	if v.LastError != "" {
+		t.Fatalf("expected lastError cleared after recovery, got %q", v.LastError)
+	}
+}
+
 func TestRuntimeSyncerSyncAllDoesNotUseOneTimeoutForWholeBatch(t *testing.T) {
 	backend := memory.New()
 	hypervisors := hypervisor.NewService(backend.Hypervisors(), backend.HypervisorTokens(), backend.AgentTokens())
@@ -421,7 +616,7 @@ func (e *fakeLibvirtExecutor) DomainInfo(ctx context.Context, name string) (*lib
 	}
 	info, ok := e.domains[name]
 	if !ok {
-		return nil, errors.New("domain not found")
+		return nil, fmt.Errorf("lookup domain %s: %w", name, golibvirt.Error{Code: uint32(golibvirt.ErrNoDomain), Message: "no domain with matching name"})
 	}
 	return info, nil
 }

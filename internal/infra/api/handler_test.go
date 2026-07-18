@@ -29,11 +29,13 @@ import (
 )
 
 type testEnv struct {
-	echo      *echo.Echo
-	token     string
-	authStore auth.Store
-	machines  *machine.Service
-	osimages  *osimage.Service
+	echo        *echo.Echo
+	token       string
+	authStore   auth.Store
+	machines    *machine.Service
+	osimages    *osimage.Service
+	hypervisors *hypervisor.Service
+	vms         *vm.Service
 }
 
 // setupTestEnv creates a fully wired Server with in-memory backend and
@@ -50,7 +52,17 @@ func setupFirstRunTestEnv(t *testing.T) testEnv {
 	return setupTestEnvWithOptions(t, nil, false)
 }
 
+func setupTestEnvWithVMRuntimeDeleter(t *testing.T, deleter func(context.Context, vm.VirtualMachine) error) testEnv {
+	return setupTestEnvFull(t, nil, true, deleter)
+}
+
 func setupTestEnvWithOptions(t *testing.T, powerExecutor infraapi.PowerExecutor, withAdmin bool) testEnv {
+	return setupTestEnvFull(t, powerExecutor, withAdmin, func(context.Context, vm.VirtualMachine) error {
+		return nil
+	})
+}
+
+func setupTestEnvFull(t *testing.T, powerExecutor infraapi.PowerExecutor, withAdmin bool, vmRuntimeDeleter func(context.Context, vm.VirtualMachine) error) testEnv {
 	t.Helper()
 
 	backend := memory.New()
@@ -74,25 +86,23 @@ func setupTestEnvWithOptions(t *testing.T, powerExecutor infraapi.PowerExecutor,
 	}
 
 	srv := infraapi.NewServer(infraapi.ServerConfig{
-		Machines:        machineSvc,
-		PowerExecutor:   powerExecutor,
-		Subnets:         backend.Subnets(),
-		AuthStore:       authStore,
-		AuthService:     authService,
-		Discovery:       discoverySvc,
-		SSHKeys:         sshkeySvc,
-		HWInfo:          hwinfoSvc,
-		Hypervisors:     hypervisorSvc,
-		AgentTokenStore: backend.AgentTokens(),
-		VMs:             vmSvc,
-		CloudInits:      cloudInitSvc,
-		OSImages:        osimageSvc,
-		FilesDir:        t.TempDir(),
-		ImageStorageDir: t.TempDir(),
-		HealthCheck:     nil,
-		VMRuntimeDeleter: func(context.Context, vm.VirtualMachine) error {
-			return nil
-		},
+		Machines:         machineSvc,
+		PowerExecutor:    powerExecutor,
+		Subnets:          backend.Subnets(),
+		AuthStore:        authStore,
+		AuthService:      authService,
+		Discovery:        discoverySvc,
+		SSHKeys:          sshkeySvc,
+		HWInfo:           hwinfoSvc,
+		Hypervisors:      hypervisorSvc,
+		AgentTokenStore:  backend.AgentTokens(),
+		VMs:              vmSvc,
+		CloudInits:       cloudInitSvc,
+		OSImages:         osimageSvc,
+		FilesDir:         t.TempDir(),
+		ImageStorageDir:  t.TempDir(),
+		HealthCheck:      nil,
+		VMRuntimeDeleter: vmRuntimeDeleter,
 		BootEnvs: bootenv.NewManager(bootenv.Config{
 			DataDir:  t.TempDir(),
 			FilesDir: t.TempDir(),
@@ -100,11 +110,13 @@ func setupTestEnvWithOptions(t *testing.T, powerExecutor infraapi.PowerExecutor,
 	})
 
 	return testEnv{
-		echo:      srv.Echo(),
-		token:     adminToken,
-		authStore: authStore,
-		machines:  machineSvc,
-		osimages:  osimageSvc,
+		echo:        srv.Echo(),
+		token:       adminToken,
+		authStore:   authStore,
+		machines:    machineSvc,
+		osimages:    osimageSvc,
+		hypervisors: hypervisorSvc,
+		vms:         vmSvc,
 	}
 }
 

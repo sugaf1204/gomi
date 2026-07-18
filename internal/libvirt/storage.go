@@ -3,12 +3,9 @@ package libvirt
 import (
 	"context"
 	"encoding/xml"
-	"errors"
 	"fmt"
 	"io"
 	"strings"
-
-	golibvirt "github.com/digitalocean/go-libvirt"
 )
 
 func (e *rpcExecutor) CreateVolume(_ context.Context, name string, sizeGB int, format string) error {
@@ -79,7 +76,7 @@ func (e *rpcExecutor) VolumeExists(_ context.Context, name string, format string
 	}
 	_, err = e.l.StorageVolLookupByName(pool, volumeFileName(name, format))
 	if err != nil {
-		if isNoStorageVolumeError(err) {
+		if IsVolumeNotFoundError(err) {
 			return false, nil
 		}
 		return false, fmt.Errorf("lookup storage volume %s: %w", volumeFileName(name, format), err)
@@ -158,9 +155,4 @@ func xmlEscape(s string) string {
 	var b strings.Builder
 	_ = xml.EscapeText(&b, []byte(s))
 	return b.String()
-}
-
-func isNoStorageVolumeError(err error) bool {
-	var libvirtErr golibvirt.Error
-	return errors.As(err, &libvirtErr) && libvirtErr.Code == uint32(golibvirt.ErrNoStorageVol)
 }
