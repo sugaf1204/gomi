@@ -72,8 +72,12 @@ func (s *Service) UpdateStatus(ctx context.Context, name string, phase Phase, la
 	v.LastPowerAction = lastAction
 	v.LastError = lastErr
 	v.UpdatedAt = now
-	if err := s.store.Upsert(ctx, v); err != nil {
+	written, err := writeExisting(ctx, s.store, v)
+	if err != nil {
 		return VirtualMachine{}, err
+	}
+	if !written {
+		return VirtualMachine{}, resource.ErrNotFound
 	}
 	return v, nil
 }
@@ -159,6 +163,10 @@ func (s *Service) MarkMissing(ctx context.Context, name, lastAction, lastErr str
 	v.LastPowerAction = lastAction
 	v.LastError = lastErr
 	v.Provisioning.Active = false
+	// Runtime addresses belong to the absent domain; embedded DNS would keep
+	// publishing them otherwise.
+	v.IPAddresses = nil
+	v.NetworkInterfaces = nil
 	v.UpdatedAt = time.Now().UTC()
 	written, err := writeExisting(ctx, s.store, v)
 	if err != nil {

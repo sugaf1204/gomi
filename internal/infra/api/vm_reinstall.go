@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/labstack/echo/v4"
+	"github.com/sugaf1204/gomi/internal/hypervisor"
 	"github.com/sugaf1204/gomi/internal/infra/httputil"
 	"github.com/sugaf1204/gomi/internal/infra/pxehttp"
 	"github.com/sugaf1204/gomi/internal/osimage"
@@ -106,20 +107,26 @@ func (s *Server) ReinstallVM(c echo.Context) error {
 	if err := vm.ValidateVirtualMachine(current); err != nil {
 		return c.JSON(gohttp.StatusBadRequest, jsonErrorErr(err))
 	}
+	// Resolved before the armed provisioning window is persisted, so a
+	// redeploy against a deleted or dangling hypervisor fails without leaving
+	// the record serving an active PXE window. The handle also survives a
+	// cascade sweeping the records mid-redeploy, for host cleanup.
+	var deployHV hypervisor.Hypervisor
+	if s.vmDeployer != nil {
+		var hvErr error
+		deployHV, hvErr = s.hypervisors.Get(ctx, current.HypervisorRef)
+		if hvErr != nil {
+			if errors.Is(hvErr, resource.ErrNotFound) {
+				return c.JSON(gohttp.StatusConflict, jsonError("hypervisor not found: "+current.HypervisorRef))
+			}
+			return c.JSON(gohttp.StatusInternalServerError, jsonErrorErr(hvErr))
+		}
+	}
 	if err := s.vms.Store().Upsert(ctx, current); err != nil {
 		return c.JSON(gohttp.StatusInternalServerError, jsonErrorErr(err))
 	}
 
 	if s.vmDeployer != nil {
-		// Resolved up front so a cascade sweeping the records mid-redeploy
-		// still leaves a hypervisor handle for host cleanup.
-		deployHV, hvErr := s.hypervisors.Get(ctx, current.HypervisorRef)
-		if hvErr != nil {
-			if errors.Is(hvErr, resource.ErrNotFound) {
-				return c.JSON(gohttp.StatusConflict, jsonError("hypervisor was deleted concurrently: "+current.HypervisorRef))
-			}
-			return c.JSON(gohttp.StatusInternalServerError, jsonErrorErr(hvErr))
-		}
 		if err := s.vmDeployer.Redeploy(ctx, current, pxehttp.RenderNoCloudLineConfig); err != nil {
 			// Token-gated: a stale failure must not clobber the window a
 			// newer redeploy has armed in the meantime.
