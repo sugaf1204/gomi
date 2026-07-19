@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 
 	"github.com/labstack/echo/v4"
 
@@ -30,7 +31,13 @@ func (s *Server) cascadeDeleteHypervisorRecords(ctx context.Context, c echo.Cont
 	// row is gone and upsert after the first child listing. The sweep also
 	// runs when another delete removed the row first, since that delete's
 	// sweep may have listed children before this request's racing create.
-	return s.deleteHypervisorVMRecords(ctx, c, hvName, reason)
+	// A sweep failure is logged, not returned: the parent row is already
+	// gone, so failing the request would leave no retry path through the
+	// delete endpoints.
+	if err := s.deleteHypervisorVMRecords(ctx, c, hvName, reason); err != nil {
+		log.Printf("cascade delete %s: post-delete vm sweep: %v", hvName, err)
+	}
+	return nil
 }
 
 func (s *Server) deleteHypervisorVMRecords(ctx context.Context, c echo.Context, hvName, reason string) error {

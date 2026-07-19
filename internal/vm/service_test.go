@@ -584,3 +584,36 @@ func TestUpdateDeployStatusKeepsTimedOutWindowAfterObservation(t *testing.T) {
 		t.Fatalf("expected timed-out phase Error to survive, got %s", after.Phase)
 	}
 }
+
+func TestUpdateDeployStatusRearmsAfterSyncRecoveredDefineGap(t *testing.T) {
+	svc := newTestService()
+	ctx := context.Background()
+	created, err := svc.Create(ctx, testVM())
+	if err != nil {
+		t.Fatalf("create vm: %v", err)
+	}
+	started := time.Now().UTC()
+	deadline := started.Add(time.Hour)
+	armed := vm.ProvisioningStatus{Active: true, StartedAt: &started, DeadlineAt: &deadline, CompletionToken: "tok-recovered"}
+
+	// The define gap marked the record Missing (window deactivated), the
+	// deploy then defined the domain, and a sync observed it and recovered
+	// the phase before UpdateDeployStatus ran.
+	observed := started.Add(time.Minute)
+	recovered := created
+	recovered.Phase = vm.PhaseStopped
+	recovered.Provisioning = armed
+	recovered.Provisioning.Active = false
+	recovered.Provisioning.DomainObservedAt = &observed
+	if err := svc.Store().Upsert(ctx, recovered); err != nil {
+		t.Fatalf("seed recovered vm: %v", err)
+	}
+
+	after, err := svc.UpdateDeployStatus(ctx, created.Name, vm.PhaseProvisioning, "create+cloudimage", armed)
+	if err != nil {
+		t.Fatalf("UpdateDeployStatus: %v", err)
+	}
+	if !after.Provisioning.Active || after.Phase != vm.PhaseProvisioning {
+		t.Fatalf("expected recovered define-gap window to be re-armed, got phase=%s provisioning=%+v", after.Phase, after.Provisioning)
+	}
+}

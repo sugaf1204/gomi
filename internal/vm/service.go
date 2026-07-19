@@ -100,17 +100,17 @@ func (s *Service) UpdateDeployStatus(ctx context.Context, name string, phase Pha
 	if v.Provisioning.CompletedAt != nil {
 		return v, nil
 	}
-	// A window the sync loop has already ended must stay ended unless this is
-	// the define-gap case: the record was marked Missing before (or without)
-	// a domain observation and the deploy has now defined the domain, so the
-	// install is re-armed. Every other ended window — Missing marked after
-	// the observation (domain removed again) or a post-observation install
-	// timeout — must not be resurrected by a deploy finishing late.
+	// A window the sync loop has already ended stays ended when ending it was
+	// the right call: the domain was removed again after this deploy defined
+	// it (Missing mark postdating the observation) or the install timed out
+	// (Error). Other inactive states are the define-gap fallout — Missing
+	// marked before the domain existed, possibly already recovered by a sync
+	// that observed the new domain — and the deploy completing re-arms them.
 	if !v.Provisioning.Active {
-		missingBeforeObservation := v.Phase == PhaseMissing &&
-			(v.Provisioning.DomainObservedAt == nil || v.MissingSince == nil ||
-				!v.MissingSince.After(*v.Provisioning.DomainObservedAt))
-		if !missingBeforeObservation {
+		removedAfterObservation := v.Phase == PhaseMissing &&
+			v.Provisioning.DomainObservedAt != nil && v.MissingSince != nil &&
+			v.MissingSince.After(*v.Provisioning.DomainObservedAt)
+		if removedAfterObservation || v.Phase == PhaseError {
 			return v, nil
 		}
 	}

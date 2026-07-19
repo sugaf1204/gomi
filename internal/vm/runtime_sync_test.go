@@ -343,12 +343,14 @@ func TestRuntimeSyncerMarkVMMissingEndsProvisioning(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create vm: %v", err)
 	}
-	// Provisioning is active but already past its deadline: the deploy is no
-	// longer in flight, so the missing domain must end provisioning.
+	// Provisioning is active and its domain has been defined and observed;
+	// the absent domain therefore means it was removed mid-install, and the
+	// Missing mark must end provisioning.
 	started := time.Now().UTC().Add(-2 * time.Hour)
+	observed := time.Now().UTC().Add(-90 * time.Minute)
 	deadline := time.Now().UTC().Add(-time.Hour)
 	created.Phase = vm.PhaseProvisioning
-	created.Provisioning = vm.ProvisioningStatus{Active: true, StartedAt: &started, DeadlineAt: &deadline, CompletionToken: "prov-token"}
+	created.Provisioning = vm.ProvisioningStatus{Active: true, StartedAt: &started, DeadlineAt: &deadline, DomainObservedAt: &observed, CompletionToken: "prov-token"}
 	if err := vms.Store().Upsert(ctx, created); err != nil {
 		t.Fatalf("seed provisioning vm: %v", err)
 	}
@@ -402,9 +404,11 @@ func TestRuntimeSyncerDoesNotMarkVMMissingDuringActiveDeploy(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create vm: %v", err)
 	}
-	// Deploy in flight: provisioning armed with a future deadline while the
-	// domain has not been defined yet (create) or was just undefined (redeploy).
-	started := time.Now().UTC()
+	// Deploy in flight: provisioning armed while the domain has not been
+	// defined yet (create) or was just undefined (redeploy). The deadline is
+	// already past — pre-domain work such as image upload may legitimately
+	// outlast it, so only the domain-defined marker ends this suppression.
+	started := time.Now().UTC().Add(-2 * time.Hour)
 	deadline := started.Add(time.Hour)
 	created.Phase = vm.PhaseProvisioning
 	created.Provisioning = vm.ProvisioningStatus{Active: true, StartedAt: &started, DeadlineAt: &deadline, CompletionToken: "prov-token"}

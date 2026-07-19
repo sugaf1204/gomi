@@ -60,6 +60,12 @@ func (s *Server) DeleteHypervisor(c echo.Context) error {
 	ctx := c.Request().Context()
 	if _, err := s.hypervisors.Get(ctx, name); err != nil {
 		if errors.Is(err, resource.ErrNotFound) {
+			// The row is already gone, but a racing create may have left VM
+			// records behind after an earlier delete's sweep; give retries a
+			// path to clean those up.
+			if sweepErr := s.deleteHypervisorVMRecords(ctx, c, name, "cascade from hypervisor "+name); sweepErr != nil {
+				return c.JSON(gohttp.StatusInternalServerError, jsonErrorErr(sweepErr))
+			}
 			return c.JSON(gohttp.StatusNotFound, jsonError("not found"))
 		}
 		return c.JSON(gohttp.StatusInternalServerError, jsonErrorErr(err))

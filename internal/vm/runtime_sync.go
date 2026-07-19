@@ -264,7 +264,7 @@ func (s *RuntimeSyncer) syncWithExecutor(ctx context.Context, hv hypervisor.Hype
 	info, err := exec.DomainInfo(ctx, domainName)
 	if err != nil {
 		if libvirt.IsDomainNotFoundError(err) {
-			if vmDeployInFlight(v, time.Now().UTC()) {
+			if vmDeployInFlight(v) {
 				return v, nil
 			}
 			return s.markVMMissing(ctx, hv, v, domainName)
@@ -312,18 +312,17 @@ func (s *RuntimeSyncer) syncWithExecutor(ctx context.Context, hv hypervisor.Hype
 
 // vmDeployInFlight reports whether the VM is inside a create or redeploy
 // window where the libvirt domain may legitimately not exist yet: both flows
-// upsert the record with an armed provisioning deadline before DefineDomain
+// upsert the record with an armed provisioning window before DefineDomain
 // runs, and redeploy undefines the old domain before defining the new one.
-// The define gap can be long (e.g. uploading a backing image to the host), so
-// it is bounded by the domain having been observed rather than by wall time:
-// while the sync loop has never seen the domain in this provisioning window
-// the deploy is still preparing it, and once it has been seen a later
-// not-found means the domain was removed from the host.
-func vmDeployInFlight(v VirtualMachine, now time.Time) bool {
-	if !v.Provisioning.Active || IsProvisioningTimedOut(v.Provisioning, now) {
-		return false
-	}
-	return v.Provisioning.DomainObservedAt == nil
+// The define gap can be long (e.g. uploading a backing image to the host) —
+// even longer than the install deadline — so it is bounded by the domain
+// having been defined, not by wall time: while DomainObservedAt is nil the
+// deploy is still preparing the domain (a deploy that errors out ends its
+// window via FailDeploy), and once it is set a later not-found means the
+// domain was removed from the host. The install deadline is enforced by the
+// timeout check that runs once the domain exists.
+func vmDeployInFlight(v VirtualMachine) bool {
+	return v.Provisioning.Active && v.Provisioning.DomainObservedAt == nil
 }
 
 // markVMMissing records that the VM's libvirt domain no longer exists on the
