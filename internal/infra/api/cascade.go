@@ -49,6 +49,19 @@ func (s *Server) deleteHypervisorVMRecords(ctx context.Context, c echo.Context, 
 		return fmt.Errorf("list virtual machines of hypervisor %s: %w", hvName, err)
 	}
 	for _, v := range vms {
+		// Re-read before deleting: a concurrent migration may have moved the
+		// record to another hypervisor since the listing was taken, and that
+		// record must survive this cascade.
+		fresh, err := s.vms.Get(ctx, v.Name)
+		if errors.Is(err, resource.ErrNotFound) {
+			continue
+		}
+		if err != nil {
+			return fmt.Errorf("recheck virtual machine record %s: %w", v.Name, err)
+		}
+		if fresh.HypervisorRef != hvName {
+			continue
+		}
 		if err := s.vms.Delete(ctx, v.Name); err != nil && !errors.Is(err, resource.ErrNotFound) {
 			return fmt.Errorf("delete virtual machine record %s: %w", v.Name, err)
 		}

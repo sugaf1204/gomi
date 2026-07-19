@@ -208,6 +208,13 @@ func (s *Service) FailDeploy(ctx context.Context, name, lastAction, lastErr, com
 	return v, nil
 }
 
+// UpdateExisting persists v only while its row still exists, reporting
+// whether a row was written. Callers use it for status writes that must not
+// resurrect a record removed by a concurrent delete or cascade.
+func (s *Service) UpdateExisting(ctx context.Context, v VirtualMachine) (bool, error) {
+	return writeExisting(ctx, s.store, v)
+}
+
 func (s *Service) Delete(ctx context.Context, name string) error {
 	return s.store.Delete(ctx, name)
 }

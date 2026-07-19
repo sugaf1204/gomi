@@ -79,15 +79,17 @@ func (h *Handler) PXEInstallComplete(c echo.Context) error {
 		updated.LastError = ""
 		updated.UpdatedAt = now
 		updated.ApplyInstallCompleteReport(report)
-		if err := h.vms.Store().Upsert(c.Request().Context(), updated); err != nil {
-			return c.JSON(gohttp.StatusInternalServerError, jsonErrorErr(err))
-		}
 		if updated.Phase == vm.PhaseProvisioning {
 			updated.Phase = vm.PhaseRunning
-			updated.UpdatedAt = now
-			if err := h.vms.Store().Upsert(c.Request().Context(), updated); err != nil {
-				return c.JSON(gohttp.StatusInternalServerError, jsonErrorErr(err))
-			}
+		}
+		// Existence-checked: a cascade may have deleted the record after the
+		// token lookup, and finalizing must not recreate it.
+		written, err := h.vms.UpdateExisting(c.Request().Context(), updated)
+		if err != nil {
+			return c.JSON(gohttp.StatusInternalServerError, jsonErrorErr(err))
+		}
+		if !written {
+			return c.JSON(gohttp.StatusConflict, jsonError("vm record was deleted"))
 		}
 
 		if h.authStore != nil {

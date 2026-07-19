@@ -68,18 +68,15 @@ func (s *Server) runVMPowerAction(c echo.Context, action string) error {
 	// A typed not-found proves the domain is absent from the host: record
 	// that as Missing regardless of the previous phase, so a later delete
 	// honors the record-only storage contract instead of treating the VM as
-	// live. A Missing VM also stays Missing on a nil-error power-off (the
-	// path swallows "not running" no-ops); a successful power-on found and
-	// started a domain, so it exits Missing normally.
+	// live. Conversely a nil error proves the domain is defined (the
+	// power-off path surfaces the typed not-found instead of swallowing
+	// it), so a successful action exits Missing normally.
 	if libvirt.IsDomainNotFoundError(libvirtErr) {
 		targetPhase = vm.PhaseMissing
 		lastErr = fmt.Sprintf("libvirt domain not found during %s: %v", action, libvirtErr)
 		if v.Phase == vm.PhaseMissing {
 			lastErr = v.LastError
 		}
-	} else if v.Phase == vm.PhaseMissing && libvirtErr == nil && action == "power-off" {
-		targetPhase = vm.PhaseMissing
-		lastErr = v.LastError
 	}
 
 	var updated vm.VirtualMachine

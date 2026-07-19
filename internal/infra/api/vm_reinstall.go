@@ -122,8 +122,12 @@ func (s *Server) ReinstallVM(c echo.Context) error {
 			return c.JSON(gohttp.StatusInternalServerError, jsonErrorErr(hvErr))
 		}
 	}
-	if err := s.vms.Store().Upsert(ctx, current); err != nil {
+	// Existence-checked: a cascade may delete the record between the initial
+	// Get and this write, and arming must not recreate it.
+	if written, err := s.vms.UpdateExisting(ctx, current); err != nil {
 		return c.JSON(gohttp.StatusInternalServerError, jsonErrorErr(err))
+	} else if !written {
+		return c.JSON(gohttp.StatusConflict, jsonError("vm record was deleted concurrently: "+name))
 	}
 
 	if s.vmDeployer != nil {
