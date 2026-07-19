@@ -93,6 +93,18 @@ func (s *Server) CreateVirtualMachine(c echo.Context) error {
 		return c.JSON(gohttp.StatusBadRequest, jsonErrorErr(err))
 	}
 
+	// The hypervisor may have been deleted (with its record-only cascade)
+	// between the existence check above and the upsert; without a cross-store
+	// transaction, this recheck plus the cascade's post-delete sweep ensures
+	// the new record cannot survive with a dangling hypervisorRef.
+	if _, err := s.hypervisors.Get(ctx, created.HypervisorRef); err != nil {
+		if errors.Is(err, resource.ErrNotFound) {
+			_ = s.vms.Delete(ctx, created.Name)
+			return c.JSON(gohttp.StatusConflict, jsonError("hypervisor was deleted concurrently: "+created.HypervisorRef))
+		}
+		return c.JSON(gohttp.StatusInternalServerError, jsonErrorErr(err))
+	}
+
 	if s.vmDeployer != nil {
 		if deployErr := s.vmDeployer.Deploy(ctx, &created, pxehttp.RenderNoCloudLineConfig); deployErr != nil {
 			httputil.CreateAudit(c, s.authStore, created.Name, "create-vm", "partial", "vm created but deploy failed: "+deployErr.Error(), nil)

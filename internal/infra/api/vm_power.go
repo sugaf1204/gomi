@@ -64,12 +64,16 @@ func (s *Server) runVMPowerAction(c echo.Context, action string) error {
 	if libvirtErr != nil {
 		targetPhase = vm.PhaseError
 		lastErr = libvirtErr.Error()
-		// A Missing VM whose domain is still absent stays Missing: flipping
-		// it to Error would make a later delete treat the record as a live
-		// VM and remove leftover host storage.
-		if v.Phase == vm.PhaseMissing && libvirt.IsDomainNotFoundError(libvirtErr) {
-			targetPhase = vm.PhaseMissing
-		}
+	}
+	// A Missing VM stays Missing unless a real error proves otherwise: a
+	// no-op power action on an absent domain (swallowed by the power-off
+	// path) or a typed not-found must not flip the record to Stopped/Error,
+	// or a later delete would treat it as a live VM and remove leftover host
+	// storage. If the domain actually reappeared, the next runtime sync
+	// observes it and moves the record out of Missing.
+	if v.Phase == vm.PhaseMissing && (libvirtErr == nil || libvirt.IsDomainNotFoundError(libvirtErr)) {
+		targetPhase = vm.PhaseMissing
+		lastErr = v.LastError
 	}
 
 	updated, err := s.vms.UpdateStatus(ctx, name, targetPhase, action, lastErr)

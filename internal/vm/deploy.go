@@ -243,7 +243,7 @@ func (d *Deployer) markDomainDefined(ctx context.Context, deployed *VirtualMachi
 }
 
 func (d *Deployer) updatePhaseOnError(ctx context.Context, created *VirtualMachine, action string, deployErr error) {
-	if updated, err := d.VMs.UpdateStatus(ctx, created.Name, PhaseError, action, deployErr.Error()); err == nil {
+	if updated, err := d.VMs.FailDeploy(ctx, created.Name, action, deployErr.Error(), created.Provisioning.CompletionToken); err == nil {
 		*created = updated
 	}
 }

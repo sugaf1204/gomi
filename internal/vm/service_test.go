@@ -413,3 +413,80 @@ func TestUpdateDeployStatusKeepsRenewedDeadline(t *testing.T) {
 		t.Fatal("expected domain-defined marker to survive the restore")
 	}
 }
+
+func TestFailDeployEndsOwnProvisioningWindow(t *testing.T) {
+	svc := newTestService()
+	ctx := context.Background()
+	created, err := svc.Create(ctx, testVM())
+	if err != nil {
+		t.Fatalf("create vm: %v", err)
+	}
+	started := time.Now().UTC()
+	deadline := started.Add(time.Hour)
+	created.Provisioning = vm.ProvisioningStatus{Active: true, StartedAt: &started, DeadlineAt: &deadline, CompletionToken: "tok-fail"}
+	if err := svc.Store().Upsert(ctx, created); err != nil {
+		t.Fatalf("arm provisioning: %v", err)
+	}
+
+	failed, err := svc.FailDeploy(ctx, created.Name, "define", "define domain: boom", "tok-fail")
+	if err != nil {
+		t.Fatalf("FailDeploy: %v", err)
+	}
+	if failed.Phase != vm.PhaseError {
+		t.Fatalf("expected phase Error, got %s", failed.Phase)
+	}
+	if failed.Provisioning.Active {
+		t.Fatal("expected provisioning to be ended on deploy failure")
+	}
+
+	// A stale failure report must not touch a newer deploy's window.
+	rearmed := failed
+	rearmed.Provisioning = vm.ProvisioningStatus{Active: true, StartedAt: &started, DeadlineAt: &deadline, CompletionToken: "tok-newer"}
+	rearmed.Phase = vm.PhaseProvisioning
+	if err := svc.Store().Upsert(ctx, rearmed); err != nil {
+		t.Fatalf("arm newer window: %v", err)
+	}
+	stale, err := svc.FailDeploy(ctx, created.Name, "define", "old deploy failed", "tok-fail")
+	if err != nil {
+		t.Fatalf("FailDeploy stale: %v", err)
+	}
+	if !stale.Provisioning.Active || stale.Phase != vm.PhaseProvisioning {
+		t.Fatalf("expected newer window to survive stale failure, got phase=%s provisioning=%+v", stale.Phase, stale.Provisioning)
+	}
+}
+
+func TestUpdateDeployStatusKeepsMissingAfterObservation(t *testing.T) {
+	svc := newTestService()
+	ctx := context.Background()
+	created, err := svc.Create(ctx, testVM())
+	if err != nil {
+		t.Fatalf("create vm: %v", err)
+	}
+	started := time.Now().UTC()
+	deadline := started.Add(time.Hour)
+	armed := vm.ProvisioningStatus{Active: true, StartedAt: &started, DeadlineAt: &deadline, CompletionToken: "tok-missing"}
+
+	// The domain was defined (observed) and then removed: sync marked the
+	// record Missing and ended provisioning.
+	observed := started.Add(time.Minute)
+	missing := created
+	missing.Phase = vm.PhaseMissing
+	missing.LastError = "libvirt domain vm-test-01 not found on hypervisor hv-01"
+	missing.Provisioning = armed
+	missing.Provisioning.Active = false
+	missing.Provisioning.DomainObservedAt = &observed
+	if err := svc.Store().Upsert(ctx, missing); err != nil {
+		t.Fatalf("seed missing vm: %v", err)
+	}
+
+	after, err := svc.UpdateDeployStatus(ctx, created.Name, vm.PhaseProvisioning, "create+cloudimage", armed)
+	if err != nil {
+		t.Fatalf("UpdateDeployStatus: %v", err)
+	}
+	if after.Phase != vm.PhaseMissing {
+		t.Fatalf("expected Missing to survive deploy completion, got %s", after.Phase)
+	}
+	if after.Provisioning.Active {
+		t.Fatal("expected provisioning to stay ended for a removed domain")
+	}
+}

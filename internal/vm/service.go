@@ -100,6 +100,12 @@ func (s *Service) UpdateDeployStatus(ctx context.Context, name string, phase Pha
 	if v.Provisioning.CompletedAt != nil {
 		return v, nil
 	}
+	// The sync loop observed this window's domain and then saw it removed
+	// (Missing after observation); the deploy finishing later must not
+	// resurrect the window for a domain that is gone again.
+	if v.Phase == PhaseMissing && v.Provisioning.DomainObservedAt != nil {
+		return v, nil
+	}
 	// The domain-defined marker (and the deadline renewed with it) may have
 	// been recorded for this window after the caller captured its snapshot;
 	// restoring the snapshot must not erase them, or a later domain removal
@@ -115,6 +121,32 @@ func (s *Service) UpdateDeployStatus(ctx context.Context, name string, phase Pha
 	v.LastPowerAction = lastAction
 	v.LastError = ""
 	v.Provisioning = provisioning
+	v.UpdatedAt = time.Now().UTC()
+	if err := s.store.Upsert(ctx, v); err != nil {
+		return VirtualMachine{}, err
+	}
+	return v, nil
+}
+
+// FailDeploy records a deploy failure and ends the provisioning window that
+// deploy armed, so PXE resolution stops serving install config for a deploy
+// that is already over. The record is only touched while it still belongs to
+// the failed deploy (matching completion token), so a newer redeploy's window
+// survives a stale failure report.
+func (s *Service) FailDeploy(ctx context.Context, name, lastAction, lastErr, completionToken string) (VirtualMachine, error) {
+	v, err := s.store.Get(ctx, name)
+	if err != nil {
+		return VirtualMachine{}, err
+	}
+	if v.Provisioning.CompletionToken != completionToken {
+		return v, nil
+	}
+	v.Phase = PhaseError
+	v.LastPowerAction = lastAction
+	v.LastError = lastErr
+	if v.Provisioning.CompletedAt == nil {
+		v.Provisioning.Active = false
+	}
 	v.UpdatedAt = time.Now().UTC()
 	if err := s.store.Upsert(ctx, v); err != nil {
 		return VirtualMachine{}, err
