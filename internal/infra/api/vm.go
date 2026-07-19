@@ -191,6 +191,7 @@ func (s *Server) DeleteVirtualMachine(c echo.Context) error {
 		}
 		return c.JSON(gohttp.StatusInternalServerError, jsonErrorErr(err))
 	}
+	s.releaseVMLeases(ctx, v)
 	httputil.CreateAudit(c, s.authStore, name, "delete-vm", "success", "virtual machine deleted", nil)
 	return c.NoContent(gohttp.StatusNoContent)
 }

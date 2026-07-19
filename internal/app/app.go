@@ -200,6 +200,7 @@ func (r *Runtime) StartServer(ctx context.Context) error {
 		ProvisionTimeout: r.Config.ProvisionTimeout,
 		VMDeployer:       vmDeployer,
 		VMMigrator:       vmMigrator,
+		LeaseReleaser:    r.releaseLease,
 		BootEnvs:         r.bootenvMgr,
 	})
 

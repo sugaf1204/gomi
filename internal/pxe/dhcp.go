@@ -19,6 +19,18 @@ import (
 
 const defaultLeaseTime = 1 * time.Hour
 
+// leaseTTL derives the lease-pool expiry duration from the subnet's configured
+// DHCP lease time. It mirrors the lease time advertised to clients: once a
+// client stops renewing within that window, the address is reclaimable. A zero
+// or negative LeaseTime means "no expiry", preserving the historical behavior
+// where leases lived forever.
+func leaseTTL(spec subnet.SubnetSpec) time.Duration {
+	if spec.LeaseTime > 0 {
+		return time.Duration(spec.LeaseTime) * time.Second
+	}
+	return 0
+}
+
 // Server holds DHCP server state for both full and proxy modes.
 type Server struct {
 	mu            sync.RWMutex
@@ -44,7 +56,7 @@ func NewServer(mode, iface string, serverIP net.IP, spec subnet.SubnetSpec, boot
 		store:         store,
 	}
 	if mode == "full" && spec.PXEAddressRange != nil {
-		s.leases = newLeasePool(spec.PXEAddressRange.Start, spec.PXEAddressRange.End, store)
+		s.leases = newLeasePool(spec.PXEAddressRange.Start, spec.PXEAddressRange.End, store, leaseTTL(spec))
 	}
 	return s
 }
@@ -57,6 +69,7 @@ func (s *Server) Reconfigure(spec subnet.SubnetSpec) {
 	defer s.mu.Unlock()
 
 	oldRange := s.subnet.PXEAddressRange
+	oldTTL := leaseTTL(s.subnet)
 	s.subnet = spec
 
 	if s.mode != "full" {
@@ -76,10 +89,42 @@ func (s *Server) Reconfigure(spec subnet.SubnetSpec) {
 		needsRebuild = oldRange.Start != spec.PXEAddressRange.Start || oldRange.End != spec.PXEAddressRange.End
 	}
 
+	// A changed lease time changes the reclamation TTL; apply it in place when
+	// the range itself is unchanged so existing leases are preserved.
+	if !needsRebuild && s.leases != nil && leaseTTL(spec) != oldTTL {
+		s.leases.SetTTL(leaseTTL(spec))
+		log.Printf("dhcp: reconfigure: lease TTL updated to %s", leaseTTL(spec))
+	}
+
 	if needsRebuild {
-		s.leases = newLeasePool(spec.PXEAddressRange.Start, spec.PXEAddressRange.End, s.store)
+		s.leases = newLeasePool(spec.PXEAddressRange.Start, spec.PXEAddressRange.End, s.store, leaseTTL(spec))
 		log.Printf("dhcp: reconfigure: lease pool rebuilt %s-%s", spec.PXEAddressRange.Start, spec.PXEAddressRange.End)
 	}
+}
+
+// ReleaseLease frees the lease held by the given MAC, clearing both the
+// in-memory pool and the persisted record so the address returns to the pool
+// immediately. When no pool is active (proxy mode), it still removes any
+// persisted record for the MAC. The MAC is accepted in any canonical form.
+func (s *Server) ReleaseLease(ctx context.Context, mac string) error {
+	hw, err := net.ParseMAC(strings.TrimSpace(mac))
+	if err != nil {
+		return fmt.Errorf("release lease: parse mac %q: %w", mac, err)
+	}
+
+	s.mu.RLock()
+	pool := s.leases
+	store := s.store
+	s.mu.RUnlock()
+
+	if pool != nil {
+		pool.Release(hw)
+		return nil
+	}
+	if store != nil {
+		return store.Delete(ctx, hw.String())
+	}
+	return nil
 }
 
 // UpdateReservations updates static MAC→IP reservations on the lease pool.
