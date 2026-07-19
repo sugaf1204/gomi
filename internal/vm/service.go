@@ -101,11 +101,16 @@ func (s *Service) UpdateDeployStatus(ctx context.Context, name string, phase Pha
 		return v, nil
 	}
 	// The sync loop observed this window's domain and then saw it removed
-	// (Missing after observation); the deploy finishing later must not
-	// resurrect the window for a domain that is gone again.
-	if v.Phase == PhaseMissing && v.Provisioning.DomainObservedAt != nil {
+	// (the Missing mark postdates the observation); the deploy finishing
+	// later must not resurrect the window for a domain that is gone again.
+	// A Missing mark that predates the observation is the opposite case: the
+	// deploy defined the domain after a timed-out define gap, so the restore
+	// below re-arms the install.
+	if v.Phase == PhaseMissing && v.Provisioning.DomainObservedAt != nil &&
+		v.MissingSince != nil && v.MissingSince.After(*v.Provisioning.DomainObservedAt) {
 		return v, nil
 	}
+	v.MissingSince = nil
 	// The domain-defined marker (and the deadline renewed with it) may have
 	// been recorded for this window after the caller captured its snapshot;
 	// restoring the snapshot must not erase them, or a later domain removal

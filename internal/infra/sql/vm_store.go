@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"sync"
+	"time"
 
 	"github.com/sugaf1204/gomi/internal/resource"
 	"github.com/sugaf1204/gomi/internal/vm"
@@ -64,11 +65,12 @@ type vmStatusJSON struct {
 	LastPowerAction          string                      `json:"lastPowerAction,omitempty"`
 	LastDeployedCloudInitRef string                      `json:"lastDeployedCloudInitRef,omitempty"`
 	LastError                string                      `json:"lastError,omitempty"`
+	MissingSince             *time.Time                  `json:"missingSince,omitempty"`
 	CreatedOnHost            string                      `json:"createdOnHost,omitempty"`
 }
 
-func (s *VMStore) Upsert(ctx context.Context, v vm.VirtualMachine) error {
-	specJSON, err := marshalJSON(vmSpecJSON{
+func marshalVMColumns(v vm.VirtualMachine) (specJSON, statusJSON string, err error) {
+	specJSON, err = marshalJSON(vmSpecJSON{
 		Resources:          v.Resources,
 		OSImageRef:         v.OSImageRef,
 		CloudInitRef:       v.CloudInitRef,
@@ -83,9 +85,9 @@ func (s *VMStore) Upsert(ctx context.Context, v vm.VirtualMachine) error {
 		LoginUser:          v.LoginUser,
 	})
 	if err != nil {
-		return err
+		return "", "", err
 	}
-	statusJSON, err := marshalJSON(vmStatusJSON{
+	statusJSON, err = marshalJSON(vmStatusJSON{
 		Phase:                    v.Phase,
 		LibvirtDomain:            v.LibvirtDomain,
 		HypervisorName:           v.HypervisorName,
@@ -95,8 +97,17 @@ func (s *VMStore) Upsert(ctx context.Context, v vm.VirtualMachine) error {
 		LastPowerAction:          v.LastPowerAction,
 		LastDeployedCloudInitRef: v.LastDeployedCloudInitRef,
 		LastError:                v.LastError,
+		MissingSince:             v.MissingSince,
 		CreatedOnHost:            v.CreatedOnHost,
 	})
+	if err != nil {
+		return "", "", err
+	}
+	return specJSON, statusJSON, nil
+}
+
+func (s *VMStore) Upsert(ctx context.Context, v vm.VirtualMachine) error {
+	specJSON, statusJSON, err := marshalVMColumns(v)
 	if err != nil {
 		return err
 	}
@@ -118,6 +129,33 @@ func (s *VMStore) Upsert(ctx context.Context, v vm.VirtualMachine) error {
 		s.notify()
 	}
 	return err
+}
+
+// UpdateExisting writes the VM only if its row still exists. It implements
+// vm.ExistingUpdater.
+func (s *VMStore) UpdateExisting(ctx context.Context, v vm.VirtualMachine) (bool, error) {
+	specJSON, statusJSON, err := marshalVMColumns(v)
+	if err != nil {
+		return false, err
+	}
+
+	res, err := s.b.exec(ctx, `
+		UPDATE virtual_machines
+		SET hypervisor_ref = ?, spec = ?, status = ?, updated_at = ?
+		WHERE name = ?`,
+		v.HypervisorRef, specJSON, statusJSON, v.UpdatedAt, v.Name,
+	)
+	if err != nil {
+		return false, err
+	}
+	rows, err := res.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	if rows > 0 {
+		s.notify()
+	}
+	return rows > 0, nil
 }
 
 func (s *VMStore) Get(ctx context.Context, name string) (vm.VirtualMachine, error) {
@@ -268,6 +306,7 @@ func scanVMRow(row scanner) (vm.VirtualMachine, error) {
 	v.LastPowerAction = status.LastPowerAction
 	v.LastDeployedCloudInitRef = status.LastDeployedCloudInitRef
 	v.LastError = status.LastError
+	v.MissingSince = status.MissingSince
 	v.CreatedOnHost = status.CreatedOnHost
 
 	return v, nil

@@ -282,9 +282,10 @@ func (s *RuntimeSyncer) syncWithExecutor(ctx context.Context, hv hypervisor.Hype
 
 	updated := v
 	if v.Phase == PhaseMissing {
-		// The domain exists again; the Missing-specific error no longer
+		// The domain exists again; the Missing-specific state no longer
 		// applies regardless of what phase the live state maps to below.
 		updated.LastError = ""
+		updated.MissingSince = nil
 	}
 	now := time.Now().UTC()
 	if IsProvisioningTimedOut(updated.Provisioning, now) {
@@ -340,6 +341,10 @@ func (s *RuntimeSyncer) markVMMissing(ctx context.Context, hv hypervisor.Hypervi
 	// The domain is gone, so any in-flight provisioning can never complete;
 	// end it so the machine's PXE config stops resolving to this VM.
 	updated.Provisioning.Active = false
+	if updated.MissingSince == nil {
+		now := time.Now().UTC()
+		updated.MissingSince = &now
+	}
 	return s.persistSyncedVM(ctx, v, updated)
 }
 
@@ -348,7 +353,20 @@ func (s *RuntimeSyncer) persistSyncedVM(ctx context.Context, before, updated Vir
 		return before, nil
 	}
 	updated.UpdatedAt = time.Now().UTC()
-	if err := s.VMs.Store().Upsert(ctx, updated); err != nil {
+	store := s.VMs.Store()
+	// The sync worked from a snapshot; writing through an existence-checked
+	// update keeps a concurrent delete from being resurrected by this write.
+	if updater, ok := store.(ExistingUpdater); ok {
+		written, err := updater.UpdateExisting(ctx, updated)
+		if err != nil {
+			return before, fmt.Errorf("persist synced vm status: %w", err)
+		}
+		if !written {
+			return before, nil
+		}
+		return updated, nil
+	}
+	if err := store.Upsert(ctx, updated); err != nil {
 		return before, fmt.Errorf("persist synced vm status: %w", err)
 	}
 	return updated, nil
@@ -518,11 +536,21 @@ func prependUniqueIP(primary string, ips []string) []string {
 	return out
 }
 
+func equalTimePtr(a, b *time.Time) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	return a.Equal(*b)
+}
+
 func VMStatusChanged(before VirtualMachine, after VirtualMachine) bool {
 	if before.Phase != after.Phase {
 		return true
 	}
 	if before.LastError != after.LastError {
+		return true
+	}
+	if !equalTimePtr(before.MissingSince, after.MissingSince) {
 		return true
 	}
 	if before.HypervisorName != after.HypervisorName {

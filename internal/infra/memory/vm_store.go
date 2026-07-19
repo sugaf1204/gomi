@@ -41,6 +41,19 @@ func (s *VMStore) Upsert(_ context.Context, v vm.VirtualMachine) error {
 	return nil
 }
 
+// UpdateExisting writes the VM only if its row still exists. It implements
+// vm.ExistingUpdater.
+func (s *VMStore) UpdateExisting(_ context.Context, v vm.VirtualMachine) (bool, error) {
+	s.b.mu.Lock()
+	defer s.b.mu.Unlock()
+	if _, ok := s.b.vms[v.Name]; !ok {
+		return false, nil
+	}
+	s.b.vms[v.Name] = v
+	s.notify()
+	return true, nil
+}
+
 func (s *VMStore) Get(_ context.Context, name string) (vm.VirtualMachine, error) {
 	s.b.mu.RLock()
 	defer s.b.mu.RUnlock()

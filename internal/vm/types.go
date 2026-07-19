@@ -144,7 +144,12 @@ type VirtualMachine struct {
 	LastPowerAction          string                   `json:"lastPowerAction,omitempty"`
 	LastDeployedCloudInitRef string                   `json:"lastDeployedCloudInitRef,omitempty"`
 	LastError                string                   `json:"lastError,omitempty"`
-	CreatedOnHost            string                   `json:"createdOnHost,omitempty"`
+	// MissingSince records when the runtime sync loop marked this record
+	// Missing. Compared against Provisioning.DomainObservedAt it tells a
+	// domain removed after definition apart from a deploy that defined its
+	// domain only after the record had been marked Missing.
+	MissingSince  *time.Time `json:"missingSince,omitempty"`
+	CreatedOnHost string     `json:"createdOnHost,omitempty"`
 
 	CreatedAt time.Time `json:"createdAt"`
 	UpdatedAt time.Time `json:"updatedAt"`

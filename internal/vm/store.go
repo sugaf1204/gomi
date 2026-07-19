@@ -10,6 +10,14 @@ type Store interface {
 	Delete(ctx context.Context, name string) error
 }
 
+// ExistingUpdater is optionally implemented by Store backends that can write
+// a VM row only if it still exists, reporting whether a row was written. The
+// runtime sync loop uses it so a status write computed from a snapshot cannot
+// resurrect a record deleted concurrently.
+type ExistingUpdater interface {
+	UpdateExisting(ctx context.Context, v VirtualMachine) (bool, error)
+}
+
 // PageLister is optionally implemented by Store backends that can return a
 // single page of virtual machines (ordered by name) together with the total
 // count, without materializing the whole collection. Backends that do not

@@ -466,12 +466,15 @@ func TestUpdateDeployStatusKeepsMissingAfterObservation(t *testing.T) {
 	deadline := started.Add(time.Hour)
 	armed := vm.ProvisioningStatus{Active: true, StartedAt: &started, DeadlineAt: &deadline, CompletionToken: "tok-missing"}
 
-	// The domain was defined (observed) and then removed: sync marked the
-	// record Missing and ended provisioning.
+	// The domain was defined (observed) and then removed: the Missing mark
+	// postdates the observation, so the deploy completing later must not
+	// resurrect the window.
 	observed := started.Add(time.Minute)
+	missingAt := started.Add(2 * time.Minute)
 	missing := created
 	missing.Phase = vm.PhaseMissing
 	missing.LastError = "libvirt domain vm-test-01 not found on hypervisor hv-01"
+	missing.MissingSince = &missingAt
 	missing.Provisioning = armed
 	missing.Provisioning.Active = false
 	missing.Provisioning.DomainObservedAt = &observed
@@ -488,5 +491,60 @@ func TestUpdateDeployStatusKeepsMissingAfterObservation(t *testing.T) {
 	}
 	if after.Provisioning.Active {
 		t.Fatal("expected provisioning to stay ended for a removed domain")
+	}
+
+	// The opposite ordering — Missing marked during a timed-out define gap,
+	// domain defined afterwards — must re-arm the install.
+	earlyMissing := started.Add(30 * time.Second)
+	defineGap := missing
+	defineGap.MissingSince = &earlyMissing
+	defineGap.Provisioning.DomainObservedAt = &observed
+	if err := svc.Store().Upsert(ctx, defineGap); err != nil {
+		t.Fatalf("seed define-gap missing vm: %v", err)
+	}
+	rearmed, err := svc.UpdateDeployStatus(ctx, created.Name, vm.PhaseProvisioning, "create+cloudimage", armed)
+	if err != nil {
+		t.Fatalf("UpdateDeployStatus define gap: %v", err)
+	}
+	if rearmed.Phase != vm.PhaseProvisioning || !rearmed.Provisioning.Active {
+		t.Fatalf("expected define-gap Missing to be re-armed, got phase=%s provisioning=%+v", rearmed.Phase, rearmed.Provisioning)
+	}
+	if rearmed.MissingSince != nil {
+		t.Fatal("expected missingSince to be cleared when the deploy re-arms the window")
+	}
+}
+
+func TestVMStoreUpdateExistingSkipsDeletedRecords(t *testing.T) {
+	svc := newTestService()
+	ctx := context.Background()
+	updater, ok := svc.Store().(vm.ExistingUpdater)
+	if !ok {
+		t.Fatal("memory vm store must implement vm.ExistingUpdater")
+	}
+
+	ghost := testVM()
+	ghost.Name = "vm-deleted"
+	written, err := updater.UpdateExisting(ctx, ghost)
+	if err != nil {
+		t.Fatalf("UpdateExisting: %v", err)
+	}
+	if written {
+		t.Fatal("expected update of a deleted record to be skipped")
+	}
+	if _, err := svc.Get(ctx, "vm-deleted"); !errors.Is(err, resource.ErrNotFound) {
+		t.Fatalf("expected record to stay absent, got err=%v", err)
+	}
+
+	created, err := svc.Create(ctx, testVM())
+	if err != nil {
+		t.Fatalf("create vm: %v", err)
+	}
+	created.Phase = vm.PhaseRunning
+	written, err = updater.UpdateExisting(ctx, created)
+	if err != nil {
+		t.Fatalf("UpdateExisting existing: %v", err)
+	}
+	if !written {
+		t.Fatal("expected update of an existing record to be written")
 	}
 }
