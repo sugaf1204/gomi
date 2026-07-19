@@ -110,6 +110,20 @@ func (s *VMStore) ListByHypervisor(_ context.Context, hypervisorName string) ([]
 	return out, nil
 }
 
+// DeleteOwned deletes the VM only while it still references the given
+// hypervisor. It implements vm.OwnedDeleter.
+func (s *VMStore) DeleteOwned(_ context.Context, name, hypervisorRef string) (bool, error) {
+	s.b.mu.Lock()
+	defer s.b.mu.Unlock()
+	v, ok := s.b.vms[name]
+	if !ok || v.HypervisorRef != hypervisorRef {
+		return false, nil
+	}
+	delete(s.b.vms, name)
+	s.notify()
+	return true, nil
+}
+
 func (s *VMStore) Delete(_ context.Context, name string) error {
 	s.b.mu.Lock()
 	defer s.b.mu.Unlock()

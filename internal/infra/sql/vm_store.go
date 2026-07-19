@@ -242,6 +242,26 @@ func (s *VMStore) ListByHypervisor(ctx context.Context, hypervisorName string) (
 	return out, rows.Err()
 }
 
+// DeleteOwned deletes the VM row only while it still references the given
+// hypervisor. It implements vm.OwnedDeleter.
+func (s *VMStore) DeleteOwned(ctx context.Context, name, hypervisorRef string) (bool, error) {
+	res, err := s.b.exec(ctx,
+		`DELETE FROM virtual_machines WHERE name = ? AND hypervisor_ref = ?`,
+		name, hypervisorRef,
+	)
+	if err != nil {
+		return false, err
+	}
+	rows, err := res.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	if rows > 0 {
+		s.notify()
+	}
+	return rows > 0, nil
+}
+
 func (s *VMStore) Delete(ctx context.Context, name string) error {
 	result, err := s.b.exec(ctx,
 		`DELETE FROM virtual_machines WHERE name = ?`,

@@ -134,7 +134,17 @@ func (s *Server) ReinstallVM(c echo.Context) error {
 		if err := s.vmDeployer.Redeploy(ctx, current, pxehttp.RenderNoCloudLineConfig); err != nil {
 			// Token-gated: a stale failure must not clobber the window a
 			// newer redeploy has armed in the meantime.
-			if _, failErr := s.vms.FailDeploy(ctx, name, "redeploy", err.Error(), current.Provisioning.CompletionToken); failErr != nil && !errors.Is(failErr, resource.ErrNotFound) {
+			if _, failErr := s.vms.FailDeploy(ctx, name, "redeploy", err.Error(), current.Provisioning.CompletionToken); failErr != nil {
+				if errors.Is(failErr, resource.ErrNotFound) {
+					// A cascade swept the record while the failed redeploy
+					// was mutating the host; undo whatever it left behind,
+					// as the success path does.
+					if cleanupErr := s.teardownVMRuntimeForCleanup(ctx, deployHV, current); cleanupErr != nil {
+						log.Printf("redeploy vm %s: cleanup after concurrent hypervisor delete: %v", name, cleanupErr)
+					}
+					httputil.CreateAudit(c, s.authStore, name, "redeploy-vm", "failure", "vm record was deleted concurrently", nil)
+					return c.JSON(gohttp.StatusConflict, jsonError("vm record was deleted concurrently: "+name))
+				}
 				log.Printf("redeploy vm %s: record deploy failure: %v", name, failErr)
 			}
 			httputil.CreateAudit(c, s.authStore, name, "redeploy-vm", "failure", err.Error(), nil)

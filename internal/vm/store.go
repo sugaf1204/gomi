@@ -18,6 +18,14 @@ type ExistingUpdater interface {
 	UpdateExisting(ctx context.Context, v VirtualMachine) (bool, error)
 }
 
+// OwnedDeleter is optionally implemented by Store backends that can delete a
+// VM row only while it still references the given hypervisor, reporting
+// whether a row was deleted. The record-only cascade uses it so a concurrent
+// migration moving the VM to another hypervisor cannot lose the record.
+type OwnedDeleter interface {
+	DeleteOwned(ctx context.Context, name, hypervisorRef string) (bool, error)
+}
+
 // writeExisting persists v without recreating a concurrently deleted row when
 // the store supports existence-checked updates. It reports whether a row was
 // written; with plain Upsert backends it always reports true.

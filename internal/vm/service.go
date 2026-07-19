@@ -2,6 +2,7 @@ package vm
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/sugaf1204/gomi/internal/resource"
@@ -155,6 +156,12 @@ func (s *Service) MarkMissing(ctx context.Context, name, lastAction, lastErr str
 	if err != nil {
 		return VirtualMachine{}, err
 	}
+	// A deploy is still preparing this window's domain (same predicate the
+	// sync loop uses): the not-found the caller saw belongs to the define
+	// gap, and marking Missing here would clobber the active deploy.
+	if vmDeployInFlight(v, time.Now().UTC()) {
+		return v, nil
+	}
 	if v.Phase != PhaseMissing || v.MissingSince == nil {
 		now := time.Now().UTC()
 		v.MissingSince = &now
@@ -217,6 +224,33 @@ func (s *Service) UpdateExisting(ctx context.Context, v VirtualMachine) (bool, e
 
 func (s *Service) Delete(ctx context.Context, name string) error {
 	return s.store.Delete(ctx, name)
+}
+
+// DeleteOwned removes the VM record only while it still references the given
+// hypervisor, reporting whether it was deleted. A false result means the
+// record is already gone or was moved to another hypervisor (e.g. by a
+// concurrent migration) and must survive a cascade.
+func (s *Service) DeleteOwned(ctx context.Context, name, hypervisorRef string) (bool, error) {
+	if deleter, ok := s.store.(OwnedDeleter); ok {
+		return deleter.DeleteOwned(ctx, name, hypervisorRef)
+	}
+	v, err := s.store.Get(ctx, name)
+	if err != nil {
+		if errors.Is(err, resource.ErrNotFound) {
+			return false, nil
+		}
+		return false, err
+	}
+	if v.HypervisorRef != hypervisorRef {
+		return false, nil
+	}
+	if err := s.store.Delete(ctx, name); err != nil {
+		if errors.Is(err, resource.ErrNotFound) {
+			return false, nil
+		}
+		return false, err
+	}
+	return true, nil
 }
 
 func (s *Service) Store() Store {

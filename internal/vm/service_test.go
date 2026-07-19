@@ -617,3 +617,62 @@ func TestUpdateDeployStatusRearmsAfterSyncRecoveredDefineGap(t *testing.T) {
 		t.Fatalf("expected recovered define-gap window to be re-armed, got phase=%s provisioning=%+v", after.Phase, after.Provisioning)
 	}
 }
+
+func TestDeleteOwnedSkipsMigratedRecords(t *testing.T) {
+	svc := newTestService()
+	ctx := context.Background()
+	if _, err := svc.Create(ctx, testVM()); err != nil {
+		t.Fatalf("create vm: %v", err)
+	}
+
+	deleted, err := svc.DeleteOwned(ctx, "vm-test-01", "hv-other")
+	if err != nil {
+		t.Fatalf("DeleteOwned other ref: %v", err)
+	}
+	if deleted {
+		t.Fatal("expected record referencing another hypervisor to survive")
+	}
+	if _, err := svc.Get(ctx, "vm-test-01"); err != nil {
+		t.Fatalf("expected record to still exist: %v", err)
+	}
+
+	deleted, err = svc.DeleteOwned(ctx, "vm-test-01", "hv-01")
+	if err != nil {
+		t.Fatalf("DeleteOwned owning ref: %v", err)
+	}
+	if !deleted {
+		t.Fatal("expected owned record to be deleted")
+	}
+
+	deleted, err = svc.DeleteOwned(ctx, "vm-test-01", "hv-01")
+	if err != nil {
+		t.Fatalf("DeleteOwned absent record: %v", err)
+	}
+	if deleted {
+		t.Fatal("expected delete of an absent record to report false")
+	}
+}
+
+func TestMarkMissingSkipsDeployInFlight(t *testing.T) {
+	svc := newTestService()
+	ctx := context.Background()
+	created, err := svc.Create(ctx, testVM())
+	if err != nil {
+		t.Fatalf("create vm: %v", err)
+	}
+	started := time.Now().UTC()
+	deadline := started.Add(time.Hour)
+	created.Phase = vm.PhaseProvisioning
+	created.Provisioning = vm.ProvisioningStatus{Active: true, StartedAt: &started, DeadlineAt: &deadline, CompletionToken: "tok-inflight"}
+	if err := svc.Store().Upsert(ctx, created); err != nil {
+		t.Fatalf("arm provisioning: %v", err)
+	}
+
+	after, err := svc.MarkMissing(ctx, created.Name, "power-off", "libvirt domain not found during power-off")
+	if err != nil {
+		t.Fatalf("MarkMissing: %v", err)
+	}
+	if after.Phase != vm.PhaseProvisioning || !after.Provisioning.Active {
+		t.Fatalf("expected in-flight deploy window to survive stale not-found, got phase=%s provisioning=%+v", after.Phase, after.Provisioning)
+	}
+}
