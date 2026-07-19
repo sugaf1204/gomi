@@ -300,6 +300,9 @@ func (s *RuntimeSyncer) syncWithExecutor(ctx context.Context, hv hypervisor.Hype
 	if updated.Phase == PhaseMissing {
 		updated.Phase = PhaseStopped
 	}
+	if updated.Provisioning.Active && updated.Provisioning.DomainObservedAt == nil {
+		updated.Provisioning.DomainObservedAt = &now
+	}
 	updated.HypervisorName = hv.Name
 	updated.CreatedOnHost = hv.Name
 	updated.LibvirtDomain = domainName
@@ -309,26 +312,20 @@ func (s *RuntimeSyncer) syncWithExecutor(ctx context.Context, hv hypervisor.Hype
 	return s.persistSyncedVM(ctx, v, updated)
 }
 
-// vmDeployMissingGrace bounds how long after provisioning starts a missing
-// domain is attributed to the create/redeploy define gap instead of a real
-// removal. The full provisioning deadline covers the whole install and would
-// hide a domain deleted mid-install for far too long.
-const vmDeployMissingGrace = 10 * time.Minute
-
 // vmDeployInFlight reports whether the VM is inside a create or redeploy
 // window where the libvirt domain may legitimately not exist yet: both flows
 // upsert the record with an armed provisioning deadline before DefineDomain
 // runs, and redeploy undefines the old domain before defining the new one.
-// Such VMs must not be marked Missing. A deploy whose define gap outlasts the
-// grace is healed by UpdateDeployStatus re-arming provisioning on completion.
+// The define gap can be long (e.g. uploading a backing image to the host), so
+// it is bounded by the domain having been observed rather than by wall time:
+// while the sync loop has never seen the domain in this provisioning window
+// the deploy is still preparing it, and once it has been seen a later
+// not-found means the domain was removed from the host.
 func vmDeployInFlight(v VirtualMachine, now time.Time) bool {
 	if !v.Provisioning.Active || IsProvisioningTimedOut(v.Provisioning, now) {
 		return false
 	}
-	if v.Provisioning.StartedAt == nil {
-		return false
-	}
-	return now.Sub(*v.Provisioning.StartedAt) < vmDeployMissingGrace
+	return v.Provisioning.DomainObservedAt == nil
 }
 
 // markVMMissing records that the VM's libvirt domain no longer exists on the

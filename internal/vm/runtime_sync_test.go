@@ -442,7 +442,7 @@ func TestRuntimeSyncerDoesNotMarkVMMissingDuringActiveDeploy(t *testing.T) {
 	}
 }
 
-func TestRuntimeSyncerMarksVMMissingWhenDeployGraceExpired(t *testing.T) {
+func TestRuntimeSyncerMarksVMMissingWhenObservedDomainDisappears(t *testing.T) {
 	backend := memory.New()
 	hypervisors := hypervisor.NewService(backend.Hypervisors(), backend.HypervisorTokens(), backend.AgentTokens())
 	vms := vm.NewService(backend.VMs())
@@ -468,13 +468,14 @@ func TestRuntimeSyncerMarksVMMissingWhenDeployGraceExpired(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create vm: %v", err)
 	}
-	// Mid-install removal: provisioning started well past the define-gap
-	// grace but is still before its deadline. The absent domain must be
-	// treated as removed, not as a deploy still defining it.
+	// Mid-install removal: the sync loop has already observed the domain in
+	// this provisioning window, so a later not-found must be treated as the
+	// domain being removed, not as a deploy still defining it.
 	started := time.Now().UTC().Add(-30 * time.Minute)
+	observed := time.Now().UTC().Add(-20 * time.Minute)
 	deadline := time.Now().UTC().Add(time.Hour)
 	created.Phase = vm.PhaseProvisioning
-	created.Provisioning = vm.ProvisioningStatus{Active: true, StartedAt: &started, DeadlineAt: &deadline, CompletionToken: "prov-token"}
+	created.Provisioning = vm.ProvisioningStatus{Active: true, StartedAt: &started, DeadlineAt: &deadline, DomainObservedAt: &observed, CompletionToken: "prov-token"}
 	if err := vms.Store().Upsert(ctx, created); err != nil {
 		t.Fatalf("seed provisioning vm: %v", err)
 	}
@@ -495,10 +496,68 @@ func TestRuntimeSyncerMarksVMMissingWhenDeployGraceExpired(t *testing.T) {
 		t.Fatalf("get vm: %v", err)
 	}
 	if v.Phase != vm.PhaseMissing {
-		t.Fatalf("expected vm phase Missing after define grace expired, got %s", v.Phase)
+		t.Fatalf("expected vm phase Missing after observed domain disappeared, got %s", v.Phase)
 	}
 	if v.Provisioning.Active {
 		t.Fatal("expected provisioning to be ended for missing domain")
+	}
+}
+
+func TestRuntimeSyncerRecordsDomainObservation(t *testing.T) {
+	backend := memory.New()
+	hypervisors := hypervisor.NewService(backend.Hypervisors(), backend.HypervisorTokens(), backend.AgentTokens())
+	vms := vm.NewService(backend.VMs())
+	ctx := context.Background()
+
+	if _, err := hypervisors.Create(ctx, hypervisor.Hypervisor{
+		Name: "hv-observe",
+		Connection: hypervisor.ConnectionSpec{
+			Type: hypervisor.ConnectionTCP,
+			Host: "192.0.2.57",
+			Port: 16509,
+		},
+		Phase: hypervisor.PhaseRegistered,
+	}); err != nil {
+		t.Fatalf("create hypervisor: %v", err)
+	}
+	created, err := vms.Create(ctx, vm.VirtualMachine{
+		Name:          "vm-observe",
+		HypervisorRef: "hv-observe",
+		Resources:     vm.ResourceSpec{CPUCores: 1, MemoryMB: 1024, DiskGB: 8},
+		OSImageRef:    "ubuntu-test",
+	})
+	if err != nil {
+		t.Fatalf("create vm: %v", err)
+	}
+	started := time.Now().UTC()
+	deadline := started.Add(time.Hour)
+	created.Phase = vm.PhaseProvisioning
+	created.Provisioning = vm.ProvisioningStatus{Active: true, StartedAt: &started, DeadlineAt: &deadline, CompletionToken: "prov-token"}
+	if err := vms.Store().Upsert(ctx, created); err != nil {
+		t.Fatalf("seed provisioning vm: %v", err)
+	}
+
+	syncer := &vm.RuntimeSyncer{
+		Hypervisors: hypervisors,
+		VMs:         vms,
+		ExecutorFactory: func(context.Context, libvirt.LibvirtConfig) (libvirt.Executor, error) {
+			return &fakeLibvirtExecutor{
+				domains: map[string]*libvirt.DomainInfo{
+					"vm-observe": {Name: "vm-observe", State: libvirt.StateRunning},
+				},
+			}, nil
+		},
+	}
+	if err := syncer.SyncAll(ctx, nil); err != nil {
+		t.Fatalf("SyncAll: %v", err)
+	}
+
+	v, err := vms.Get(ctx, "vm-observe")
+	if err != nil {
+		t.Fatalf("get vm: %v", err)
+	}
+	if v.Provisioning.DomainObservedAt == nil {
+		t.Fatal("expected sync to record the domain observation for the provisioning window")
 	}
 }
 
