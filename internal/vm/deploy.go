@@ -226,12 +226,15 @@ func (d *Deployer) markDomainDefined(ctx context.Context, deployed *VirtualMachi
 		v.Provisioning.DomainObservedAt = &now
 		// Pre-domain work (e.g. preparing a large backing image) may have
 		// consumed most or all of the install deadline; the install itself
-		// only starts now, so give it the full window from definition time.
+		// only starts now, so give it the full window from definition time
+		// and re-arm a window the sync loop deactivated during the gap, so
+		// the guest's first PXE request after StartDomain finds it active.
 		if v.Provisioning.StartedAt != nil && v.Provisioning.DeadlineAt != nil {
 			window := v.Provisioning.DeadlineAt.Sub(*v.Provisioning.StartedAt)
 			renewed := now.Add(window)
 			v.Provisioning.DeadlineAt = &renewed
 		}
+		v.Provisioning.Active = true
 		v.UpdatedAt = now
 		written, err := writeExisting(ctx, d.VMs.Store(), v)
 		if err != nil {

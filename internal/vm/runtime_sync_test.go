@@ -404,11 +404,10 @@ func TestRuntimeSyncerDoesNotMarkVMMissingDuringActiveDeploy(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create vm: %v", err)
 	}
-	// Deploy in flight: provisioning armed while the domain has not been
-	// defined yet (create) or was just undefined (redeploy). The deadline is
-	// already past — pre-domain work such as image upload may legitimately
-	// outlast it, so only the domain-defined marker ends this suppression.
-	started := time.Now().UTC().Add(-2 * time.Hour)
+	// Deploy in flight: provisioning armed with a future deadline while the
+	// domain has not been defined yet (create) or was just undefined
+	// (redeploy).
+	started := time.Now().UTC()
 	deadline := started.Add(time.Hour)
 	created.Phase = vm.PhaseProvisioning
 	created.Provisioning = vm.ProvisioningStatus{Active: true, StartedAt: &started, DeadlineAt: &deadline, CompletionToken: "prov-token"}

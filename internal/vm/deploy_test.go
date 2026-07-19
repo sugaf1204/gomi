@@ -230,6 +230,9 @@ func TestMarkDomainDefinedRecordsMarkerForActiveWindow(t *testing.T) {
 	if stored.Provisioning.DeadlineAt == nil || !stored.Provisioning.DeadlineAt.After(time.Now().UTC()) {
 		t.Fatalf("expected install deadline to be renewed from definition time, got %v", stored.Provisioning.DeadlineAt)
 	}
+	if !stored.Provisioning.Active {
+		t.Fatal("expected the deactivated window to be re-armed at definition time")
+	}
 	if deactivated.Provisioning.DeadlineAt == nil || !deactivated.Provisioning.DeadlineAt.Equal(*stored.Provisioning.DeadlineAt) {
 		t.Fatal("expected the caller's snapshot to carry the renewed deadline")
 	}

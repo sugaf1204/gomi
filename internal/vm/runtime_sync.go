@@ -264,7 +264,7 @@ func (s *RuntimeSyncer) syncWithExecutor(ctx context.Context, hv hypervisor.Hype
 	info, err := exec.DomainInfo(ctx, domainName)
 	if err != nil {
 		if libvirt.IsDomainNotFoundError(err) {
-			if vmDeployInFlight(v) {
+			if vmDeployInFlight(v, time.Now().UTC()) {
 				return v, nil
 			}
 			return s.markVMMissing(ctx, hv, v, domainName)
@@ -314,15 +314,17 @@ func (s *RuntimeSyncer) syncWithExecutor(ctx context.Context, hv hypervisor.Hype
 // window where the libvirt domain may legitimately not exist yet: both flows
 // upsert the record with an armed provisioning window before DefineDomain
 // runs, and redeploy undefines the old domain before defining the new one.
-// The define gap can be long (e.g. uploading a backing image to the host) —
-// even longer than the install deadline — so it is bounded by the domain
-// having been defined, not by wall time: while DomainObservedAt is nil the
-// deploy is still preparing the domain (a deploy that errors out ends its
-// window via FailDeploy), and once it is set a later not-found means the
-// domain was removed from the host. The install deadline is enforced by the
-// timeout check that runs once the domain exists.
-func vmDeployInFlight(v VirtualMachine) bool {
-	return v.Provisioning.Active && v.Provisioning.DomainObservedAt == nil
+// While DomainObservedAt is nil the deploy is still preparing the domain;
+// once it is set a later not-found means the domain was removed from the
+// host. The deadline still bounds the pre-domain window so a deploy
+// abandoned before DefineDomain (crashed server, killed worker) does not
+// keep PXE armed forever — a slow-but-alive deploy self-heals, because
+// markDomainDefined re-arms and renews the window at definition time.
+func vmDeployInFlight(v VirtualMachine, now time.Time) bool {
+	if !v.Provisioning.Active || IsProvisioningTimedOut(v.Provisioning, now) {
+		return false
+	}
+	return v.Provisioning.DomainObservedAt == nil
 }
 
 // markVMMissing records that the VM's libvirt domain no longer exists on the
@@ -340,7 +342,10 @@ func (s *RuntimeSyncer) markVMMissing(ctx context.Context, hv hypervisor.Hypervi
 	// The domain is gone, so any in-flight provisioning can never complete;
 	// end it so the machine's PXE config stops resolving to this VM.
 	updated.Provisioning.Active = false
-	if updated.MissingSince == nil {
+	// Refresh the timestamp on every transition into Missing (a record that
+	// left Missing, e.g. via redeploy, may still carry the old value); keep
+	// it stable while the record stays Missing.
+	if v.Phase != PhaseMissing || updated.MissingSince == nil {
 		now := time.Now().UTC()
 		updated.MissingSince = &now
 	}

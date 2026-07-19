@@ -94,6 +94,7 @@ func (s *Server) ReinstallVM(c echo.Context) error {
 	current.Phase = vm.PhaseProvisioning
 	current.LastPowerAction = "redeploy"
 	current.LastError = ""
+	current.MissingSince = nil
 	current.Provisioning = vm.ProvisioningStatus{
 		Active:          true,
 		StartedAt:       httputil.TimePtr(now),
