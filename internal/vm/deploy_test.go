@@ -206,19 +206,55 @@ func TestMarkDomainDefinedRecordsMarkerForActiveWindow(t *testing.T) {
 		t.Fatal("expected the caller's snapshot to carry the marker")
 	}
 
-	// An inactive window (e.g. install already completed) is left untouched.
+	// A window deactivated by a Missing mark after a long define gap still
+	// belongs to this deploy; the marker must be recorded for it.
+	deactivated := stored
+	deactivated.Provisioning.Active = false
+	deactivated.Provisioning.DomainObservedAt = nil
+	if err := vms.Store().Upsert(ctx, deactivated); err != nil {
+		t.Fatalf("seed deactivated window: %v", err)
+	}
+	d.markDomainDefined(ctx, &deactivated)
+	stored, err = vms.Get(ctx, "vm-define-marker")
+	if err != nil {
+		t.Fatalf("get vm after deactivated: %v", err)
+	}
+	if stored.Provisioning.DomainObservedAt == nil {
+		t.Fatal("expected deactivated but incomplete window to be marked")
+	}
+
+	// A completed window is left untouched.
+	now := time.Now().UTC()
 	completed := stored
-	completed.Provisioning.Active = false
+	completed.Provisioning.CompletedAt = &now
 	completed.Provisioning.DomainObservedAt = nil
 	if err := vms.Store().Upsert(ctx, completed); err != nil {
-		t.Fatalf("seed inactive window: %v", err)
+		t.Fatalf("seed completed window: %v", err)
 	}
 	d.markDomainDefined(ctx, &completed)
 	stored, err = vms.Get(ctx, "vm-define-marker")
 	if err != nil {
-		t.Fatalf("get vm after inactive: %v", err)
+		t.Fatalf("get vm after completed: %v", err)
 	}
 	if stored.Provisioning.DomainObservedAt != nil {
-		t.Fatal("expected inactive provisioning window to stay unmarked")
+		t.Fatal("expected completed provisioning window to stay unmarked")
+	}
+
+	// A stored window armed by a newer redeploy (different token) must not be
+	// stamped by the older deploy.
+	newer := stored
+	newer.Provisioning = ProvisioningStatus{Active: true, StartedAt: &started, DeadlineAt: &deadline, CompletionToken: "tok-newer"}
+	if err := vms.Store().Upsert(ctx, newer); err != nil {
+		t.Fatalf("seed newer window: %v", err)
+	}
+	stale := newer
+	stale.Provisioning.CompletionToken = "tok-define"
+	d.markDomainDefined(ctx, &stale)
+	stored, err = vms.Get(ctx, "vm-define-marker")
+	if err != nil {
+		t.Fatalf("get vm after stale deploy: %v", err)
+	}
+	if stored.Provisioning.DomainObservedAt != nil {
+		t.Fatal("expected newer window to stay unmarked by a stale deploy")
 	}
 }

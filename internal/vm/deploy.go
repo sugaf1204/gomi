@@ -213,8 +213,16 @@ func (d *Deployer) markDomainDefined(ctx context.Context, deployed *VirtualMachi
 		log.Printf("deploy vm %s: load record to mark domain defined: %v", deployed.Name, err)
 		return
 	}
-	now := time.Now().UTC()
-	if v.Provisioning.Active && v.Provisioning.DomainObservedAt == nil {
+	// Only stamp the window this deploy owns: a newer redeploy may have armed
+	// a different token whose domain is still in its own define gap. The
+	// stored window may have been temporarily deactivated (e.g. marked
+	// Missing after a long define gap), so completion, not Active, decides
+	// whether the marker still applies.
+	if v.Provisioning.CompletionToken != deployed.Provisioning.CompletionToken {
+		return
+	}
+	if v.Provisioning.CompletedAt == nil && v.Provisioning.DomainObservedAt == nil {
+		now := time.Now().UTC()
 		v.Provisioning.DomainObservedAt = &now
 		v.UpdatedAt = now
 		if err := d.VMs.Store().Upsert(ctx, v); err != nil {
@@ -222,9 +230,7 @@ func (d *Deployer) markDomainDefined(ctx context.Context, deployed *VirtualMachi
 			return
 		}
 	}
-	if deployed.Provisioning.CompletionToken == v.Provisioning.CompletionToken {
-		deployed.Provisioning.DomainObservedAt = v.Provisioning.DomainObservedAt
-	}
+	deployed.Provisioning.DomainObservedAt = v.Provisioning.DomainObservedAt
 }
 
 func (d *Deployer) updatePhaseOnError(ctx context.Context, created *VirtualMachine, action string, deployErr error) {

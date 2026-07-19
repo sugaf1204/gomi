@@ -7,6 +7,7 @@ import (
 
 	"github.com/labstack/echo/v4"
 
+	"github.com/sugaf1204/gomi/internal/hypervisor"
 	"github.com/sugaf1204/gomi/internal/infra/httputil"
 	"github.com/sugaf1204/gomi/internal/resource"
 )
@@ -38,18 +39,12 @@ func (s *Server) cascadeDeleteHypervisorRecords(ctx context.Context, c echo.Cont
 	return nil
 }
 
-// cascadeDeleteMachineRecords removes the hypervisor records linked to the
-// machine and their VM records from GOMI. Record-only; see
-// cascadeDeleteHypervisorRecords.
-func (s *Server) cascadeDeleteMachineRecords(ctx context.Context, c echo.Context, machineName string) error {
-	if s.hypervisors == nil {
-		return nil
-	}
-	hvs, err := s.hypervisors.ListByMachineRef(ctx, machineName)
-	if err != nil {
-		return fmt.Errorf("list hypervisors of machine %s: %w", machineName, err)
-	}
-	for _, hv := range hvs {
+// cascadeDeleteMachineRecords removes the given hypervisor records linked to
+// the machine and their VM records from GOMI. The caller passes the list it
+// already authorized (admin check) so the cascade cannot act on hypervisors
+// linked after that check. Record-only; see cascadeDeleteHypervisorRecords.
+func (s *Server) cascadeDeleteMachineRecords(ctx context.Context, c echo.Context, machineName string, linked []hypervisor.Hypervisor) error {
+	for _, hv := range linked {
 		if err := s.cascadeDeleteHypervisorRecords(ctx, c, hv.Name, "cascade from machine "+machineName); err != nil {
 			return err
 		}

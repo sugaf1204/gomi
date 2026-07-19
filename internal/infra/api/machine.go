@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/labstack/echo/v4"
+	"github.com/sugaf1204/gomi/internal/hypervisor"
 	"github.com/sugaf1204/gomi/internal/infra/httputil"
 	"github.com/sugaf1204/gomi/internal/machine"
 	"github.com/sugaf1204/gomi/internal/power"
@@ -260,9 +261,13 @@ func (s *Server) DeleteMachine(c echo.Context) error {
 		return c.JSON(gohttp.StatusInternalServerError, jsonErrorErr(err))
 	}
 	// Hypervisor deletion is an admin-only route; the cascade must not let an
-	// operator remove hypervisor records by deleting the backing machine.
+	// operator remove hypervisor records by deleting the backing machine. The
+	// authorized list is handed to the cascade so hypervisors linked after
+	// this check are not deleted by it.
+	var linked []hypervisor.Hypervisor
 	if s.hypervisors != nil {
-		linked, err := s.hypervisors.ListByMachineRef(ctx, name)
+		var err error
+		linked, err = s.hypervisors.ListByMachineRef(ctx, name)
 		if err != nil {
 			return c.JSON(gohttp.StatusInternalServerError, jsonErrorErr(err))
 		}
@@ -270,7 +275,7 @@ func (s *Server) DeleteMachine(c echo.Context) error {
 			return c.JSON(gohttp.StatusForbidden, jsonError("machine has linked hypervisor records; admin access required for cascading delete"))
 		}
 	}
-	if err := s.cascadeDeleteMachineRecords(ctx, c, name); err != nil {
+	if err := s.cascadeDeleteMachineRecords(ctx, c, name, linked); err != nil {
 		httputil.CreateAudit(c, s.authStore, name, "delete-machine", "failure", err.Error(), nil)
 		return c.JSON(gohttp.StatusInternalServerError, jsonErrorErr(err))
 	}
