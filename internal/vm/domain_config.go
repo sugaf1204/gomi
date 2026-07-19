@@ -107,3 +107,12 @@ func IsIgnorableDestroyError(err error) bool {
 		strings.Contains(msg, "not found") ||
 		strings.Contains(msg, "lookup domain")
 }
+
+// SkipHostStorageCleanup reports whether deleting the VM must leave host
+// storage untouched. A Missing record whose domain is confirmed absent at
+// delete time (typed not-found from UndefineDomain) promises a record-only
+// delete, so leftover volumes on the host stay as they are. For any other
+// phase the delete keeps its full-cleanup contract.
+func SkipHostStorageCleanup(phase Phase, undefineErr error) bool {
+	return phase == PhaseMissing && libvirt.IsDomainNotFoundError(undefineErr)
+}

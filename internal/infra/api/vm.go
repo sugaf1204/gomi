@@ -237,8 +237,12 @@ func (s *Server) deleteVirtualMachineRuntime(ctx context.Context, v vm.VirtualMa
 	if err := exec.DestroyDomain(ctx, domainName); err != nil && !vm.IsIgnorableDestroyError(err) && !libvirt.IsDomainNotFoundError(err) {
 		return fmt.Errorf("stop domain %s before delete: %w", domainName, err)
 	}
-	if err := exec.UndefineDomain(ctx, domainName); err != nil && !vm.IsIgnorableDestroyError(err) && !libvirt.IsDomainNotFoundError(err) {
-		return fmt.Errorf("undefine domain %s before delete: %w", domainName, err)
+	undefineErr := exec.UndefineDomain(ctx, domainName)
+	if undefineErr != nil && !vm.IsIgnorableDestroyError(undefineErr) && !libvirt.IsDomainNotFoundError(undefineErr) {
+		return fmt.Errorf("undefine domain %s before delete: %w", domainName, undefineErr)
+	}
+	if vm.SkipHostStorageCleanup(v.Phase, undefineErr) {
+		return nil
 	}
 	if err := exec.DeleteVolume(ctx, v.Name); err != nil && !libvirt.IsVolumeNotFoundError(err) {
 		return fmt.Errorf("delete volume %s: %w", v.Name, err)
