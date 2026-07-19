@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/sugaf1204/gomi/internal/infra/memory"
 	"github.com/sugaf1204/gomi/internal/resource"
@@ -272,5 +273,56 @@ func TestServiceCreateSetsTimestamps(t *testing.T) {
 	}
 	if created.Phase != vm.PhasePending {
 		t.Fatalf("expected phase Pending, got %s", created.Phase)
+	}
+}
+
+func TestUpdateDeployStatusPreservesCompletedProvisioning(t *testing.T) {
+	svc := newTestService()
+	ctx := context.Background()
+	created, err := svc.Create(ctx, testVM())
+	if err != nil {
+		t.Fatalf("create vm: %v", err)
+	}
+
+	// The provisioning window armed by the API handler before deploying.
+	started := time.Now().UTC()
+	deadline := started.Add(time.Hour)
+	armed := vm.ProvisioningStatus{Active: true, StartedAt: &started, DeadlineAt: &deadline, CompletionToken: "tok-1"}
+	created.Provisioning = armed
+	if err := svc.Store().Upsert(ctx, created); err != nil {
+		t.Fatalf("arm provisioning: %v", err)
+	}
+
+	// An install-complete callback wins the race while the deploy unwinds.
+	completed := created
+	completed.MarkProvisionComplete("callback", time.Now().UTC())
+	if err := svc.Store().Upsert(ctx, completed); err != nil {
+		t.Fatalf("complete provisioning: %v", err)
+	}
+
+	updated, err := svc.UpdateDeployStatus(ctx, created.Name, vm.PhaseProvisioning, "create+cloudimage", armed)
+	if err != nil {
+		t.Fatalf("UpdateDeployStatus: %v", err)
+	}
+	if updated.Provisioning.Active {
+		t.Fatal("expected completed provisioning to stay inactive")
+	}
+	if updated.Provisioning.CompletedAt == nil {
+		t.Fatal("expected completedAt to be preserved")
+	}
+	if updated.Phase != vm.PhaseRunning {
+		t.Fatalf("expected phase to stay Running after completion, got %s", updated.Phase)
+	}
+
+	// A different completion token belongs to an older install; the new
+	// deploy's window must still be restored.
+	rearmed := armed
+	rearmed.CompletionToken = "tok-2"
+	restored, err := svc.UpdateDeployStatus(ctx, created.Name, vm.PhaseProvisioning, "redeploy", rearmed)
+	if err != nil {
+		t.Fatalf("UpdateDeployStatus new token: %v", err)
+	}
+	if !restored.Provisioning.Active || restored.Provisioning.CompletionToken != "tok-2" {
+		t.Fatalf("expected new provisioning window to be restored, got %+v", restored.Provisioning)
 	}
 }

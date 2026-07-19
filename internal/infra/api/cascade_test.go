@@ -3,11 +3,13 @@ package api_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"testing"
 
 	"github.com/sugaf1204/gomi/internal/auth"
 	"github.com/sugaf1204/gomi/internal/hypervisor"
+	infraapi "github.com/sugaf1204/gomi/internal/infra/api"
 	"github.com/sugaf1204/gomi/internal/machine"
 	"github.com/sugaf1204/gomi/internal/resource"
 	"github.com/sugaf1204/gomi/internal/vm"
@@ -75,9 +77,9 @@ func TestDeleteMissingVMAttemptsRuntimeTeardown(t *testing.T) {
 	}
 }
 
-func TestDeleteMissingVMFallsBackToRecordOnlyOnTeardownFailure(t *testing.T) {
+func TestDeleteMissingVMFallsBackToRecordOnlyWhenTeardownNotAttempted(t *testing.T) {
 	env := setupTestEnvWithVMRuntimeDeleter(t, func(context.Context, vm.VirtualMachine) error {
-		return errors.New("hypervisor unreachable")
+		return fmt.Errorf("connect to hypervisor: %w", infraapi.ErrVMTeardownNotAttempted)
 	})
 	createCascadeHypervisor(t, env, "hv-missing-fb", "")
 	createCascadeVM(t, env, "vm-missing-fb", "hv-missing-fb", vm.PhaseMissing)
@@ -85,6 +87,22 @@ func TestDeleteMissingVMFallsBackToRecordOnlyOnTeardownFailure(t *testing.T) {
 	rec := doRequest(env.echo, http.MethodDelete, "/api/v1/virtual-machines/vm-missing-fb", nil, env.token)
 	requireStatus(t, rec, http.StatusNoContent)
 	requireVMGone(t, env, "vm-missing-fb")
+}
+
+func TestDeleteMissingVMKeepsRecordOnPartialTeardownFailure(t *testing.T) {
+	// A teardown that already started mutating the host (e.g. destroy
+	// succeeded, undefine failed) must keep the record so cleanup can retry.
+	env := setupTestEnvWithVMRuntimeDeleter(t, func(context.Context, vm.VirtualMachine) error {
+		return errors.New("undefine domain vm-missing-partial before delete: rpc failed")
+	})
+	createCascadeHypervisor(t, env, "hv-missing-partial", "")
+	createCascadeVM(t, env, "vm-missing-partial", "hv-missing-partial", vm.PhaseMissing)
+
+	rec := doRequest(env.echo, http.MethodDelete, "/api/v1/virtual-machines/vm-missing-partial", nil, env.token)
+	requireStatus(t, rec, http.StatusBadGateway)
+	if _, err := env.vms.Get(context.Background(), "vm-missing-partial"); err != nil {
+		t.Fatalf("expected vm record to survive partial teardown failure: %v", err)
+	}
 }
 
 func TestDeleteNonMissingVMStillBlocksOnTeardownFailure(t *testing.T) {

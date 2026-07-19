@@ -65,12 +65,12 @@ function DeleteDialog({ deleteConfirm, setDeleteConfirm, onDeleteConfirm, virtua
         </div>
         <p className="m-0 text-ink-soft text-[0.84rem]">
           {allMissing
-            ? 'These virtual machines no longer exist on the host. Deleting removes only the GOMI records; nothing is changed on the hypervisor.'
+            ? 'These virtual machines were not found on the host at the last sync. Deleting removes the GOMI records; if a domain is still absent its leftover storage is not touched, and a domain that has reappeared is cleaned up.'
             : 'This action permanently removes runtime resources and cannot be undone.'}
         </p>
         {!allMissing && missingTargets.length > 0 && (
           <p className="m-0 text-ink-soft text-[0.84rem]">
-            {missingTargets.length} of the targets are Missing on the host; for those only the GOMI record is removed.
+            {missingTargets.length} of the targets are Missing on the host; their records are removed and the host is only touched if their domain has reappeared.
           </p>
         )}
         <TargetList targets={deleteConfirm.targets} />

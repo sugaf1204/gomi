@@ -183,15 +183,16 @@ func (s *Server) DeleteVirtualMachine(c echo.Context) error {
 		return c.JSON(gohttp.StatusInternalServerError, jsonErrorErr(err))
 	}
 	// Runtime teardown always runs so a domain that reappeared after the VM
-	// was marked Missing is still cleaned up. For a Missing VM a teardown
-	// failure (e.g. the hypervisor became unreachable) falls back to deleting
-	// only the record, which matches what the Missing state promises.
+	// was marked Missing is still cleaned up. A Missing VM falls back to a
+	// record-only delete only when teardown never touched the host (e.g. the
+	// hypervisor became unreachable); once teardown has started mutating host
+	// state, a failure must keep the record so cleanup can be retried.
 	if err := s.deleteVirtualMachineRuntime(ctx, v); err != nil {
-		if v.Phase != vm.PhaseMissing {
+		if v.Phase != vm.PhaseMissing || !errors.Is(err, ErrVMTeardownNotAttempted) {
 			httputil.CreateAudit(c, s.authStore, name, "delete-vm", "failure", err.Error(), nil)
 			return c.JSON(gohttp.StatusBadGateway, jsonErrorErr(err))
 		}
-		log.Printf("delete vm %s: runtime teardown failed for Missing vm, deleting record only: %v", name, err)
+		log.Printf("delete vm %s: teardown not attempted for Missing vm, deleting record only: %v", name, err)
 	}
 	if err := s.vms.Delete(ctx, name); err != nil {
 		if errors.Is(err, resource.ErrNotFound) {
@@ -202,6 +203,11 @@ func (s *Server) DeleteVirtualMachine(c echo.Context) error {
 	httputil.CreateAudit(c, s.authStore, name, "delete-vm", "success", "virtual machine deleted", nil)
 	return c.NoContent(gohttp.StatusNoContent)
 }
+
+// ErrVMTeardownNotAttempted marks runtime-delete failures that happened
+// before any host mutation (hypervisor resolution or connection setup), so a
+// Missing VM may safely fall back to a record-only delete.
+var ErrVMTeardownNotAttempted = errors.New("vm runtime teardown not attempted")
 
 func (s *Server) deleteVirtualMachineRuntime(ctx context.Context, v vm.VirtualMachine) error {
 	if s.vmRuntimeDeleter != nil {
@@ -226,7 +232,7 @@ func (s *Server) deleteVirtualMachineRuntime(ctx context.Context, v vm.VirtualMa
 	cfg := vm.BuildLibvirtConfig(hv)
 	exec, err := libvirt.NewExecutor(cfg)
 	if err != nil {
-		return fmt.Errorf("connect to hypervisor %s for delete: %w", hv.Name, err)
+		return fmt.Errorf("connect to hypervisor %s for delete: %w: %w", hv.Name, err, ErrVMTeardownNotAttempted)
 	}
 	defer exec.Close()
 

@@ -88,6 +88,12 @@ func (s *Service) UpdateDeployStatus(ctx context.Context, name string, phase Pha
 	if err != nil {
 		return VirtualMachine{}, err
 	}
+	// An install-complete callback may have already finished this
+	// provisioning window while the deploy was unwinding; keep the completed
+	// state instead of re-arming the stale window.
+	if v.Provisioning.CompletedAt != nil && v.Provisioning.CompletionToken == provisioning.CompletionToken {
+		return v, nil
+	}
 	v.Phase = phase
 	v.LastPowerAction = lastAction
 	v.LastError = ""
