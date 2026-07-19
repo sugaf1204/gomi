@@ -223,6 +223,7 @@ export function HypervisorsView({ hypervisors, onRefresh }: HypervisorsViewProps
         }}>
           <div className="w-[min(520px,100%)] bg-white border border-line-strong shadow-[0_20px_45px_rgba(52,43,34,0.2)] p-[1.1rem] grid gap-[0.65rem]">
             <h3 className="text-[1.2rem] text-[#9b2d2d]">Confirm Delete</h3>
+            <p className="m-0 text-ink-soft text-[0.84rem]">Virtual machine records on these hypervisors are also removed from GOMI. No changes are made on the hosts.</p>
             <p className="m-0 text-ink-soft text-[0.84rem]">Target hypervisors ({batchDeleteConfirm.targets.length}):</p>
             <div className="max-h-[180px] overflow-auto border border-line p-[0.55rem] bg-[#f9f7f4]">
               <ul className="m-0 pl-[1.1rem]">

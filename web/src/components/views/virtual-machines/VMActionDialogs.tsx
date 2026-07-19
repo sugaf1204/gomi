@@ -51,9 +51,11 @@ export function VMActionDialogs(props: VMActionDialogsProps) {
   )
 }
 
-function DeleteDialog({ deleteConfirm, setDeleteConfirm, onDeleteConfirm }: VMActionDialogsProps) {
+function DeleteDialog({ deleteConfirm, setDeleteConfirm, onDeleteConfirm, virtualMachines }: VMActionDialogsProps) {
   if (!deleteConfirm.open) return null
   const close = () => setDeleteConfirm(initialDeleteConfirm)
+  const missingTargets = deleteConfirm.targets.filter((target) => virtualMachines.find((v) => v.name === target)?.phase === 'Missing')
+  const allMissing = missingTargets.length > 0 && missingTargets.length === deleteConfirm.targets.length
   return (
     <ModalOverlay onBackdropClick={() => { if (!deleteConfirm.running) close() }}>
       <div className="w-[min(520px,100%)] bg-white border border-line-strong shadow-[0_20px_45px_rgba(52,43,34,0.2)] p-[1.1rem] grid gap-[0.65rem]">
@@ -61,7 +63,16 @@ function DeleteDialog({ deleteConfirm, setDeleteConfirm, onDeleteConfirm }: VMAc
           <h3 className="text-[1.2rem] text-[#9b2d2d]">Delete Virtual Machine{deleteConfirm.targets.length > 1 ? 's' : ''}</h3>
           <button aria-label="Close" className="border-0 bg-transparent shadow-none p-0 w-[1.8rem] h-[1.8rem] flex items-center justify-center text-[1.4rem] leading-none text-ink-soft hover:text-ink hover:shadow-none!" disabled={deleteConfirm.running} onClick={close}>x</button>
         </div>
-        <p className="m-0 text-ink-soft text-[0.84rem]">This action permanently removes runtime resources and cannot be undone.</p>
+        <p className="m-0 text-ink-soft text-[0.84rem]">
+          {allMissing
+            ? 'These virtual machines were not found on the host at the last sync. Deleting removes the GOMI records; if a domain is still absent its leftover storage is not touched, and a domain that has reappeared is cleaned up.'
+            : 'This action permanently removes runtime resources and cannot be undone.'}
+        </p>
+        {!allMissing && missingTargets.length > 0 && (
+          <p className="m-0 text-ink-soft text-[0.84rem]">
+            {missingTargets.length} of the targets are Missing on the host; their records are removed and the host is only touched if their domain has reappeared.
+          </p>
+        )}
         <TargetList targets={deleteConfirm.targets} />
         <div className="flex justify-end gap-[0.45rem] pt-[0.2rem]">
           <button type="button" onClick={close} disabled={deleteConfirm.running}>Cancel</button>

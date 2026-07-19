@@ -263,6 +263,12 @@ func (s *RuntimeSyncer) syncWithExecutor(ctx context.Context, hv hypervisor.Hype
 
 	info, err := exec.DomainInfo(ctx, domainName)
 	if err != nil {
+		if libvirt.IsDomainNotFoundError(err) {
+			if vmDeployInFlight(v, time.Now().UTC()) {
+				return v, nil
+			}
+			return s.markVMMissing(ctx, hv, v, domainName)
+		}
 		return v, fmt.Errorf("domain info %s: %w", domainName, err)
 	}
 
@@ -275,6 +281,12 @@ func (s *RuntimeSyncer) syncWithExecutor(ctx context.Context, hv hypervisor.Hype
 	networkStatuses, ipAddresses = MergeRuntimeLeaseIPs(v, networkStatuses, ipAddresses, leaseIPByMAC)
 
 	updated := v
+	if v.Phase == PhaseMissing {
+		// The domain exists again; the Missing-specific state no longer
+		// applies regardless of what phase the live state maps to below.
+		updated.LastError = ""
+		updated.MissingSince = nil
+	}
 	now := time.Now().UTC()
 	if IsProvisioningTimedOut(updated.Provisioning, now) {
 		updated.Provisioning.Active = false
@@ -283,19 +295,76 @@ func (s *RuntimeSyncer) syncWithExecutor(ctx context.Context, hv hypervisor.Hype
 	} else {
 		updated.Phase = MapVMPhaseFromDomainState(info.State, v.Phase, v.Provisioning)
 	}
+	// The domain exists, so the record must leave Missing even when the
+	// domain state maps to no specific phase; otherwise delete would keep
+	// skipping runtime teardown and orphan a live domain.
+	if updated.Phase == PhaseMissing {
+		updated.Phase = PhaseStopped
+	}
 	updated.HypervisorName = hv.Name
 	updated.CreatedOnHost = hv.Name
 	updated.LibvirtDomain = domainName
 	updated.IPAddresses = ipAddresses
 	updated.NetworkInterfaces = networkStatuses
 
-	if !VMStatusChanged(v, updated) {
-		return v, nil
-	}
+	return s.persistSyncedVM(ctx, v, updated)
+}
 
-	updated.UpdatedAt = now
-	if err := s.VMs.Store().Upsert(ctx, updated); err != nil {
-		return v, fmt.Errorf("persist synced vm status: %w", err)
+// vmDeployInFlight reports whether the VM is inside a create or redeploy
+// window where the libvirt domain may legitimately not exist yet: both flows
+// upsert the record with an armed provisioning window before DefineDomain
+// runs, and redeploy undefines the old domain before defining the new one.
+// While DomainObservedAt is nil the deploy is still preparing the domain;
+// once it is set a later not-found means the domain was removed from the
+// host. The deadline still bounds the pre-domain window so a deploy
+// abandoned before DefineDomain (crashed server, killed worker) does not
+// keep PXE armed forever — a slow-but-alive deploy self-heals, because
+// markDomainDefined re-arms and renews the window at definition time.
+func vmDeployInFlight(v VirtualMachine, now time.Time) bool {
+	if !v.Provisioning.Active || IsProvisioningTimedOut(v.Provisioning, now) {
+		return false
+	}
+	return v.Provisioning.DomainObservedAt == nil
+}
+
+// markVMMissing records that the VM's libvirt domain no longer exists on the
+// hypervisor while keeping the GOMI record. It returns a nil error because the
+// libvirt connection worked; the missing domain is VM-level state, not a
+// hypervisor failure.
+func (s *RuntimeSyncer) markVMMissing(ctx context.Context, hv hypervisor.Hypervisor, v VirtualMachine, domainName string) (VirtualMachine, error) {
+	updated := v
+	updated.Phase = PhaseMissing
+	updated.LastError = fmt.Sprintf("libvirt domain %s not found on hypervisor %s", domainName, hv.Name)
+	updated.HypervisorName = hv.Name
+	updated.LibvirtDomain = domainName
+	updated.IPAddresses = nil
+	updated.NetworkInterfaces = nil
+	// The domain is gone, so any in-flight provisioning can never complete;
+	// end it so the machine's PXE config stops resolving to this VM.
+	updated.Provisioning.Active = false
+	// Refresh the timestamp on every transition into Missing (a record that
+	// left Missing, e.g. via redeploy, may still carry the old value); keep
+	// it stable while the record stays Missing.
+	if v.Phase != PhaseMissing || updated.MissingSince == nil {
+		now := time.Now().UTC()
+		updated.MissingSince = &now
+	}
+	return s.persistSyncedVM(ctx, v, updated)
+}
+
+func (s *RuntimeSyncer) persistSyncedVM(ctx context.Context, before, updated VirtualMachine) (VirtualMachine, error) {
+	if !VMStatusChanged(before, updated) {
+		return before, nil
+	}
+	updated.UpdatedAt = time.Now().UTC()
+	// The sync worked from a snapshot; writing through an existence-checked
+	// update keeps a concurrent delete from being resurrected by this write.
+	written, err := writeExisting(ctx, s.VMs.Store(), updated)
+	if err != nil {
+		return before, fmt.Errorf("persist synced vm status: %w", err)
+	}
+	if !written {
+		return before, nil
 	}
 	return updated, nil
 }
@@ -464,8 +533,21 @@ func prependUniqueIP(primary string, ips []string) []string {
 	return out
 }
 
+func equalTimePtr(a, b *time.Time) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	return a.Equal(*b)
+}
+
 func VMStatusChanged(before VirtualMachine, after VirtualMachine) bool {
 	if before.Phase != after.Phase {
+		return true
+	}
+	if before.LastError != after.LastError {
+		return true
+	}
+	if !equalTimePtr(before.MissingSince, after.MissingSince) {
 		return true
 	}
 	if before.HypervisorName != after.HypervisorName {

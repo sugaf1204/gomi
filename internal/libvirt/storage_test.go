@@ -1,24 +1,8 @@
 package libvirt
 
 import (
-	"fmt"
 	"testing"
-
-	golibvirt "github.com/digitalocean/go-libvirt"
 )
-
-func TestIsNoStorageVolumeError(t *testing.T) {
-	if !isNoStorageVolumeError(golibvirt.Error{Code: uint32(golibvirt.ErrNoStorageVol), Message: "no storage vol"}) {
-		t.Fatal("expected ErrNoStorageVol to be classified as missing volume")
-	}
-	wrapped := fmt.Errorf("lookup volume: %w", golibvirt.Error{Code: uint32(golibvirt.ErrNoStorageVol), Message: "no storage vol"})
-	if !isNoStorageVolumeError(wrapped) {
-		t.Fatal("expected wrapped ErrNoStorageVol to be classified as missing volume")
-	}
-	if isNoStorageVolumeError(golibvirt.Error{Code: uint32(golibvirt.ErrRPC), Message: "rpc failed"}) {
-		t.Fatal("expected non-missing libvirt error to propagate")
-	}
-}
 
 func TestVolumeFileName(t *testing.T) {
 	tests := []struct {

@@ -17,6 +17,9 @@ const (
 	PhaseError        Phase = "Error"
 	PhaseDeleting     Phase = "Deleting"
 	PhaseMigrating    Phase = "Migrating"
+	// PhaseMissing means the VM record exists in GOMI but its libvirt domain
+	// no longer exists on the hypervisor (e.g. removed directly via virsh).
+	PhaseMissing Phase = "Missing"
 )
 
 type IPAssignmentMode = resource.IPAssignmentMode
@@ -98,6 +101,12 @@ type ProvisioningStatus struct {
 	CompletionToken  string     `json:"completionToken,omitempty"`
 	CompletionSource string     `json:"completionSource,omitempty"`
 	LastSignalAt     *time.Time `json:"lastSignalAt,omitempty"`
+	// DomainObservedAt records when the deployer defined this provisioning
+	// window's libvirt domain. While nil, a missing domain is attributed to
+	// the create/redeploy define gap (a sighting of the pre-redeploy domain
+	// must not set it); once set, a missing domain means it was removed from
+	// the host.
+	DomainObservedAt *time.Time `json:"domainObservedAt,omitempty"`
 }
 
 type NetworkInterfaceStatus struct {
@@ -135,7 +144,12 @@ type VirtualMachine struct {
 	LastPowerAction          string                   `json:"lastPowerAction,omitempty"`
 	LastDeployedCloudInitRef string                   `json:"lastDeployedCloudInitRef,omitempty"`
 	LastError                string                   `json:"lastError,omitempty"`
-	CreatedOnHost            string                   `json:"createdOnHost,omitempty"`
+	// MissingSince records when the runtime sync loop marked this record
+	// Missing. Compared against Provisioning.DomainObservedAt it tells a
+	// domain removed after definition apart from a deploy that defined its
+	// domain only after the record had been marked Missing.
+	MissingSince  *time.Time `json:"missingSince,omitempty"`
+	CreatedOnHost string     `json:"createdOnHost,omitempty"`
 
 	CreatedAt time.Time `json:"createdAt"`
 	UpdatedAt time.Time `json:"updatedAt"`

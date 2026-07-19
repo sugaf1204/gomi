@@ -41,6 +41,19 @@ func (s *VMStore) Upsert(_ context.Context, v vm.VirtualMachine) error {
 	return nil
 }
 
+// UpdateExisting writes the VM only if its row still exists. It implements
+// vm.ExistingUpdater.
+func (s *VMStore) UpdateExisting(_ context.Context, v vm.VirtualMachine) (bool, error) {
+	s.b.mu.Lock()
+	defer s.b.mu.Unlock()
+	if _, ok := s.b.vms[v.Name]; !ok {
+		return false, nil
+	}
+	s.b.vms[v.Name] = v
+	s.notify()
+	return true, nil
+}
+
 func (s *VMStore) Get(_ context.Context, name string) (vm.VirtualMachine, error) {
 	s.b.mu.RLock()
 	defer s.b.mu.RUnlock()
@@ -95,6 +108,20 @@ func (s *VMStore) ListByHypervisor(_ context.Context, hypervisorName string) ([]
 		return out[i].Name < out[j].Name
 	})
 	return out, nil
+}
+
+// DeleteOwned deletes the VM only while it still references the given
+// hypervisor. It implements vm.OwnedDeleter.
+func (s *VMStore) DeleteOwned(_ context.Context, name, hypervisorRef string) (bool, error) {
+	s.b.mu.Lock()
+	defer s.b.mu.Unlock()
+	v, ok := s.b.vms[name]
+	if !ok || v.HypervisorRef != hypervisorRef {
+		return false, nil
+	}
+	delete(s.b.vms, name)
+	s.notify()
+	return true, nil
 }
 
 func (s *VMStore) Delete(_ context.Context, name string) error {

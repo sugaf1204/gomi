@@ -78,16 +78,33 @@ func TestShutdownPacketExpired(t *testing.T) {
 
 func TestShutdownPacketClockSkew(t *testing.T) {
 	secret := "test-secret"
-	// Packet timestamped 3 seconds in the future (within 5s allowance)
-	future := time.Now().UTC().Add(3 * time.Second)
-	packet, err := buildShutdownPacket("node-01", "tok", secret, future)
-	if err != nil {
-		t.Fatalf("buildShutdownPacket: %v", err)
+	ttl := 60 * time.Second
+	now := time.Now().UTC()
+	tests := []struct {
+		name      string
+		timestamp time.Time
+		wantOK    bool
+	}{
+		{name: "small future skew", timestamp: now.Add(3 * time.Second), wantOK: true},
+		{name: "future skew within ttl", timestamp: now.Add(45 * time.Second), wantOK: true},
+		{name: "past skew within ttl", timestamp: now.Add(-45 * time.Second), wantOK: true},
+		{name: "future skew beyond ttl", timestamp: now.Add(90 * time.Second), wantOK: false},
+		{name: "past skew beyond ttl", timestamp: now.Add(-90 * time.Second), wantOK: false},
 	}
-
-	_, err = ParseAndVerifyShutdownPacket(packet, secret, time.Now().UTC(), 60*time.Second)
-	if err != nil {
-		t.Fatalf("expected success for small clock skew, got: %v", err)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			packet, err := buildShutdownPacket("node-01", "tok", secret, tt.timestamp)
+			if err != nil {
+				t.Fatalf("buildShutdownPacket: %v", err)
+			}
+			_, err = ParseAndVerifyShutdownPacket(packet, secret, now, ttl)
+			if tt.wantOK && err != nil {
+				t.Fatalf("expected success within ttl window, got: %v", err)
+			}
+			if !tt.wantOK && err == nil {
+				t.Fatal("expected error outside ttl window, got nil")
+			}
+		})
 	}
 }
 

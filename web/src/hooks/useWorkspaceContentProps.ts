@@ -134,7 +134,8 @@ export function useWorkspaceContentProps({
       vmStats: {
         running: virtualMachines.filter((vm) => vm.phase === 'Running').length,
         stopped: virtualMachines.filter((vm) => vm.phase === 'Stopped').length,
-        error: virtualMachines.filter((vm) => vm.phase === 'Error').length
+        error: virtualMachines.filter((vm) => vm.phase === 'Error').length,
+        missing: virtualMachines.filter((vm) => vm.phase === 'Missing').length
       }
     },
     machines: {

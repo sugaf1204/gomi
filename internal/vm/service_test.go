@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/sugaf1204/gomi/internal/infra/memory"
 	"github.com/sugaf1204/gomi/internal/resource"
@@ -272,5 +273,406 @@ func TestServiceCreateSetsTimestamps(t *testing.T) {
 	}
 	if created.Phase != vm.PhasePending {
 		t.Fatalf("expected phase Pending, got %s", created.Phase)
+	}
+}
+
+func TestUpdateDeployStatusPreservesCompletedProvisioning(t *testing.T) {
+	svc := newTestService()
+	ctx := context.Background()
+	created, err := svc.Create(ctx, testVM())
+	if err != nil {
+		t.Fatalf("create vm: %v", err)
+	}
+
+	// The provisioning window armed by the API handler before deploying.
+	started := time.Now().UTC()
+	deadline := started.Add(time.Hour)
+	armed := vm.ProvisioningStatus{Active: true, StartedAt: &started, DeadlineAt: &deadline, CompletionToken: "tok-1"}
+	created.Provisioning = armed
+	if err := svc.Store().Upsert(ctx, created); err != nil {
+		t.Fatalf("arm provisioning: %v", err)
+	}
+
+	// An install-complete callback wins the race while the deploy unwinds.
+	completed := created
+	completed.MarkProvisionComplete("callback", time.Now().UTC())
+	if err := svc.Store().Upsert(ctx, completed); err != nil {
+		t.Fatalf("complete provisioning: %v", err)
+	}
+
+	updated, err := svc.UpdateDeployStatus(ctx, created.Name, vm.PhaseProvisioning, "create+cloudimage", armed)
+	if err != nil {
+		t.Fatalf("UpdateDeployStatus: %v", err)
+	}
+	if updated.Provisioning.Active {
+		t.Fatal("expected completed provisioning to stay inactive")
+	}
+	if updated.Provisioning.CompletedAt == nil {
+		t.Fatal("expected completedAt to be preserved")
+	}
+	if updated.Phase != vm.PhaseRunning {
+		t.Fatalf("expected phase to stay Running after completion, got %s", updated.Phase)
+	}
+
+	// A later redeploy arms a fresh window (as the handler does before
+	// deploying); its own UpdateDeployStatus must restore that window.
+	rearmed := armed
+	rearmed.CompletionToken = "tok-2"
+	next := updated
+	next.Provisioning = rearmed
+	if err := svc.Store().Upsert(ctx, next); err != nil {
+		t.Fatalf("arm second window: %v", err)
+	}
+	restored, err := svc.UpdateDeployStatus(ctx, created.Name, vm.PhaseProvisioning, "redeploy", rearmed)
+	if err != nil {
+		t.Fatalf("UpdateDeployStatus new token: %v", err)
+	}
+	if !restored.Provisioning.Active || restored.Provisioning.CompletionToken != "tok-2" {
+		t.Fatalf("expected new provisioning window to be restored, got %+v", restored.Provisioning)
+	}
+
+	// The older deploy's late status update must not clobber the newer
+	// window armed by tok-2.
+	stale, err := svc.UpdateDeployStatus(ctx, created.Name, vm.PhaseCreating, "create+pxe", armed)
+	if err != nil {
+		t.Fatalf("UpdateDeployStatus stale token: %v", err)
+	}
+	if stale.Provisioning.CompletionToken != "tok-2" || !stale.Provisioning.Active {
+		t.Fatalf("expected newer provisioning window to survive stale update, got %+v", stale.Provisioning)
+	}
+	if stale.Phase == vm.PhaseCreating {
+		t.Fatal("expected stale deploy update to not change the phase")
+	}
+}
+
+func TestUpdateDeployStatusPreservesDomainObservation(t *testing.T) {
+	svc := newTestService()
+	ctx := context.Background()
+	created, err := svc.Create(ctx, testVM())
+	if err != nil {
+		t.Fatalf("create vm: %v", err)
+	}
+
+	started := time.Now().UTC()
+	deadline := started.Add(time.Hour)
+	armed := vm.ProvisioningStatus{Active: true, StartedAt: &started, DeadlineAt: &deadline, CompletionToken: "tok-observe"}
+	created.Provisioning = armed
+	if err := svc.Store().Upsert(ctx, created); err != nil {
+		t.Fatalf("arm provisioning: %v", err)
+	}
+
+	// The runtime sync loop observes the domain before the deploy unwinds.
+	observed := started.Add(time.Minute)
+	seen := created
+	seen.Provisioning.DomainObservedAt = &observed
+	if err := svc.Store().Upsert(ctx, seen); err != nil {
+		t.Fatalf("record observation: %v", err)
+	}
+
+	restored, err := svc.UpdateDeployStatus(ctx, created.Name, vm.PhaseProvisioning, "create+cloudimage", armed)
+	if err != nil {
+		t.Fatalf("UpdateDeployStatus: %v", err)
+	}
+	if restored.Provisioning.DomainObservedAt == nil {
+		t.Fatal("expected domain observation to survive the deploy status restore")
+	}
+}
+
+func TestUpdateDeployStatusKeepsRenewedDeadline(t *testing.T) {
+	svc := newTestService()
+	ctx := context.Background()
+	created, err := svc.Create(ctx, testVM())
+	if err != nil {
+		t.Fatalf("create vm: %v", err)
+	}
+
+	// Snapshot armed before a long define gap: its deadline has passed.
+	started := time.Now().UTC().Add(-2 * time.Hour)
+	expired := started.Add(time.Hour)
+	armed := vm.ProvisioningStatus{Active: true, StartedAt: &started, DeadlineAt: &expired, CompletionToken: "tok-renew"}
+
+	// The stored window carries the deadline renewed at domain definition.
+	renewed := time.Now().UTC().Add(time.Hour)
+	current := created
+	current.Provisioning = armed
+	current.Provisioning.DeadlineAt = &renewed
+	observedAt := time.Now().UTC()
+	current.Provisioning.DomainObservedAt = &observedAt
+	if err := svc.Store().Upsert(ctx, current); err != nil {
+		t.Fatalf("seed renewed window: %v", err)
+	}
+
+	restored, err := svc.UpdateDeployStatus(ctx, created.Name, vm.PhaseProvisioning, "create+cloudimage", armed)
+	if err != nil {
+		t.Fatalf("UpdateDeployStatus: %v", err)
+	}
+	if restored.Provisioning.DeadlineAt == nil || !restored.Provisioning.DeadlineAt.Equal(renewed) {
+		t.Fatalf("expected renewed deadline to survive the restore, got %v", restored.Provisioning.DeadlineAt)
+	}
+	if restored.Provisioning.DomainObservedAt == nil {
+		t.Fatal("expected domain-defined marker to survive the restore")
+	}
+}
+
+func TestFailDeployEndsOwnProvisioningWindow(t *testing.T) {
+	svc := newTestService()
+	ctx := context.Background()
+	created, err := svc.Create(ctx, testVM())
+	if err != nil {
+		t.Fatalf("create vm: %v", err)
+	}
+	started := time.Now().UTC()
+	deadline := started.Add(time.Hour)
+	created.Provisioning = vm.ProvisioningStatus{Active: true, StartedAt: &started, DeadlineAt: &deadline, CompletionToken: "tok-fail"}
+	if err := svc.Store().Upsert(ctx, created); err != nil {
+		t.Fatalf("arm provisioning: %v", err)
+	}
+
+	failed, err := svc.FailDeploy(ctx, created.Name, "define", "define domain: boom", "tok-fail")
+	if err != nil {
+		t.Fatalf("FailDeploy: %v", err)
+	}
+	if failed.Phase != vm.PhaseError {
+		t.Fatalf("expected phase Error, got %s", failed.Phase)
+	}
+	if failed.Provisioning.Active {
+		t.Fatal("expected provisioning to be ended on deploy failure")
+	}
+
+	// A stale failure report must not touch a newer deploy's window.
+	rearmed := failed
+	rearmed.Provisioning = vm.ProvisioningStatus{Active: true, StartedAt: &started, DeadlineAt: &deadline, CompletionToken: "tok-newer"}
+	rearmed.Phase = vm.PhaseProvisioning
+	if err := svc.Store().Upsert(ctx, rearmed); err != nil {
+		t.Fatalf("arm newer window: %v", err)
+	}
+	stale, err := svc.FailDeploy(ctx, created.Name, "define", "old deploy failed", "tok-fail")
+	if err != nil {
+		t.Fatalf("FailDeploy stale: %v", err)
+	}
+	if !stale.Provisioning.Active || stale.Phase != vm.PhaseProvisioning {
+		t.Fatalf("expected newer window to survive stale failure, got phase=%s provisioning=%+v", stale.Phase, stale.Provisioning)
+	}
+}
+
+func TestUpdateDeployStatusKeepsMissingAfterObservation(t *testing.T) {
+	svc := newTestService()
+	ctx := context.Background()
+	created, err := svc.Create(ctx, testVM())
+	if err != nil {
+		t.Fatalf("create vm: %v", err)
+	}
+	started := time.Now().UTC()
+	deadline := started.Add(time.Hour)
+	armed := vm.ProvisioningStatus{Active: true, StartedAt: &started, DeadlineAt: &deadline, CompletionToken: "tok-missing"}
+
+	// The domain was defined (observed) and then removed: the Missing mark
+	// postdates the observation, so the deploy completing later must not
+	// resurrect the window.
+	observed := started.Add(time.Minute)
+	missingAt := started.Add(2 * time.Minute)
+	missing := created
+	missing.Phase = vm.PhaseMissing
+	missing.LastError = "libvirt domain vm-test-01 not found on hypervisor hv-01"
+	missing.MissingSince = &missingAt
+	missing.Provisioning = armed
+	missing.Provisioning.Active = false
+	missing.Provisioning.DomainObservedAt = &observed
+	if err := svc.Store().Upsert(ctx, missing); err != nil {
+		t.Fatalf("seed missing vm: %v", err)
+	}
+
+	after, err := svc.UpdateDeployStatus(ctx, created.Name, vm.PhaseProvisioning, "create+cloudimage", armed)
+	if err != nil {
+		t.Fatalf("UpdateDeployStatus: %v", err)
+	}
+	if after.Phase != vm.PhaseMissing {
+		t.Fatalf("expected Missing to survive deploy completion, got %s", after.Phase)
+	}
+	if after.Provisioning.Active {
+		t.Fatal("expected provisioning to stay ended for a removed domain")
+	}
+
+	// The opposite ordering — Missing marked during a timed-out define gap,
+	// domain defined afterwards — must re-arm the install.
+	earlyMissing := started.Add(30 * time.Second)
+	defineGap := missing
+	defineGap.MissingSince = &earlyMissing
+	defineGap.Provisioning.DomainObservedAt = &observed
+	if err := svc.Store().Upsert(ctx, defineGap); err != nil {
+		t.Fatalf("seed define-gap missing vm: %v", err)
+	}
+	rearmed, err := svc.UpdateDeployStatus(ctx, created.Name, vm.PhaseProvisioning, "create+cloudimage", armed)
+	if err != nil {
+		t.Fatalf("UpdateDeployStatus define gap: %v", err)
+	}
+	if rearmed.Phase != vm.PhaseProvisioning || !rearmed.Provisioning.Active {
+		t.Fatalf("expected define-gap Missing to be re-armed, got phase=%s provisioning=%+v", rearmed.Phase, rearmed.Provisioning)
+	}
+	if rearmed.MissingSince != nil {
+		t.Fatal("expected missingSince to be cleared when the deploy re-arms the window")
+	}
+}
+
+func TestVMStoreUpdateExistingSkipsDeletedRecords(t *testing.T) {
+	svc := newTestService()
+	ctx := context.Background()
+	updater, ok := svc.Store().(vm.ExistingUpdater)
+	if !ok {
+		t.Fatal("memory vm store must implement vm.ExistingUpdater")
+	}
+
+	ghost := testVM()
+	ghost.Name = "vm-deleted"
+	written, err := updater.UpdateExisting(ctx, ghost)
+	if err != nil {
+		t.Fatalf("UpdateExisting: %v", err)
+	}
+	if written {
+		t.Fatal("expected update of a deleted record to be skipped")
+	}
+	if _, err := svc.Get(ctx, "vm-deleted"); !errors.Is(err, resource.ErrNotFound) {
+		t.Fatalf("expected record to stay absent, got err=%v", err)
+	}
+
+	created, err := svc.Create(ctx, testVM())
+	if err != nil {
+		t.Fatalf("create vm: %v", err)
+	}
+	created.Phase = vm.PhaseRunning
+	written, err = updater.UpdateExisting(ctx, created)
+	if err != nil {
+		t.Fatalf("UpdateExisting existing: %v", err)
+	}
+	if !written {
+		t.Fatal("expected update of an existing record to be written")
+	}
+}
+
+func TestUpdateDeployStatusKeepsTimedOutWindowAfterObservation(t *testing.T) {
+	svc := newTestService()
+	ctx := context.Background()
+	created, err := svc.Create(ctx, testVM())
+	if err != nil {
+		t.Fatalf("create vm: %v", err)
+	}
+	started := time.Now().UTC().Add(-2 * time.Hour)
+	deadline := started.Add(time.Hour)
+	armed := vm.ProvisioningStatus{Active: true, StartedAt: &started, DeadlineAt: &deadline, CompletionToken: "tok-timeout"}
+
+	// The domain was observed and the install then timed out: sync flipped
+	// the record to Error and ended provisioning.
+	observed := started.Add(time.Minute)
+	timedOut := created
+	timedOut.Phase = vm.PhaseError
+	timedOut.LastError = "provisioning timed out waiting for install completion signal"
+	timedOut.Provisioning = armed
+	timedOut.Provisioning.Active = false
+	timedOut.Provisioning.DomainObservedAt = &observed
+	if err := svc.Store().Upsert(ctx, timedOut); err != nil {
+		t.Fatalf("seed timed-out vm: %v", err)
+	}
+
+	after, err := svc.UpdateDeployStatus(ctx, created.Name, vm.PhaseProvisioning, "create+cloudimage", armed)
+	if err != nil {
+		t.Fatalf("UpdateDeployStatus: %v", err)
+	}
+	if after.Provisioning.Active {
+		t.Fatal("expected timed-out provisioning to stay ended")
+	}
+	if after.Phase != vm.PhaseError {
+		t.Fatalf("expected timed-out phase Error to survive, got %s", after.Phase)
+	}
+}
+
+func TestUpdateDeployStatusRearmsAfterSyncRecoveredDefineGap(t *testing.T) {
+	svc := newTestService()
+	ctx := context.Background()
+	created, err := svc.Create(ctx, testVM())
+	if err != nil {
+		t.Fatalf("create vm: %v", err)
+	}
+	started := time.Now().UTC()
+	deadline := started.Add(time.Hour)
+	armed := vm.ProvisioningStatus{Active: true, StartedAt: &started, DeadlineAt: &deadline, CompletionToken: "tok-recovered"}
+
+	// The define gap marked the record Missing (window deactivated), the
+	// deploy then defined the domain, and a sync observed it and recovered
+	// the phase before UpdateDeployStatus ran.
+	observed := started.Add(time.Minute)
+	recovered := created
+	recovered.Phase = vm.PhaseStopped
+	recovered.Provisioning = armed
+	recovered.Provisioning.Active = false
+	recovered.Provisioning.DomainObservedAt = &observed
+	if err := svc.Store().Upsert(ctx, recovered); err != nil {
+		t.Fatalf("seed recovered vm: %v", err)
+	}
+
+	after, err := svc.UpdateDeployStatus(ctx, created.Name, vm.PhaseProvisioning, "create+cloudimage", armed)
+	if err != nil {
+		t.Fatalf("UpdateDeployStatus: %v", err)
+	}
+	if !after.Provisioning.Active || after.Phase != vm.PhaseProvisioning {
+		t.Fatalf("expected recovered define-gap window to be re-armed, got phase=%s provisioning=%+v", after.Phase, after.Provisioning)
+	}
+}
+
+func TestDeleteOwnedSkipsMigratedRecords(t *testing.T) {
+	svc := newTestService()
+	ctx := context.Background()
+	if _, err := svc.Create(ctx, testVM()); err != nil {
+		t.Fatalf("create vm: %v", err)
+	}
+
+	deleted, err := svc.DeleteOwned(ctx, "vm-test-01", "hv-other")
+	if err != nil {
+		t.Fatalf("DeleteOwned other ref: %v", err)
+	}
+	if deleted {
+		t.Fatal("expected record referencing another hypervisor to survive")
+	}
+	if _, err := svc.Get(ctx, "vm-test-01"); err != nil {
+		t.Fatalf("expected record to still exist: %v", err)
+	}
+
+	deleted, err = svc.DeleteOwned(ctx, "vm-test-01", "hv-01")
+	if err != nil {
+		t.Fatalf("DeleteOwned owning ref: %v", err)
+	}
+	if !deleted {
+		t.Fatal("expected owned record to be deleted")
+	}
+
+	deleted, err = svc.DeleteOwned(ctx, "vm-test-01", "hv-01")
+	if err != nil {
+		t.Fatalf("DeleteOwned absent record: %v", err)
+	}
+	if deleted {
+		t.Fatal("expected delete of an absent record to report false")
+	}
+}
+
+func TestMarkMissingSkipsDeployInFlight(t *testing.T) {
+	svc := newTestService()
+	ctx := context.Background()
+	created, err := svc.Create(ctx, testVM())
+	if err != nil {
+		t.Fatalf("create vm: %v", err)
+	}
+	started := time.Now().UTC()
+	deadline := started.Add(time.Hour)
+	created.Phase = vm.PhaseProvisioning
+	created.Provisioning = vm.ProvisioningStatus{Active: true, StartedAt: &started, DeadlineAt: &deadline, CompletionToken: "tok-inflight"}
+	if err := svc.Store().Upsert(ctx, created); err != nil {
+		t.Fatalf("arm provisioning: %v", err)
+	}
+
+	after, err := svc.MarkMissing(ctx, created.Name, "power-off", "libvirt domain not found during power-off")
+	if err != nil {
+		t.Fatalf("MarkMissing: %v", err)
+	}
+	if after.Phase != vm.PhaseProvisioning || !after.Provisioning.Active {
+		t.Fatalf("expected in-flight deploy window to survive stale not-found, got phase=%s provisioning=%+v", after.Phase, after.Provisioning)
 	}
 }

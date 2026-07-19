@@ -1,12 +1,10 @@
 package api
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	gohttp "net/http"
 	"strings"
-	"time"
 
 	"github.com/labstack/echo/v4"
 	"github.com/sugaf1204/gomi/internal/infra/httputil"
@@ -65,14 +63,4 @@ func (s *Server) MigrateVM(c echo.Context) error {
 		"target": targetHVName,
 	})
 	return c.JSON(gohttp.StatusOK, virtualMachineResponse(updated))
-}
-
-func (s *Server) updateVMPXEProvisioningError(ctx context.Context, current vm.VirtualMachine, reinstallErr error) error {
-	now := time.Now().UTC()
-	current.Phase = vm.PhaseError
-	current.LastPowerAction = "redeploy"
-	current.LastError = reinstallErr.Error()
-	current.Provisioning.Active = false
-	current.UpdatedAt = now
-	return s.vms.Store().Upsert(ctx, current)
 }

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	gohttp "net/http"
 	"strings"
 	"time"
@@ -92,8 +93,34 @@ func (s *Server) CreateVirtualMachine(c echo.Context) error {
 		return c.JSON(gohttp.StatusBadRequest, jsonErrorErr(err))
 	}
 
+	// The hypervisor may have been deleted (with its record-only cascade)
+	// between the existence check above and the upsert; without a cross-store
+	// transaction, this recheck plus the cascade's post-delete sweep ensures
+	// the new record cannot survive with a dangling hypervisorRef.
+	deployHV, err := s.hypervisors.Get(ctx, created.HypervisorRef)
+	if err != nil {
+		if errors.Is(err, resource.ErrNotFound) {
+			_ = s.vms.Delete(ctx, created.Name)
+			return c.JSON(gohttp.StatusConflict, jsonError("hypervisor was deleted concurrently: "+created.HypervisorRef))
+		}
+		return c.JSON(gohttp.StatusInternalServerError, jsonErrorErr(err))
+	}
+
 	if s.vmDeployer != nil {
-		if deployErr := s.vmDeployer.Deploy(ctx, &created, pxehttp.RenderNoCloudLineConfig); deployErr != nil {
+		deployErr := s.vmDeployer.Deploy(ctx, &created, pxehttp.RenderNoCloudLineConfig)
+		// A hypervisor cascade may have swept the record while the deploy was
+		// mutating the host; undo the host mutations instead of returning 201
+		// for a record that no longer exists. The teardown uses the
+		// hypervisor resolved before the deploy, since its record may be
+		// gone from the store by now.
+		if _, getErr := s.vms.Get(ctx, created.Name); errors.Is(getErr, resource.ErrNotFound) {
+			if cleanupErr := s.teardownVMRuntimeForCleanup(ctx, deployHV, created); cleanupErr != nil {
+				log.Printf("create vm %s: cleanup after concurrent hypervisor delete: %v", created.Name, cleanupErr)
+			}
+			httputil.CreateAudit(c, s.authStore, created.Name, "create-vm", "failure", "hypervisor was deleted concurrently", nil)
+			return c.JSON(gohttp.StatusConflict, jsonError("hypervisor was deleted concurrently: "+created.HypervisorRef))
+		}
+		if deployErr != nil {
 			httputil.CreateAudit(c, s.authStore, created.Name, "create-vm", "partial", "vm created but deploy failed: "+deployErr.Error(), nil)
 		} else {
 			httputil.CreateAudit(c, s.authStore, created.Name, "create-vm", "success", "virtual machine created", nil)
@@ -181,9 +208,17 @@ func (s *Server) DeleteVirtualMachine(c echo.Context) error {
 		}
 		return c.JSON(gohttp.StatusInternalServerError, jsonErrorErr(err))
 	}
+	// Runtime teardown always runs so a domain that reappeared after the VM
+	// was marked Missing is still cleaned up. A Missing VM falls back to a
+	// record-only delete only when teardown never touched the host (e.g. the
+	// hypervisor became unreachable); once teardown has started mutating host
+	// state, a failure must keep the record so cleanup can be retried.
 	if err := s.deleteVirtualMachineRuntime(ctx, v); err != nil {
-		httputil.CreateAudit(c, s.authStore, name, "delete-vm", "failure", err.Error(), nil)
-		return c.JSON(gohttp.StatusBadGateway, jsonErrorErr(err))
+		if v.Phase != vm.PhaseMissing || !errors.Is(err, ErrVMTeardownNotAttempted) {
+			httputil.CreateAudit(c, s.authStore, name, "delete-vm", "failure", err.Error(), nil)
+			return c.JSON(gohttp.StatusBadGateway, jsonErrorErr(err))
+		}
+		log.Printf("delete vm %s: teardown not attempted for Missing vm, deleting record only: %v", name, err)
 	}
 	if err := s.vms.Delete(ctx, name); err != nil {
 		if errors.Is(err, resource.ErrNotFound) {
@@ -194,6 +229,11 @@ func (s *Server) DeleteVirtualMachine(c echo.Context) error {
 	httputil.CreateAudit(c, s.authStore, name, "delete-vm", "success", "virtual machine deleted", nil)
 	return c.NoContent(gohttp.StatusNoContent)
 }
+
+// ErrVMTeardownNotAttempted marks runtime-delete failures that happened
+// before any host mutation (hypervisor resolution or connection setup), so a
+// Missing VM may safely fall back to a record-only delete.
+var ErrVMTeardownNotAttempted = errors.New("vm runtime teardown not attempted")
 
 func (s *Server) deleteVirtualMachineRuntime(ctx context.Context, v vm.VirtualMachine) error {
 	if s.vmRuntimeDeleter != nil {
@@ -208,12 +248,35 @@ func (s *Server) deleteVirtualMachineRuntime(ctx context.Context, v vm.VirtualMa
 	}
 	hv, err := s.hypervisors.Get(ctx, hvRef)
 	if err != nil {
+		if errors.Is(err, resource.ErrNotFound) {
+			// The hypervisor record is already gone; there is no host to
+			// clean up through GOMI, so delete only the record.
+			return nil
+		}
 		return fmt.Errorf("resolve hypervisor %s for delete: %w", hvRef, err)
 	}
+	return teardownVMRuntimeOnHypervisor(ctx, hv, v)
+}
+
+// teardownVMRuntimeForCleanup undoes host mutations for a record that was
+// concurrently deleted, using the already-resolved hypervisor. The test hook
+// takes precedence, mirroring deleteVirtualMachineRuntime.
+func (s *Server) teardownVMRuntimeForCleanup(ctx context.Context, hv hypervisor.Hypervisor, v vm.VirtualMachine) error {
+	if s.vmRuntimeDeleter != nil {
+		return s.vmRuntimeDeleter(ctx, v)
+	}
+	return teardownVMRuntimeOnHypervisor(ctx, hv, v)
+}
+
+// teardownVMRuntimeOnHypervisor removes the VM's domain and storage on the
+// given hypervisor. Callers that already hold the hypervisor (e.g. cleanup
+// after its record was concurrently deleted) use it directly; the normal
+// delete path resolves the record first via deleteVirtualMachineRuntime.
+func teardownVMRuntimeOnHypervisor(ctx context.Context, hv hypervisor.Hypervisor, v vm.VirtualMachine) error {
 	cfg := vm.BuildLibvirtConfig(hv)
 	exec, err := libvirt.NewExecutor(cfg)
 	if err != nil {
-		return fmt.Errorf("connect to hypervisor %s for delete: %w", hv.Name, err)
+		return fmt.Errorf("connect to hypervisor %s for delete: %w: %w", hv.Name, err, ErrVMTeardownNotAttempted)
 	}
 	defer exec.Close()
 
@@ -221,13 +284,18 @@ func (s *Server) deleteVirtualMachineRuntime(ctx context.Context, v vm.VirtualMa
 	if domainName == "" {
 		domainName = v.Name
 	}
-	if err := exec.DestroyDomain(ctx, domainName); err != nil && !vm.IsIgnorableDestroyError(err) {
-		return fmt.Errorf("stop domain %s before delete: %w", domainName, err)
+	destroyErr := exec.DestroyDomain(ctx, domainName)
+	if destroyErr != nil && !vm.IsIgnorableDestroyError(destroyErr) && !libvirt.IsDomainNotFoundError(destroyErr) {
+		return fmt.Errorf("stop domain %s before delete: %w", domainName, destroyErr)
 	}
-	if err := exec.UndefineDomain(ctx, domainName); err != nil && !vm.IsIgnorableDestroyError(err) {
-		return fmt.Errorf("undefine domain %s before delete: %w", domainName, err)
+	undefineErr := exec.UndefineDomain(ctx, domainName)
+	if undefineErr != nil && !vm.IsIgnorableDestroyError(undefineErr) && !libvirt.IsDomainNotFoundError(undefineErr) {
+		return fmt.Errorf("undefine domain %s before delete: %w", domainName, undefineErr)
 	}
-	if err := exec.DeleteVolume(ctx, v.Name); err != nil {
+	if vm.SkipHostStorageCleanup(v.Phase, destroyErr, undefineErr) {
+		return nil
+	}
+	if err := exec.DeleteVolume(ctx, v.Name); err != nil && !libvirt.IsVolumeNotFoundError(err) {
 		return fmt.Errorf("delete volume %s: %w", v.Name, err)
 	}
 	return nil

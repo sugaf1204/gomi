@@ -36,6 +36,7 @@ func Run(ctx context.Context, cfg Config, onShutdown func(packet power.ShutdownP
 	defer pc.Close()
 
 	buf := make([]byte, 2048)
+	replay := power.NewShutdownReplayCache(cfg.TTL)
 	var lastInvalidLog time.Time
 	logInvalid := func(format string, args ...any) {
 		now := time.Now()
@@ -66,6 +67,10 @@ func Run(ctx context.Context, cfg Config, onShutdown func(packet power.ShutdownP
 		}
 		if cfg.ExpectedToken != "" && packet.Token != cfg.ExpectedToken {
 			logInvalid("invalid WoL shutdown packet: token mismatch for machine %s", packet.MachineName)
+			continue
+		}
+		if replay.Seen(packet.Nonce, time.Now().UTC()) {
+			logInvalid("invalid WoL shutdown packet: replayed nonce %s for machine %s", packet.RequestID(), packet.MachineName)
 			continue
 		}
 		if err := onShutdown(packet); err != nil {

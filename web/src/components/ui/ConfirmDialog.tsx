@@ -67,6 +67,7 @@ export function ConfirmDialog({
 
         {requiresNameInput && (
           <>
+            <p className="m-0 text-ink-soft text-[0.84rem]">Linked hypervisor records and their virtual machine records are also removed from GOMI. No changes are made on the hosts.</p>
             <p className="m-0 text-ink-soft">Type <strong>{machineName}</strong> to continue.</p>
             <input
               aria-label="Machine confirmation"

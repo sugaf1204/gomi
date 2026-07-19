@@ -57,13 +57,23 @@ func (s *Server) GetHypervisor(c echo.Context) error {
 
 func (s *Server) DeleteHypervisor(c echo.Context) error {
 	name := c.Param("name")
-	if err := s.hypervisors.Delete(c.Request().Context(), name); err != nil {
+	ctx := c.Request().Context()
+	if _, err := s.hypervisors.Get(ctx, name); err != nil {
 		if errors.Is(err, resource.ErrNotFound) {
+			// The row is already gone, but a racing create may have left VM
+			// records behind after an earlier delete's sweep; give retries a
+			// path to clean those up.
+			if sweepErr := s.deleteHypervisorVMRecords(ctx, c, name, "cascade from hypervisor "+name); sweepErr != nil {
+				return c.JSON(gohttp.StatusInternalServerError, jsonErrorErr(sweepErr))
+			}
 			return c.JSON(gohttp.StatusNotFound, jsonError("not found"))
 		}
 		return c.JSON(gohttp.StatusInternalServerError, jsonErrorErr(err))
 	}
-	httputil.CreateAudit(c, s.authStore, name, "delete-hypervisor", "success", "hypervisor deleted", nil)
+	if err := s.cascadeDeleteHypervisorRecords(ctx, c, name, "cascade from hypervisor "+name); err != nil {
+		httputil.CreateAudit(c, s.authStore, name, "delete-hypervisor", "failure", err.Error(), nil)
+		return c.JSON(gohttp.StatusInternalServerError, jsonErrorErr(err))
+	}
 	return c.NoContent(gohttp.StatusNoContent)
 }
 

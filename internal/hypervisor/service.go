@@ -50,6 +50,21 @@ func (s *Service) List(ctx context.Context) ([]Hypervisor, error) {
 	return s.store.List(ctx)
 }
 
+// ListByMachineRef returns the hypervisors linked to the given machine.
+func (s *Service) ListByMachineRef(ctx context.Context, machineRef string) ([]Hypervisor, error) {
+	items, err := s.store.List(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]Hypervisor, 0, 1)
+	for _, h := range items {
+		if h.MachineRef == machineRef {
+			out = append(out, h)
+		}
+	}
+	return out, nil
+}
+
 func (s *Service) Delete(ctx context.Context, name string) error {
 	if err := s.store.Delete(ctx, name); err != nil {
 		return err

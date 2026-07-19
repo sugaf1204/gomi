@@ -65,8 +65,28 @@ func (s *Server) runVMPowerAction(c echo.Context, action string) error {
 		targetPhase = vm.PhaseError
 		lastErr = libvirtErr.Error()
 	}
+	// A typed not-found proves the domain is absent from the host: record
+	// that as Missing regardless of the previous phase, so a later delete
+	// honors the record-only storage contract instead of treating the VM as
+	// live. Conversely a nil error proves the domain is defined (the
+	// power-off path surfaces the typed not-found instead of swallowing
+	// it), so a successful action exits Missing normally.
+	if libvirt.IsDomainNotFoundError(libvirtErr) {
+		targetPhase = vm.PhaseMissing
+		lastErr = fmt.Sprintf("libvirt domain not found during %s: %v", action, libvirtErr)
+		if v.Phase == vm.PhaseMissing {
+			lastErr = v.LastError
+		}
+	}
 
-	updated, err := s.vms.UpdateStatus(ctx, name, targetPhase, action, lastErr)
+	var updated vm.VirtualMachine
+	if targetPhase == vm.PhaseMissing {
+		// MarkMissing also ends any in-flight provisioning (PXE resolution
+		// keys off it) and stamps MissingSince, mirroring the sync loop.
+		updated, err = s.vms.MarkMissing(ctx, name, action, lastErr)
+	} else {
+		updated, err = s.vms.UpdateStatus(ctx, name, targetPhase, action, lastErr)
+	}
 	if err != nil {
 		httputil.CreateAudit(c, s.authStore, name, action, "failure", err.Error(), nil)
 		return c.JSON(gohttp.StatusInternalServerError, jsonErrorErr(err))
@@ -123,6 +143,11 @@ type vmPowerOffExecutor interface {
 
 func powerOffDomain(ctx context.Context, exec vmPowerOffExecutor, domainName string) error {
 	if err := exec.ShutdownDomain(ctx, domainName); err != nil {
+		// Surface the typed not-found so the caller can mark the record
+		// Missing; only "not running"-style conditions are true no-ops.
+		if libvirt.IsDomainNotFoundError(err) {
+			return err
+		}
 		if vm.IsIgnorableDestroyError(err) {
 			return nil
 		}

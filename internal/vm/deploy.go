@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"strings"
+	"time"
 
 	"github.com/sugaf1204/gomi/internal/hypervisor"
 	"github.com/sugaf1204/gomi/internal/libvirt"
@@ -87,6 +88,7 @@ func (d *Deployer) Deploy(ctx context.Context, created *VirtualMachine, pxeNoClo
 		d.updatePhaseOnError(ctx, created, "define", err)
 		return fmt.Errorf("define domain: %w", err)
 	}
+	d.markDomainDefined(ctx, created)
 
 	created.LibvirtDomain = created.Name
 	created.CreatedOnHost = hv.Name
@@ -114,11 +116,11 @@ func (d *Deployer) Deploy(ctx context.Context, created *VirtualMachine, pxeNoClo
 		if bootDev == "hd" {
 			lastAction = "create+cloudimage"
 		}
-		if updated, err := d.VMs.UpdateStatus(ctx, created.Name, targetPhase, lastAction, ""); err == nil {
+		if updated, err := d.VMs.UpdateDeployStatus(ctx, created.Name, targetPhase, lastAction, created.Provisioning); err == nil {
 			*created = updated
 		}
 	} else {
-		if updated, err := d.VMs.UpdateStatus(ctx, created.Name, PhaseCreating, "define", ""); err == nil {
+		if updated, err := d.VMs.UpdateDeployStatus(ctx, created.Name, PhaseCreating, "define", created.Provisioning); err == nil {
 			*created = updated
 		}
 	}
@@ -185,6 +187,7 @@ func (d *Deployer) Redeploy(ctx context.Context, v VirtualMachine, pxeNoCloudFn 
 	if err := exec.DefineDomain(ctx, domainCfg); err != nil {
 		return fmt.Errorf("define domain %s for pxe redeploy: %w", domainName, err)
 	}
+	d.markDomainDefined(ctx, &v)
 
 	if err := exec.StartDomain(ctx, domainName); err != nil {
 		return fmt.Errorf("start domain %s: %w", domainName, err)
@@ -198,8 +201,58 @@ func (d *Deployer) Redeploy(ctx context.Context, v VirtualMachine, pxeNoCloudFn 
 	return nil
 }
 
+// markDomainDefined persists that the current provisioning window's libvirt
+// domain now exists on the hypervisor. The runtime sync loop uses this marker
+// to distinguish the define gap (a missing domain is expected, however long
+// pre-domain work takes) from a domain that was removed from the host. It also
+// updates the caller's in-memory provisioning snapshot so a later
+// UpdateDeployStatus restore carries the marker.
+func (d *Deployer) markDomainDefined(ctx context.Context, deployed *VirtualMachine) {
+	v, err := d.VMs.Get(ctx, deployed.Name)
+	if err != nil {
+		log.Printf("deploy vm %s: load record to mark domain defined: %v", deployed.Name, err)
+		return
+	}
+	// Only stamp the window this deploy owns: a newer redeploy may have armed
+	// a different token whose domain is still in its own define gap. The
+	// stored window may have been temporarily deactivated (e.g. marked
+	// Missing after a long define gap), so completion, not Active, decides
+	// whether the marker still applies.
+	if v.Provisioning.CompletionToken != deployed.Provisioning.CompletionToken {
+		return
+	}
+	if v.Provisioning.CompletedAt == nil && v.Provisioning.DomainObservedAt == nil {
+		now := time.Now().UTC()
+		v.Provisioning.DomainObservedAt = &now
+		// Pre-domain work (e.g. preparing a large backing image) may have
+		// consumed most or all of the install deadline; the install itself
+		// only starts now, so give it the full window from definition time
+		// and re-arm a window the sync loop deactivated during the gap, so
+		// the guest's first PXE request after StartDomain finds it active.
+		if v.Provisioning.StartedAt != nil && v.Provisioning.DeadlineAt != nil {
+			window := v.Provisioning.DeadlineAt.Sub(*v.Provisioning.StartedAt)
+			renewed := now.Add(window)
+			v.Provisioning.DeadlineAt = &renewed
+		}
+		v.Provisioning.Active = true
+		v.UpdatedAt = now
+		written, err := writeExisting(ctx, d.VMs.Store(), v)
+		if err != nil {
+			log.Printf("deploy vm %s: mark domain defined: %v", deployed.Name, err)
+			return
+		}
+		if !written {
+			// The record was deleted while the deploy was running; do not
+			// recreate it just to stamp the marker.
+			return
+		}
+	}
+	deployed.Provisioning.DomainObservedAt = v.Provisioning.DomainObservedAt
+	deployed.Provisioning.DeadlineAt = v.Provisioning.DeadlineAt
+}
+
 func (d *Deployer) updatePhaseOnError(ctx context.Context, created *VirtualMachine, action string, deployErr error) {
-	if updated, err := d.VMs.UpdateStatus(ctx, created.Name, PhaseError, action, deployErr.Error()); err == nil {
+	if updated, err := d.VMs.FailDeploy(ctx, created.Name, action, deployErr.Error(), created.Provisioning.CompletionToken); err == nil {
 		*created = updated
 	}
 }

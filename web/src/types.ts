@@ -245,7 +245,7 @@ export type VirtualMachine = {
   }
   sshKeyRefs?: string[]
   loginUser?: LoginUserSpec
-  phase: 'Pending' | 'Creating' | 'Running' | 'Stopped' | 'Provisioning' | 'Error' | 'Deleting' | 'Migrating'
+  phase: 'Pending' | 'Creating' | 'Running' | 'Stopped' | 'Provisioning' | 'Error' | 'Deleting' | 'Migrating' | 'Missing'
   libvirtDomain?: string
   hypervisorName?: string
   ipAddresses?: string[]
