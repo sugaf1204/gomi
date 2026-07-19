@@ -111,10 +111,19 @@ func (s *Server) ReinstallVM(c echo.Context) error {
 	}
 
 	if s.vmDeployer != nil {
+		// Resolved up front so a cascade sweeping the records mid-redeploy
+		// still leaves a hypervisor handle for host cleanup.
+		deployHV, hvErr := s.hypervisors.Get(ctx, current.HypervisorRef)
+		if hvErr != nil {
+			if errors.Is(hvErr, resource.ErrNotFound) {
+				return c.JSON(gohttp.StatusConflict, jsonError("hypervisor was deleted concurrently: "+current.HypervisorRef))
+			}
+			return c.JSON(gohttp.StatusInternalServerError, jsonErrorErr(hvErr))
+		}
 		if err := s.vmDeployer.Redeploy(ctx, current, pxehttp.RenderNoCloudLineConfig); err != nil {
 			// Token-gated: a stale failure must not clobber the window a
 			// newer redeploy has armed in the meantime.
-			if _, failErr := s.vms.FailDeploy(ctx, name, "redeploy", err.Error(), current.Provisioning.CompletionToken); failErr != nil {
+			if _, failErr := s.vms.FailDeploy(ctx, name, "redeploy", err.Error(), current.Provisioning.CompletionToken); failErr != nil && !errors.Is(failErr, resource.ErrNotFound) {
 				log.Printf("redeploy vm %s: record deploy failure: %v", name, failErr)
 			}
 			httputil.CreateAudit(c, s.authStore, name, "redeploy-vm", "failure", err.Error(), nil)
@@ -124,6 +133,16 @@ func (s *Server) ReinstallVM(c echo.Context) error {
 		// marked the record Missing while the old domain was undefined and
 		// the new one not yet defined.
 		if _, err := s.vms.UpdateDeployStatus(ctx, name, vm.PhaseProvisioning, "redeploy", current.Provisioning); err != nil {
+			if errors.Is(err, resource.ErrNotFound) {
+				// A hypervisor cascade swept the record mid-redeploy; undo
+				// the host mutations instead of returning 202 for a record
+				// that no longer exists.
+				if cleanupErr := s.teardownVMRuntimeForCleanup(ctx, deployHV, current); cleanupErr != nil {
+					log.Printf("redeploy vm %s: cleanup after concurrent hypervisor delete: %v", name, cleanupErr)
+				}
+				httputil.CreateAudit(c, s.authStore, name, "redeploy-vm", "failure", "vm record was deleted concurrently", nil)
+				return c.JSON(gohttp.StatusConflict, jsonError("vm record was deleted concurrently: "+name))
+			}
 			log.Printf("redeploy vm %s: restore provisioning status: %v", name, err)
 		}
 	}

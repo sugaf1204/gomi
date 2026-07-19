@@ -141,6 +141,35 @@ func (s *Service) UpdateDeployStatus(ctx context.Context, name string, phase Pha
 	return v, nil
 }
 
+// MarkMissing records that the VM's libvirt domain is confirmed absent from
+// the host (e.g. a power action hit a typed not-found). Mirroring the runtime
+// sync's Missing marking, it ends any in-flight provisioning so PXE stops
+// resolving install config for the absent domain, and stamps MissingSince on
+// the transition into Missing.
+func (s *Service) MarkMissing(ctx context.Context, name, lastAction, lastErr string) (VirtualMachine, error) {
+	v, err := s.store.Get(ctx, name)
+	if err != nil {
+		return VirtualMachine{}, err
+	}
+	if v.Phase != PhaseMissing || v.MissingSince == nil {
+		now := time.Now().UTC()
+		v.MissingSince = &now
+	}
+	v.Phase = PhaseMissing
+	v.LastPowerAction = lastAction
+	v.LastError = lastErr
+	v.Provisioning.Active = false
+	v.UpdatedAt = time.Now().UTC()
+	written, err := writeExisting(ctx, s.store, v)
+	if err != nil {
+		return VirtualMachine{}, err
+	}
+	if !written {
+		return VirtualMachine{}, resource.ErrNotFound
+	}
+	return v, nil
+}
+
 // FailDeploy records a deploy failure and ends the provisioning window that
 // deploy armed, so PXE resolution stops serving install config for a deploy
 // that is already over. The record is only touched while it still belongs to

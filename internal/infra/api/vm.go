@@ -97,7 +97,8 @@ func (s *Server) CreateVirtualMachine(c echo.Context) error {
 	// between the existence check above and the upsert; without a cross-store
 	// transaction, this recheck plus the cascade's post-delete sweep ensures
 	// the new record cannot survive with a dangling hypervisorRef.
-	if _, err := s.hypervisors.Get(ctx, created.HypervisorRef); err != nil {
+	deployHV, err := s.hypervisors.Get(ctx, created.HypervisorRef)
+	if err != nil {
 		if errors.Is(err, resource.ErrNotFound) {
 			_ = s.vms.Delete(ctx, created.Name)
 			return c.JSON(gohttp.StatusConflict, jsonError("hypervisor was deleted concurrently: "+created.HypervisorRef))
@@ -109,9 +110,11 @@ func (s *Server) CreateVirtualMachine(c echo.Context) error {
 		deployErr := s.vmDeployer.Deploy(ctx, &created, pxehttp.RenderNoCloudLineConfig)
 		// A hypervisor cascade may have swept the record while the deploy was
 		// mutating the host; undo the host mutations instead of returning 201
-		// for a record that no longer exists.
+		// for a record that no longer exists. The teardown uses the
+		// hypervisor resolved before the deploy, since its record may be
+		// gone from the store by now.
 		if _, getErr := s.vms.Get(ctx, created.Name); errors.Is(getErr, resource.ErrNotFound) {
-			if cleanupErr := s.deleteVirtualMachineRuntime(ctx, created); cleanupErr != nil {
+			if cleanupErr := s.teardownVMRuntimeForCleanup(ctx, deployHV, created); cleanupErr != nil {
 				log.Printf("create vm %s: cleanup after concurrent hypervisor delete: %v", created.Name, cleanupErr)
 			}
 			httputil.CreateAudit(c, s.authStore, created.Name, "create-vm", "failure", "hypervisor was deleted concurrently", nil)
@@ -252,6 +255,24 @@ func (s *Server) deleteVirtualMachineRuntime(ctx context.Context, v vm.VirtualMa
 		}
 		return fmt.Errorf("resolve hypervisor %s for delete: %w", hvRef, err)
 	}
+	return teardownVMRuntimeOnHypervisor(ctx, hv, v)
+}
+
+// teardownVMRuntimeForCleanup undoes host mutations for a record that was
+// concurrently deleted, using the already-resolved hypervisor. The test hook
+// takes precedence, mirroring deleteVirtualMachineRuntime.
+func (s *Server) teardownVMRuntimeForCleanup(ctx context.Context, hv hypervisor.Hypervisor, v vm.VirtualMachine) error {
+	if s.vmRuntimeDeleter != nil {
+		return s.vmRuntimeDeleter(ctx, v)
+	}
+	return teardownVMRuntimeOnHypervisor(ctx, hv, v)
+}
+
+// teardownVMRuntimeOnHypervisor removes the VM's domain and storage on the
+// given hypervisor. Callers that already hold the hypervisor (e.g. cleanup
+// after its record was concurrently deleted) use it directly; the normal
+// delete path resolves the record first via deleteVirtualMachineRuntime.
+func teardownVMRuntimeOnHypervisor(ctx context.Context, hv hypervisor.Hypervisor, v vm.VirtualMachine) error {
 	cfg := vm.BuildLibvirtConfig(hv)
 	exec, err := libvirt.NewExecutor(cfg)
 	if err != nil {

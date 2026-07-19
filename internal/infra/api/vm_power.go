@@ -82,7 +82,14 @@ func (s *Server) runVMPowerAction(c echo.Context, action string) error {
 		lastErr = v.LastError
 	}
 
-	updated, err := s.vms.UpdateStatus(ctx, name, targetPhase, action, lastErr)
+	var updated vm.VirtualMachine
+	if targetPhase == vm.PhaseMissing {
+		// MarkMissing also ends any in-flight provisioning (PXE resolution
+		// keys off it) and stamps MissingSince, mirroring the sync loop.
+		updated, err = s.vms.MarkMissing(ctx, name, action, lastErr)
+	} else {
+		updated, err = s.vms.UpdateStatus(ctx, name, targetPhase, action, lastErr)
+	}
 	if err != nil {
 		httputil.CreateAudit(c, s.authStore, name, action, "failure", err.Error(), nil)
 		return c.JSON(gohttp.StatusInternalServerError, jsonErrorErr(err))
