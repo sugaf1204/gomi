@@ -112,7 +112,11 @@ func (s *Server) ReinstallVM(c echo.Context) error {
 
 	if s.vmDeployer != nil {
 		if err := s.vmDeployer.Redeploy(ctx, current, pxehttp.RenderNoCloudLineConfig); err != nil {
-			_ = s.updateVMPXEProvisioningError(ctx, current, err)
+			// Token-gated: a stale failure must not clobber the window a
+			// newer redeploy has armed in the meantime.
+			if _, failErr := s.vms.FailDeploy(ctx, name, "redeploy", err.Error(), current.Provisioning.CompletionToken); failErr != nil {
+				log.Printf("redeploy vm %s: record deploy failure: %v", name, failErr)
+			}
 			httputil.CreateAudit(c, s.authStore, name, "redeploy-vm", "failure", err.Error(), nil)
 			return c.JSON(gohttp.StatusInternalServerError, jsonErrorErr(err))
 		}

@@ -65,14 +65,19 @@ func (s *Server) runVMPowerAction(c echo.Context, action string) error {
 		targetPhase = vm.PhaseError
 		lastErr = libvirtErr.Error()
 	}
-	// A Missing VM stays Missing when the action gave no evidence the domain
-	// exists: a typed not-found, or a nil-error power-off (the power-off
-	// path swallows absent-domain errors as no-ops). Flipping to
-	// Stopped/Error there would make a later delete treat the record as a
-	// live VM and remove leftover host storage. A successful power-on did
-	// find and start a domain, so it exits Missing normally.
-	if v.Phase == vm.PhaseMissing &&
-		(libvirt.IsDomainNotFoundError(libvirtErr) || (libvirtErr == nil && action == "power-off")) {
+	// A typed not-found proves the domain is absent from the host: record
+	// that as Missing regardless of the previous phase, so a later delete
+	// honors the record-only storage contract instead of treating the VM as
+	// live. A Missing VM also stays Missing on a nil-error power-off (the
+	// path swallows "not running" no-ops); a successful power-on found and
+	// started a domain, so it exits Missing normally.
+	if libvirt.IsDomainNotFoundError(libvirtErr) {
+		targetPhase = vm.PhaseMissing
+		lastErr = fmt.Sprintf("libvirt domain not found during %s: %v", action, libvirtErr)
+		if v.Phase == vm.PhaseMissing {
+			lastErr = v.LastError
+		}
+	} else if v.Phase == vm.PhaseMissing && libvirtErr == nil && action == "power-off" {
 		targetPhase = vm.PhaseMissing
 		lastErr = v.LastError
 	}
@@ -134,6 +139,11 @@ type vmPowerOffExecutor interface {
 
 func powerOffDomain(ctx context.Context, exec vmPowerOffExecutor, domainName string) error {
 	if err := exec.ShutdownDomain(ctx, domainName); err != nil {
+		// Surface the typed not-found so the caller can mark the record
+		// Missing; only "not running"-style conditions are true no-ops.
+		if libvirt.IsDomainNotFoundError(err) {
+			return err
+		}
 		if vm.IsIgnorableDestroyError(err) {
 			return nil
 		}

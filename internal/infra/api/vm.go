@@ -106,7 +106,18 @@ func (s *Server) CreateVirtualMachine(c echo.Context) error {
 	}
 
 	if s.vmDeployer != nil {
-		if deployErr := s.vmDeployer.Deploy(ctx, &created, pxehttp.RenderNoCloudLineConfig); deployErr != nil {
+		deployErr := s.vmDeployer.Deploy(ctx, &created, pxehttp.RenderNoCloudLineConfig)
+		// A hypervisor cascade may have swept the record while the deploy was
+		// mutating the host; undo the host mutations instead of returning 201
+		// for a record that no longer exists.
+		if _, getErr := s.vms.Get(ctx, created.Name); errors.Is(getErr, resource.ErrNotFound) {
+			if cleanupErr := s.deleteVirtualMachineRuntime(ctx, created); cleanupErr != nil {
+				log.Printf("create vm %s: cleanup after concurrent hypervisor delete: %v", created.Name, cleanupErr)
+			}
+			httputil.CreateAudit(c, s.authStore, created.Name, "create-vm", "failure", "hypervisor was deleted concurrently", nil)
+			return c.JSON(gohttp.StatusConflict, jsonError("hypervisor was deleted concurrently: "+created.HypervisorRef))
+		}
+		if deployErr != nil {
 			httputil.CreateAudit(c, s.authStore, created.Name, "create-vm", "partial", "vm created but deploy failed: "+deployErr.Error(), nil)
 		} else {
 			httputil.CreateAudit(c, s.authStore, created.Name, "create-vm", "success", "virtual machine created", nil)
