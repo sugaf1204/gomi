@@ -314,16 +314,34 @@ func TestUpdateDeployStatusPreservesCompletedProvisioning(t *testing.T) {
 		t.Fatalf("expected phase to stay Running after completion, got %s", updated.Phase)
 	}
 
-	// A different completion token belongs to an older install; the new
-	// deploy's window must still be restored.
+	// A later redeploy arms a fresh window (as the handler does before
+	// deploying); its own UpdateDeployStatus must restore that window.
 	rearmed := armed
 	rearmed.CompletionToken = "tok-2"
+	next := updated
+	next.Provisioning = rearmed
+	if err := svc.Store().Upsert(ctx, next); err != nil {
+		t.Fatalf("arm second window: %v", err)
+	}
 	restored, err := svc.UpdateDeployStatus(ctx, created.Name, vm.PhaseProvisioning, "redeploy", rearmed)
 	if err != nil {
 		t.Fatalf("UpdateDeployStatus new token: %v", err)
 	}
 	if !restored.Provisioning.Active || restored.Provisioning.CompletionToken != "tok-2" {
 		t.Fatalf("expected new provisioning window to be restored, got %+v", restored.Provisioning)
+	}
+
+	// The older deploy's late status update must not clobber the newer
+	// window armed by tok-2.
+	stale, err := svc.UpdateDeployStatus(ctx, created.Name, vm.PhaseCreating, "create+pxe", armed)
+	if err != nil {
+		t.Fatalf("UpdateDeployStatus stale token: %v", err)
+	}
+	if stale.Provisioning.CompletionToken != "tok-2" || !stale.Provisioning.Active {
+		t.Fatalf("expected newer provisioning window to survive stale update, got %+v", stale.Provisioning)
+	}
+	if stale.Phase == vm.PhaseCreating {
+		t.Fatal("expected stale deploy update to not change the phase")
 	}
 }
 

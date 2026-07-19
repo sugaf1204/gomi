@@ -101,10 +101,11 @@ type ProvisioningStatus struct {
 	CompletionToken  string     `json:"completionToken,omitempty"`
 	CompletionSource string     `json:"completionSource,omitempty"`
 	LastSignalAt     *time.Time `json:"lastSignalAt,omitempty"`
-	// DomainObservedAt records when the runtime sync loop first saw the
-	// libvirt domain within this provisioning window. While nil, a missing
-	// domain is attributed to the create/redeploy define gap; once set, a
-	// missing domain means it was removed from the host.
+	// DomainObservedAt records when the deployer defined this provisioning
+	// window's libvirt domain. While nil, a missing domain is attributed to
+	// the create/redeploy define gap (a sighting of the pre-redeploy domain
+	// must not set it); once set, a missing domain means it was removed from
+	// the host.
 	DomainObservedAt *time.Time `json:"domainObservedAt,omitempty"`
 }
 

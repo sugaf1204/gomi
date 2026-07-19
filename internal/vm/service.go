@@ -88,16 +88,22 @@ func (s *Service) UpdateDeployStatus(ctx context.Context, name string, phase Pha
 	if err != nil {
 		return VirtualMachine{}, err
 	}
+	// A different stored completion token means a newer deploy has armed its
+	// own provisioning window since this deploy started; the stale snapshot
+	// must not clobber it.
+	if v.Provisioning.CompletionToken != provisioning.CompletionToken {
+		return v, nil
+	}
 	// An install-complete callback may have already finished this
 	// provisioning window while the deploy was unwinding; keep the completed
 	// state instead of re-arming the stale window.
-	if v.Provisioning.CompletedAt != nil && v.Provisioning.CompletionToken == provisioning.CompletionToken {
+	if v.Provisioning.CompletedAt != nil {
 		return v, nil
 	}
-	// The runtime sync loop may already have observed the domain for this
-	// window; restoring the caller's pre-deploy snapshot must not erase that
-	// marker, or a later domain removal would look like the define gap.
-	if provisioning.DomainObservedAt == nil && v.Provisioning.CompletionToken == provisioning.CompletionToken {
+	// The domain-defined marker may have been recorded for this window after
+	// the caller captured its snapshot; restoring the snapshot must not erase
+	// it, or a later domain removal would look like the define gap.
+	if provisioning.DomainObservedAt == nil {
 		provisioning.DomainObservedAt = v.Provisioning.DomainObservedAt
 	}
 	v.Phase = phase

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"strings"
+	"time"
 
 	"github.com/sugaf1204/gomi/internal/hypervisor"
 	"github.com/sugaf1204/gomi/internal/libvirt"
@@ -87,6 +88,7 @@ func (d *Deployer) Deploy(ctx context.Context, created *VirtualMachine, pxeNoClo
 		d.updatePhaseOnError(ctx, created, "define", err)
 		return fmt.Errorf("define domain: %w", err)
 	}
+	d.markDomainDefined(ctx, created)
 
 	created.LibvirtDomain = created.Name
 	created.CreatedOnHost = hv.Name
@@ -185,6 +187,7 @@ func (d *Deployer) Redeploy(ctx context.Context, v VirtualMachine, pxeNoCloudFn 
 	if err := exec.DefineDomain(ctx, domainCfg); err != nil {
 		return fmt.Errorf("define domain %s for pxe redeploy: %w", domainName, err)
 	}
+	d.markDomainDefined(ctx, &v)
 
 	if err := exec.StartDomain(ctx, domainName); err != nil {
 		return fmt.Errorf("start domain %s: %w", domainName, err)
@@ -196,6 +199,32 @@ func (d *Deployer) Redeploy(ctx context.Context, v VirtualMachine, pxeNoCloudFn 
 		}
 	}
 	return nil
+}
+
+// markDomainDefined persists that the current provisioning window's libvirt
+// domain now exists on the hypervisor. The runtime sync loop uses this marker
+// to distinguish the define gap (a missing domain is expected, however long
+// pre-domain work takes) from a domain that was removed from the host. It also
+// updates the caller's in-memory provisioning snapshot so a later
+// UpdateDeployStatus restore carries the marker.
+func (d *Deployer) markDomainDefined(ctx context.Context, deployed *VirtualMachine) {
+	v, err := d.VMs.Get(ctx, deployed.Name)
+	if err != nil {
+		log.Printf("deploy vm %s: load record to mark domain defined: %v", deployed.Name, err)
+		return
+	}
+	now := time.Now().UTC()
+	if v.Provisioning.Active && v.Provisioning.DomainObservedAt == nil {
+		v.Provisioning.DomainObservedAt = &now
+		v.UpdatedAt = now
+		if err := d.VMs.Store().Upsert(ctx, v); err != nil {
+			log.Printf("deploy vm %s: mark domain defined: %v", deployed.Name, err)
+			return
+		}
+	}
+	if deployed.Provisioning.CompletionToken == v.Provisioning.CompletionToken {
+		deployed.Provisioning.DomainObservedAt = v.Provisioning.DomainObservedAt
+	}
 }
 
 func (d *Deployer) updatePhaseOnError(ctx context.Context, created *VirtualMachine, action string, deployErr error) {

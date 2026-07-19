@@ -5,6 +5,8 @@ import (
 	"errors"
 	"io"
 	"sync"
+	"testing"
+	"time"
 
 	"github.com/sugaf1204/gomi/internal/osimage"
 	"github.com/sugaf1204/gomi/internal/resource"
@@ -125,4 +127,98 @@ func (s *testOSImageStore) Delete(_ context.Context, name string) error {
 	}
 	delete(s.items, name)
 	return nil
+}
+
+type mapVMStore struct {
+	items map[string]VirtualMachine
+}
+
+func (s *mapVMStore) Upsert(_ context.Context, v VirtualMachine) error {
+	s.items[v.Name] = v
+	return nil
+}
+
+func (s *mapVMStore) Get(_ context.Context, name string) (VirtualMachine, error) {
+	v, ok := s.items[name]
+	if !ok {
+		return VirtualMachine{}, resource.ErrNotFound
+	}
+	return v, nil
+}
+
+func (s *mapVMStore) List(_ context.Context) ([]VirtualMachine, error) {
+	out := make([]VirtualMachine, 0, len(s.items))
+	for _, v := range s.items {
+		out = append(out, v)
+	}
+	return out, nil
+}
+
+func (s *mapVMStore) ListByHypervisor(_ context.Context, hypervisorName string) ([]VirtualMachine, error) {
+	out := []VirtualMachine{}
+	for _, v := range s.items {
+		if v.HypervisorRef == hypervisorName {
+			out = append(out, v)
+		}
+	}
+	return out, nil
+}
+
+func (s *mapVMStore) Delete(_ context.Context, name string) error {
+	if _, ok := s.items[name]; !ok {
+		return resource.ErrNotFound
+	}
+	delete(s.items, name)
+	return nil
+}
+
+func TestMarkDomainDefinedRecordsMarkerForActiveWindow(t *testing.T) {
+	vms := NewService(&mapVMStore{items: map[string]VirtualMachine{}})
+	d := &Deployer{VMs: vms}
+	ctx := context.Background()
+
+	created, err := vms.Create(ctx, VirtualMachine{
+		Name:          "vm-define-marker",
+		HypervisorRef: "hv-01",
+		Resources:     ResourceSpec{CPUCores: 1, MemoryMB: 1024, DiskGB: 8},
+		OSImageRef:    "ubuntu-test",
+	})
+	if err != nil {
+		t.Fatalf("create vm: %v", err)
+	}
+	started := time.Now().UTC()
+	deadline := started.Add(time.Hour)
+	created.Provisioning = ProvisioningStatus{Active: true, StartedAt: &started, DeadlineAt: &deadline, CompletionToken: "tok-define"}
+	if err := vms.Store().Upsert(ctx, created); err != nil {
+		t.Fatalf("arm provisioning: %v", err)
+	}
+
+	d.markDomainDefined(ctx, &created)
+
+	stored, err := vms.Get(ctx, "vm-define-marker")
+	if err != nil {
+		t.Fatalf("get vm: %v", err)
+	}
+	if stored.Provisioning.DomainObservedAt == nil {
+		t.Fatal("expected the domain-defined marker to be persisted")
+	}
+	if created.Provisioning.DomainObservedAt == nil {
+		t.Fatal("expected the caller's snapshot to carry the marker")
+	}
+
+	// An inactive window (e.g. install already completed) is left untouched.
+	completed := stored
+	completed.Provisioning.Active = false
+	completed.Provisioning.DomainObservedAt = nil
+	if err := vms.Store().Upsert(ctx, completed); err != nil {
+		t.Fatalf("seed inactive window: %v", err)
+	}
+	d.markDomainDefined(ctx, &completed)
+	stored, err = vms.Get(ctx, "vm-define-marker")
+	if err != nil {
+		t.Fatalf("get vm after inactive: %v", err)
+	}
+	if stored.Provisioning.DomainObservedAt != nil {
+		t.Fatal("expected inactive provisioning window to stay unmarked")
+	}
 }

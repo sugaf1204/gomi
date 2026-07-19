@@ -300,9 +300,6 @@ func (s *RuntimeSyncer) syncWithExecutor(ctx context.Context, hv hypervisor.Hype
 	if updated.Phase == PhaseMissing {
 		updated.Phase = PhaseStopped
 	}
-	if updated.Provisioning.Active && updated.Provisioning.DomainObservedAt == nil {
-		updated.Provisioning.DomainObservedAt = &now
-	}
 	updated.HypervisorName = hv.Name
 	updated.CreatedOnHost = hv.Name
 	updated.LibvirtDomain = domainName

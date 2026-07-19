@@ -503,64 +503,6 @@ func TestRuntimeSyncerMarksVMMissingWhenObservedDomainDisappears(t *testing.T) {
 	}
 }
 
-func TestRuntimeSyncerRecordsDomainObservation(t *testing.T) {
-	backend := memory.New()
-	hypervisors := hypervisor.NewService(backend.Hypervisors(), backend.HypervisorTokens(), backend.AgentTokens())
-	vms := vm.NewService(backend.VMs())
-	ctx := context.Background()
-
-	if _, err := hypervisors.Create(ctx, hypervisor.Hypervisor{
-		Name: "hv-observe",
-		Connection: hypervisor.ConnectionSpec{
-			Type: hypervisor.ConnectionTCP,
-			Host: "192.0.2.57",
-			Port: 16509,
-		},
-		Phase: hypervisor.PhaseRegistered,
-	}); err != nil {
-		t.Fatalf("create hypervisor: %v", err)
-	}
-	created, err := vms.Create(ctx, vm.VirtualMachine{
-		Name:          "vm-observe",
-		HypervisorRef: "hv-observe",
-		Resources:     vm.ResourceSpec{CPUCores: 1, MemoryMB: 1024, DiskGB: 8},
-		OSImageRef:    "ubuntu-test",
-	})
-	if err != nil {
-		t.Fatalf("create vm: %v", err)
-	}
-	started := time.Now().UTC()
-	deadline := started.Add(time.Hour)
-	created.Phase = vm.PhaseProvisioning
-	created.Provisioning = vm.ProvisioningStatus{Active: true, StartedAt: &started, DeadlineAt: &deadline, CompletionToken: "prov-token"}
-	if err := vms.Store().Upsert(ctx, created); err != nil {
-		t.Fatalf("seed provisioning vm: %v", err)
-	}
-
-	syncer := &vm.RuntimeSyncer{
-		Hypervisors: hypervisors,
-		VMs:         vms,
-		ExecutorFactory: func(context.Context, libvirt.LibvirtConfig) (libvirt.Executor, error) {
-			return &fakeLibvirtExecutor{
-				domains: map[string]*libvirt.DomainInfo{
-					"vm-observe": {Name: "vm-observe", State: libvirt.StateRunning},
-				},
-			}, nil
-		},
-	}
-	if err := syncer.SyncAll(ctx, nil); err != nil {
-		t.Fatalf("SyncAll: %v", err)
-	}
-
-	v, err := vms.Get(ctx, "vm-observe")
-	if err != nil {
-		t.Fatalf("get vm: %v", err)
-	}
-	if v.Provisioning.DomainObservedAt == nil {
-		t.Fatal("expected sync to record the domain observation for the provisioning window")
-	}
-}
-
 func TestRuntimeSyncerMissingVMExitsMissingOnUnknownDomainState(t *testing.T) {
 	backend := memory.New()
 	hypervisors := hypervisor.NewService(backend.Hypervisors(), backend.HypervisorTokens(), backend.AgentTokens())
