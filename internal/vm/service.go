@@ -78,6 +78,27 @@ func (s *Service) UpdateStatus(ctx context.Context, name string, phase Phase, la
 	return v, nil
 }
 
+// UpdateDeployStatus persists the outcome of a completed deploy step and
+// restores the provisioning state armed by the API handler. The runtime sync
+// loop may have marked the record Missing (ending provisioning) while the
+// domain was not defined yet; the deploy completing proves the domain exists,
+// so the provisioning window must be re-armed for PXE resolution.
+func (s *Service) UpdateDeployStatus(ctx context.Context, name string, phase Phase, lastAction string, provisioning ProvisioningStatus) (VirtualMachine, error) {
+	v, err := s.store.Get(ctx, name)
+	if err != nil {
+		return VirtualMachine{}, err
+	}
+	v.Phase = phase
+	v.LastPowerAction = lastAction
+	v.LastError = ""
+	v.Provisioning = provisioning
+	v.UpdatedAt = time.Now().UTC()
+	if err := s.store.Upsert(ctx, v); err != nil {
+		return VirtualMachine{}, err
+	}
+	return v, nil
+}
+
 func (s *Service) Delete(ctx context.Context, name string) error {
 	return s.store.Delete(ctx, name)
 }

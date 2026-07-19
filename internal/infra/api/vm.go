@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	gohttp "net/http"
 	"strings"
 	"time"
@@ -181,12 +182,16 @@ func (s *Server) DeleteVirtualMachine(c echo.Context) error {
 		}
 		return c.JSON(gohttp.StatusInternalServerError, jsonErrorErr(err))
 	}
-	// A Missing VM has no domain on the host anymore; delete only the record.
-	if v.Phase != vm.PhaseMissing {
-		if err := s.deleteVirtualMachineRuntime(ctx, v); err != nil {
+	// Runtime teardown always runs so a domain that reappeared after the VM
+	// was marked Missing is still cleaned up. For a Missing VM a teardown
+	// failure (e.g. the hypervisor became unreachable) falls back to deleting
+	// only the record, which matches what the Missing state promises.
+	if err := s.deleteVirtualMachineRuntime(ctx, v); err != nil {
+		if v.Phase != vm.PhaseMissing {
 			httputil.CreateAudit(c, s.authStore, name, "delete-vm", "failure", err.Error(), nil)
 			return c.JSON(gohttp.StatusBadGateway, jsonErrorErr(err))
 		}
+		log.Printf("delete vm %s: runtime teardown failed for Missing vm, deleting record only: %v", name, err)
 	}
 	if err := s.vms.Delete(ctx, name); err != nil {
 		if errors.Is(err, resource.ErrNotFound) {

@@ -114,11 +114,11 @@ func (d *Deployer) Deploy(ctx context.Context, created *VirtualMachine, pxeNoClo
 		if bootDev == "hd" {
 			lastAction = "create+cloudimage"
 		}
-		if updated, err := d.VMs.UpdateStatus(ctx, created.Name, targetPhase, lastAction, ""); err == nil {
+		if updated, err := d.VMs.UpdateDeployStatus(ctx, created.Name, targetPhase, lastAction, created.Provisioning); err == nil {
 			*created = updated
 		}
 	} else {
-		if updated, err := d.VMs.UpdateStatus(ctx, created.Name, PhaseCreating, "define", ""); err == nil {
+		if updated, err := d.VMs.UpdateDeployStatus(ctx, created.Name, PhaseCreating, "define", created.Provisioning); err == nil {
 			*created = updated
 		}
 	}

@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"testing"
 
+	"github.com/sugaf1204/gomi/internal/auth"
 	"github.com/sugaf1204/gomi/internal/hypervisor"
 	"github.com/sugaf1204/gomi/internal/machine"
 	"github.com/sugaf1204/gomi/internal/resource"
@@ -55,10 +56,13 @@ func requireVMGone(t *testing.T, env testEnv, name string) {
 	}
 }
 
-func TestDeleteMissingVMSkipsRuntimeTeardown(t *testing.T) {
-	env := setupTestEnvWithVMRuntimeDeleter(t, func(_ context.Context, v vm.VirtualMachine) error {
-		t.Errorf("runtime deleter must not be called for Missing vm %s", v.Name)
-		return errors.New("unexpected runtime teardown")
+func TestDeleteMissingVMAttemptsRuntimeTeardown(t *testing.T) {
+	// A domain may have been recreated on the host after the VM was marked
+	// Missing; delete must still attempt the not-found-tolerant teardown.
+	calls := 0
+	env := setupTestEnvWithVMRuntimeDeleter(t, func(context.Context, vm.VirtualMachine) error {
+		calls++
+		return nil
 	})
 	createCascadeHypervisor(t, env, "hv-missing-del", "")
 	createCascadeVM(t, env, "vm-missing-del", "hv-missing-del", vm.PhaseMissing)
@@ -66,6 +70,35 @@ func TestDeleteMissingVMSkipsRuntimeTeardown(t *testing.T) {
 	rec := doRequest(env.echo, http.MethodDelete, "/api/v1/virtual-machines/vm-missing-del", nil, env.token)
 	requireStatus(t, rec, http.StatusNoContent)
 	requireVMGone(t, env, "vm-missing-del")
+	if calls != 1 {
+		t.Fatalf("expected runtime teardown to be attempted once for Missing vm, got %d", calls)
+	}
+}
+
+func TestDeleteMissingVMFallsBackToRecordOnlyOnTeardownFailure(t *testing.T) {
+	env := setupTestEnvWithVMRuntimeDeleter(t, func(context.Context, vm.VirtualMachine) error {
+		return errors.New("hypervisor unreachable")
+	})
+	createCascadeHypervisor(t, env, "hv-missing-fb", "")
+	createCascadeVM(t, env, "vm-missing-fb", "hv-missing-fb", vm.PhaseMissing)
+
+	rec := doRequest(env.echo, http.MethodDelete, "/api/v1/virtual-machines/vm-missing-fb", nil, env.token)
+	requireStatus(t, rec, http.StatusNoContent)
+	requireVMGone(t, env, "vm-missing-fb")
+}
+
+func TestDeleteNonMissingVMStillBlocksOnTeardownFailure(t *testing.T) {
+	env := setupTestEnvWithVMRuntimeDeleter(t, func(context.Context, vm.VirtualMachine) error {
+		return errors.New("hypervisor unreachable")
+	})
+	createCascadeHypervisor(t, env, "hv-live-block", "")
+	createCascadeVM(t, env, "vm-live-block", "hv-live-block", vm.PhaseRunning)
+
+	rec := doRequest(env.echo, http.MethodDelete, "/api/v1/virtual-machines/vm-live-block", nil, env.token)
+	requireStatus(t, rec, http.StatusBadGateway)
+	if _, err := env.vms.Get(context.Background(), "vm-live-block"); err != nil {
+		t.Fatalf("expected vm record to survive blocked delete: %v", err)
+	}
 }
 
 func TestDeleteVMWithDanglingHypervisorRefDeletesRecord(t *testing.T) {
@@ -124,4 +157,47 @@ func TestDeleteMachineCascadesHypervisorAndVMRecords(t *testing.T) {
 	}
 	requireVMGone(t, env, "vm-of-machine-a")
 	requireVMGone(t, env, "vm-of-machine-b")
+}
+
+func TestDeleteMachineWithLinkedHypervisorRequiresAdmin(t *testing.T) {
+	env := setupTestEnv(t)
+	ctx := context.Background()
+	createUser(t, env.authStore, "operator1", "operatorpass", auth.RoleOperator)
+	operatorToken := createSession(t, env.authStore, "operator1")
+
+	if err := env.machines.Store().Upsert(ctx, machine.Machine{
+		Name:     "machine-rbac",
+		Hostname: "machine-rbac",
+		MAC:      "aa:bb:cc:dd:ee:02",
+	}); err != nil {
+		t.Fatalf("seed machine: %v", err)
+	}
+	createCascadeHypervisor(t, env, "hv-rbac", "machine-rbac")
+
+	rec := doRequest(env.echo, http.MethodDelete, "/api/v1/machines/machine-rbac", nil, operatorToken)
+	requireStatus(t, rec, http.StatusForbidden)
+	if _, err := env.machines.Get(ctx, "machine-rbac"); err != nil {
+		t.Fatalf("expected machine to survive forbidden delete: %v", err)
+	}
+	if _, err := env.hypervisors.Get(ctx, "hv-rbac"); err != nil {
+		t.Fatalf("expected hypervisor to survive forbidden delete: %v", err)
+	}
+
+	// A machine without linked hypervisors stays deletable by an operator.
+	if err := env.machines.Store().Upsert(ctx, machine.Machine{
+		Name:     "machine-plain",
+		Hostname: "machine-plain",
+		MAC:      "aa:bb:cc:dd:ee:03",
+	}); err != nil {
+		t.Fatalf("seed plain machine: %v", err)
+	}
+	rec = doRequest(env.echo, http.MethodDelete, "/api/v1/machines/machine-plain", nil, operatorToken)
+	requireStatus(t, rec, http.StatusNoContent)
+
+	// The admin token deletes the linked machine with the cascade.
+	rec = doRequest(env.echo, http.MethodDelete, "/api/v1/machines/machine-rbac", nil, env.token)
+	requireStatus(t, rec, http.StatusNoContent)
+	if _, err := env.hypervisors.Get(ctx, "hv-rbac"); !errors.Is(err, resource.ErrNotFound) {
+		t.Fatalf("expected linked hypervisor to be deleted by admin cascade, got err=%v", err)
+	}
 }

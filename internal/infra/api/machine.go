@@ -259,6 +259,17 @@ func (s *Server) DeleteMachine(c echo.Context) error {
 		}
 		return c.JSON(gohttp.StatusInternalServerError, jsonErrorErr(err))
 	}
+	// Hypervisor deletion is an admin-only route; the cascade must not let an
+	// operator remove hypervisor records by deleting the backing machine.
+	if s.hypervisors != nil {
+		linked, err := s.hypervisors.ListByMachineRef(ctx, name)
+		if err != nil {
+			return c.JSON(gohttp.StatusInternalServerError, jsonErrorErr(err))
+		}
+		if user, ok := httputil.UserFromContext(c); len(linked) > 0 && (!ok || !user.Role.IsAdmin()) {
+			return c.JSON(gohttp.StatusForbidden, jsonError("machine has linked hypervisor records; admin access required for cascading delete"))
+		}
+	}
 	if err := s.cascadeDeleteMachineRecords(ctx, c, name); err != nil {
 		httputil.CreateAudit(c, s.authStore, name, "delete-machine", "failure", err.Error(), nil)
 		return c.JSON(gohttp.StatusInternalServerError, jsonErrorErr(err))

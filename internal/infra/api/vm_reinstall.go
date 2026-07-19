@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	gohttp "net/http"
 	"strings"
 	"time"
@@ -113,6 +114,12 @@ func (s *Server) ReinstallVM(c echo.Context) error {
 			_ = s.updateVMPXEProvisioningError(ctx, current, err)
 			httputil.CreateAudit(c, s.authStore, name, "redeploy-vm", "failure", err.Error(), nil)
 			return c.JSON(gohttp.StatusInternalServerError, jsonErrorErr(err))
+		}
+		// Re-arm the provisioning window: the runtime sync loop may have
+		// marked the record Missing while the old domain was undefined and
+		// the new one not yet defined.
+		if _, err := s.vms.UpdateDeployStatus(ctx, name, vm.PhaseProvisioning, "redeploy", current.Provisioning); err != nil {
+			log.Printf("redeploy vm %s: restore provisioning status: %v", name, err)
 		}
 	}
 

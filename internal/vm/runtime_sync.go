@@ -281,6 +281,11 @@ func (s *RuntimeSyncer) syncWithExecutor(ctx context.Context, hv hypervisor.Hype
 	networkStatuses, ipAddresses = MergeRuntimeLeaseIPs(v, networkStatuses, ipAddresses, leaseIPByMAC)
 
 	updated := v
+	if v.Phase == PhaseMissing {
+		// The domain exists again; the Missing-specific error no longer
+		// applies regardless of what phase the live state maps to below.
+		updated.LastError = ""
+	}
 	now := time.Now().UTC()
 	if IsProvisioningTimedOut(updated.Provisioning, now) {
 		updated.Provisioning.Active = false
@@ -288,9 +293,6 @@ func (s *RuntimeSyncer) syncWithExecutor(ctx context.Context, hv hypervisor.Hype
 		updated.LastError = "provisioning timed out waiting for install completion signal"
 	} else {
 		updated.Phase = MapVMPhaseFromDomainState(info.State, v.Phase, v.Provisioning)
-	}
-	if v.Phase == PhaseMissing && updated.Phase != PhaseError {
-		updated.LastError = ""
 	}
 	// The domain exists, so the record must leave Missing even when the
 	// domain state maps to no specific phase; otherwise delete would keep
@@ -307,14 +309,26 @@ func (s *RuntimeSyncer) syncWithExecutor(ctx context.Context, hv hypervisor.Hype
 	return s.persistSyncedVM(ctx, v, updated)
 }
 
+// vmDeployMissingGrace bounds how long after provisioning starts a missing
+// domain is attributed to the create/redeploy define gap instead of a real
+// removal. The full provisioning deadline covers the whole install and would
+// hide a domain deleted mid-install for far too long.
+const vmDeployMissingGrace = 10 * time.Minute
+
 // vmDeployInFlight reports whether the VM is inside a create or redeploy
 // window where the libvirt domain may legitimately not exist yet: both flows
 // upsert the record with an armed provisioning deadline before DefineDomain
 // runs, and redeploy undefines the old domain before defining the new one.
-// Such VMs must not be marked Missing; a deploy that never defines the domain
-// is caught once the provisioning deadline passes.
+// Such VMs must not be marked Missing. A deploy whose define gap outlasts the
+// grace is healed by UpdateDeployStatus re-arming provisioning on completion.
 func vmDeployInFlight(v VirtualMachine, now time.Time) bool {
-	return v.Provisioning.Active && !IsProvisioningTimedOut(v.Provisioning, now)
+	if !v.Provisioning.Active || IsProvisioningTimedOut(v.Provisioning, now) {
+		return false
+	}
+	if v.Provisioning.StartedAt == nil {
+		return false
+	}
+	return now.Sub(*v.Provisioning.StartedAt) < vmDeployMissingGrace
 }
 
 // markVMMissing records that the VM's libvirt domain no longer exists on the
