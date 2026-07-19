@@ -133,6 +133,16 @@ func (h *Handler) PXEInstallComplete(c echo.Context) error {
 	updatedMachine.UpdatedAt = now
 	updatedMachine.ApplyInstallCompleteReport(report)
 	updatedMachine.Provision.Message = h.finalizeBIOSBootOrder(c.Request().Context(), updatedMachine)
+	// Attribute the formerly-unrecorded tail of the attempt: reboot out of the
+	// installer, target OS first boot, and readiness wait until this signal.
+	if appliedAtRaw := strings.TrimSpace(updatedMachine.Provision.Artifacts[provisionArtifactImageAppliedAt]); appliedAtRaw != "" {
+		if appliedAt, parseErr := time.Parse(time.RFC3339, appliedAtRaw); parseErr == nil && !appliedAt.After(now) {
+			updatedMachine.Provision.Timings = appendProvisionTiming(updatedMachine.Provision.Timings,
+				serverTiming(serverTimingRebootToOS, "reboot into target OS, first boot, and readiness wait", "success", appliedAt.UTC(), now, 0))
+		}
+	}
+	updatedMachine.Provision.Timings = appendProvisionTiming(updatedMachine.Provision.Timings,
+		markerTiming(serverTimingInstallComplete, "install-complete received ("+source+")", now))
 	if err := h.machines.Store().Upsert(c.Request().Context(), updatedMachine); err != nil {
 		return c.JSON(gohttp.StatusInternalServerError, jsonErrorErr(err))
 	}

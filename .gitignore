@@ -2,6 +2,7 @@
 .task/
 .env*
 !.env.example
+!web/.env.test
 data/
 bin/
 tmp/
