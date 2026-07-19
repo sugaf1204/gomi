@@ -377,3 +377,39 @@ func TestUpdateDeployStatusPreservesDomainObservation(t *testing.T) {
 		t.Fatal("expected domain observation to survive the deploy status restore")
 	}
 }
+
+func TestUpdateDeployStatusKeepsRenewedDeadline(t *testing.T) {
+	svc := newTestService()
+	ctx := context.Background()
+	created, err := svc.Create(ctx, testVM())
+	if err != nil {
+		t.Fatalf("create vm: %v", err)
+	}
+
+	// Snapshot armed before a long define gap: its deadline has passed.
+	started := time.Now().UTC().Add(-2 * time.Hour)
+	expired := started.Add(time.Hour)
+	armed := vm.ProvisioningStatus{Active: true, StartedAt: &started, DeadlineAt: &expired, CompletionToken: "tok-renew"}
+
+	// The stored window carries the deadline renewed at domain definition.
+	renewed := time.Now().UTC().Add(time.Hour)
+	current := created
+	current.Provisioning = armed
+	current.Provisioning.DeadlineAt = &renewed
+	observedAt := time.Now().UTC()
+	current.Provisioning.DomainObservedAt = &observedAt
+	if err := svc.Store().Upsert(ctx, current); err != nil {
+		t.Fatalf("seed renewed window: %v", err)
+	}
+
+	restored, err := svc.UpdateDeployStatus(ctx, created.Name, vm.PhaseProvisioning, "create+cloudimage", armed)
+	if err != nil {
+		t.Fatalf("UpdateDeployStatus: %v", err)
+	}
+	if restored.Provisioning.DeadlineAt == nil || !restored.Provisioning.DeadlineAt.Equal(renewed) {
+		t.Fatalf("expected renewed deadline to survive the restore, got %v", restored.Provisioning.DeadlineAt)
+	}
+	if restored.Provisioning.DomainObservedAt == nil {
+		t.Fatal("expected domain-defined marker to survive the restore")
+	}
+}

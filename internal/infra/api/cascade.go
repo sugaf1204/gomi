@@ -17,17 +17,8 @@ import (
 // deleting from GOMI is a record-only operation and the domains, if any, stay
 // on the machine. Missing children are ignored so retries are idempotent.
 func (s *Server) cascadeDeleteHypervisorRecords(ctx context.Context, c echo.Context, hvName, reason string) error {
-	if s.vms != nil {
-		vms, err := s.vms.ListByHypervisor(ctx, hvName)
-		if err != nil {
-			return fmt.Errorf("list virtual machines of hypervisor %s: %w", hvName, err)
-		}
-		for _, v := range vms {
-			if err := s.vms.Delete(ctx, v.Name); err != nil && !errors.Is(err, resource.ErrNotFound) {
-				return fmt.Errorf("delete virtual machine record %s: %w", v.Name, err)
-			}
-			httputil.CreateAudit(c, s.authStore, v.Name, "delete-vm", "success", "record removed: "+reason, nil)
-		}
+	if err := s.deleteHypervisorVMRecords(ctx, c, hvName, reason); err != nil {
+		return err
 	}
 	if err := s.hypervisors.Delete(ctx, hvName); err != nil {
 		if errors.Is(err, resource.ErrNotFound) {
@@ -36,6 +27,26 @@ func (s *Server) cascadeDeleteHypervisorRecords(ctx context.Context, c echo.Cont
 		return fmt.Errorf("delete hypervisor record %s: %w", hvName, err)
 	}
 	httputil.CreateAudit(c, s.authStore, hvName, "delete-hypervisor", "success", "record removed: "+reason, nil)
+	// Sweep VM records created while the hypervisor row still existed: a
+	// concurrent create can pass its hypervisor existence check before the
+	// row is gone and upsert after the first child listing.
+	return s.deleteHypervisorVMRecords(ctx, c, hvName, reason)
+}
+
+func (s *Server) deleteHypervisorVMRecords(ctx context.Context, c echo.Context, hvName, reason string) error {
+	if s.vms == nil {
+		return nil
+	}
+	vms, err := s.vms.ListByHypervisor(ctx, hvName)
+	if err != nil {
+		return fmt.Errorf("list virtual machines of hypervisor %s: %w", hvName, err)
+	}
+	for _, v := range vms {
+		if err := s.vms.Delete(ctx, v.Name); err != nil && !errors.Is(err, resource.ErrNotFound) {
+			return fmt.Errorf("delete virtual machine record %s: %w", v.Name, err)
+		}
+		httputil.CreateAudit(c, s.authStore, v.Name, "delete-vm", "success", "record removed: "+reason, nil)
+	}
 	return nil
 }
 

@@ -206,11 +206,16 @@ func TestMarkDomainDefinedRecordsMarkerForActiveWindow(t *testing.T) {
 		t.Fatal("expected the caller's snapshot to carry the marker")
 	}
 
-	// A window deactivated by a Missing mark after a long define gap still
-	// belongs to this deploy; the marker must be recorded for it.
+	// A window deactivated by a Missing mark after a define gap that already
+	// consumed its deadline still belongs to this deploy; the marker must be
+	// recorded and the install deadline renewed from definition time.
+	expiredStart := time.Now().UTC().Add(-2 * time.Hour)
+	expiredDeadline := expiredStart.Add(time.Hour)
 	deactivated := stored
 	deactivated.Provisioning.Active = false
 	deactivated.Provisioning.DomainObservedAt = nil
+	deactivated.Provisioning.StartedAt = &expiredStart
+	deactivated.Provisioning.DeadlineAt = &expiredDeadline
 	if err := vms.Store().Upsert(ctx, deactivated); err != nil {
 		t.Fatalf("seed deactivated window: %v", err)
 	}
@@ -221,6 +226,12 @@ func TestMarkDomainDefinedRecordsMarkerForActiveWindow(t *testing.T) {
 	}
 	if stored.Provisioning.DomainObservedAt == nil {
 		t.Fatal("expected deactivated but incomplete window to be marked")
+	}
+	if stored.Provisioning.DeadlineAt == nil || !stored.Provisioning.DeadlineAt.After(time.Now().UTC()) {
+		t.Fatalf("expected install deadline to be renewed from definition time, got %v", stored.Provisioning.DeadlineAt)
+	}
+	if deactivated.Provisioning.DeadlineAt == nil || !deactivated.Provisioning.DeadlineAt.Equal(*stored.Provisioning.DeadlineAt) {
+		t.Fatal("expected the caller's snapshot to carry the renewed deadline")
 	}
 
 	// A completed window is left untouched.

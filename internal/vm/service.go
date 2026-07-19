@@ -100,11 +100,16 @@ func (s *Service) UpdateDeployStatus(ctx context.Context, name string, phase Pha
 	if v.Provisioning.CompletedAt != nil {
 		return v, nil
 	}
-	// The domain-defined marker may have been recorded for this window after
-	// the caller captured its snapshot; restoring the snapshot must not erase
-	// it, or a later domain removal would look like the define gap.
+	// The domain-defined marker (and the deadline renewed with it) may have
+	// been recorded for this window after the caller captured its snapshot;
+	// restoring the snapshot must not erase them, or a later domain removal
+	// would look like the define gap and a slow define gap would leave the
+	// install with an already-expired deadline.
 	if provisioning.DomainObservedAt == nil {
 		provisioning.DomainObservedAt = v.Provisioning.DomainObservedAt
+	}
+	if v.Provisioning.DeadlineAt != nil && (provisioning.DeadlineAt == nil || v.Provisioning.DeadlineAt.After(*provisioning.DeadlineAt)) {
+		provisioning.DeadlineAt = v.Provisioning.DeadlineAt
 	}
 	v.Phase = phase
 	v.LastPowerAction = lastAction

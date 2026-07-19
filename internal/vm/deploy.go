@@ -224,6 +224,14 @@ func (d *Deployer) markDomainDefined(ctx context.Context, deployed *VirtualMachi
 	if v.Provisioning.CompletedAt == nil && v.Provisioning.DomainObservedAt == nil {
 		now := time.Now().UTC()
 		v.Provisioning.DomainObservedAt = &now
+		// Pre-domain work (e.g. preparing a large backing image) may have
+		// consumed most or all of the install deadline; the install itself
+		// only starts now, so give it the full window from definition time.
+		if v.Provisioning.StartedAt != nil && v.Provisioning.DeadlineAt != nil {
+			window := v.Provisioning.DeadlineAt.Sub(*v.Provisioning.StartedAt)
+			renewed := now.Add(window)
+			v.Provisioning.DeadlineAt = &renewed
+		}
 		v.UpdatedAt = now
 		if err := d.VMs.Store().Upsert(ctx, v); err != nil {
 			log.Printf("deploy vm %s: mark domain defined: %v", deployed.Name, err)
@@ -231,6 +239,7 @@ func (d *Deployer) markDomainDefined(ctx context.Context, deployed *VirtualMachi
 		}
 	}
 	deployed.Provisioning.DomainObservedAt = v.Provisioning.DomainObservedAt
+	deployed.Provisioning.DeadlineAt = v.Provisioning.DeadlineAt
 }
 
 func (d *Deployer) updatePhaseOnError(ctx context.Context, created *VirtualMachine, action string, deployErr error) {
