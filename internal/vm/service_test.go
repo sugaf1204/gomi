@@ -326,3 +326,36 @@ func TestUpdateDeployStatusPreservesCompletedProvisioning(t *testing.T) {
 		t.Fatalf("expected new provisioning window to be restored, got %+v", restored.Provisioning)
 	}
 }
+
+func TestUpdateDeployStatusPreservesDomainObservation(t *testing.T) {
+	svc := newTestService()
+	ctx := context.Background()
+	created, err := svc.Create(ctx, testVM())
+	if err != nil {
+		t.Fatalf("create vm: %v", err)
+	}
+
+	started := time.Now().UTC()
+	deadline := started.Add(time.Hour)
+	armed := vm.ProvisioningStatus{Active: true, StartedAt: &started, DeadlineAt: &deadline, CompletionToken: "tok-observe"}
+	created.Provisioning = armed
+	if err := svc.Store().Upsert(ctx, created); err != nil {
+		t.Fatalf("arm provisioning: %v", err)
+	}
+
+	// The runtime sync loop observes the domain before the deploy unwinds.
+	observed := started.Add(time.Minute)
+	seen := created
+	seen.Provisioning.DomainObservedAt = &observed
+	if err := svc.Store().Upsert(ctx, seen); err != nil {
+		t.Fatalf("record observation: %v", err)
+	}
+
+	restored, err := svc.UpdateDeployStatus(ctx, created.Name, vm.PhaseProvisioning, "create+cloudimage", armed)
+	if err != nil {
+		t.Fatalf("UpdateDeployStatus: %v", err)
+	}
+	if restored.Provisioning.DomainObservedAt == nil {
+		t.Fatal("expected domain observation to survive the deploy status restore")
+	}
+}

@@ -94,6 +94,12 @@ func (s *Service) UpdateDeployStatus(ctx context.Context, name string, phase Pha
 	if v.Provisioning.CompletedAt != nil && v.Provisioning.CompletionToken == provisioning.CompletionToken {
 		return v, nil
 	}
+	// The runtime sync loop may already have observed the domain for this
+	// window; restoring the caller's pre-deploy snapshot must not erase that
+	// marker, or a later domain removal would look like the define gap.
+	if provisioning.DomainObservedAt == nil && v.Provisioning.CompletionToken == provisioning.CompletionToken {
+		provisioning.DomainObservedAt = v.Provisioning.DomainObservedAt
+	}
 	v.Phase = phase
 	v.LastPowerAction = lastAction
 	v.LastError = ""
