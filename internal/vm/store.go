@@ -18,6 +18,19 @@ type ExistingUpdater interface {
 	UpdateExisting(ctx context.Context, v VirtualMachine) (bool, error)
 }
 
+// writeExisting persists v without recreating a concurrently deleted row when
+// the store supports existence-checked updates. It reports whether a row was
+// written; with plain Upsert backends it always reports true.
+func writeExisting(ctx context.Context, store Store, v VirtualMachine) (bool, error) {
+	if updater, ok := store.(ExistingUpdater); ok {
+		return updater.UpdateExisting(ctx, v)
+	}
+	if err := store.Upsert(ctx, v); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
 // PageLister is optionally implemented by Store backends that can return a
 // single page of virtual machines (ordered by name) together with the total
 // count, without materializing the whole collection. Backends that do not

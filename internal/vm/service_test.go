@@ -548,3 +548,39 @@ func TestVMStoreUpdateExistingSkipsDeletedRecords(t *testing.T) {
 		t.Fatal("expected update of an existing record to be written")
 	}
 }
+
+func TestUpdateDeployStatusKeepsTimedOutWindowAfterObservation(t *testing.T) {
+	svc := newTestService()
+	ctx := context.Background()
+	created, err := svc.Create(ctx, testVM())
+	if err != nil {
+		t.Fatalf("create vm: %v", err)
+	}
+	started := time.Now().UTC().Add(-2 * time.Hour)
+	deadline := started.Add(time.Hour)
+	armed := vm.ProvisioningStatus{Active: true, StartedAt: &started, DeadlineAt: &deadline, CompletionToken: "tok-timeout"}
+
+	// The domain was observed and the install then timed out: sync flipped
+	// the record to Error and ended provisioning.
+	observed := started.Add(time.Minute)
+	timedOut := created
+	timedOut.Phase = vm.PhaseError
+	timedOut.LastError = "provisioning timed out waiting for install completion signal"
+	timedOut.Provisioning = armed
+	timedOut.Provisioning.Active = false
+	timedOut.Provisioning.DomainObservedAt = &observed
+	if err := svc.Store().Upsert(ctx, timedOut); err != nil {
+		t.Fatalf("seed timed-out vm: %v", err)
+	}
+
+	after, err := svc.UpdateDeployStatus(ctx, created.Name, vm.PhaseProvisioning, "create+cloudimage", armed)
+	if err != nil {
+		t.Fatalf("UpdateDeployStatus: %v", err)
+	}
+	if after.Provisioning.Active {
+		t.Fatal("expected timed-out provisioning to stay ended")
+	}
+	if after.Phase != vm.PhaseError {
+		t.Fatalf("expected timed-out phase Error to survive, got %s", after.Phase)
+	}
+}

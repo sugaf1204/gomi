@@ -20,16 +20,16 @@ func (s *Server) cascadeDeleteHypervisorRecords(ctx context.Context, c echo.Cont
 	if err := s.deleteHypervisorVMRecords(ctx, c, hvName, reason); err != nil {
 		return err
 	}
-	if err := s.hypervisors.Delete(ctx, hvName); err != nil {
-		if errors.Is(err, resource.ErrNotFound) {
-			return nil
-		}
+	if err := s.hypervisors.Delete(ctx, hvName); err != nil && !errors.Is(err, resource.ErrNotFound) {
 		return fmt.Errorf("delete hypervisor record %s: %w", hvName, err)
+	} else if err == nil {
+		httputil.CreateAudit(c, s.authStore, hvName, "delete-hypervisor", "success", "record removed: "+reason, nil)
 	}
-	httputil.CreateAudit(c, s.authStore, hvName, "delete-hypervisor", "success", "record removed: "+reason, nil)
 	// Sweep VM records created while the hypervisor row still existed: a
 	// concurrent create can pass its hypervisor existence check before the
-	// row is gone and upsert after the first child listing.
+	// row is gone and upsert after the first child listing. The sweep also
+	// runs when another delete removed the row first, since that delete's
+	// sweep may have listed children before this request's racing create.
 	return s.deleteHypervisorVMRecords(ctx, c, hvName, reason)
 }
 

@@ -233,8 +233,14 @@ func (d *Deployer) markDomainDefined(ctx context.Context, deployed *VirtualMachi
 			v.Provisioning.DeadlineAt = &renewed
 		}
 		v.UpdatedAt = now
-		if err := d.VMs.Store().Upsert(ctx, v); err != nil {
+		written, err := writeExisting(ctx, d.VMs.Store(), v)
+		if err != nil {
 			log.Printf("deploy vm %s: mark domain defined: %v", deployed.Name, err)
+			return
+		}
+		if !written {
+			// The record was deleted while the deploy was running; do not
+			// recreate it just to stamp the marker.
 			return
 		}
 	}

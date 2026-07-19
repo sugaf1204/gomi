@@ -353,21 +353,14 @@ func (s *RuntimeSyncer) persistSyncedVM(ctx context.Context, before, updated Vir
 		return before, nil
 	}
 	updated.UpdatedAt = time.Now().UTC()
-	store := s.VMs.Store()
 	// The sync worked from a snapshot; writing through an existence-checked
 	// update keeps a concurrent delete from being resurrected by this write.
-	if updater, ok := store.(ExistingUpdater); ok {
-		written, err := updater.UpdateExisting(ctx, updated)
-		if err != nil {
-			return before, fmt.Errorf("persist synced vm status: %w", err)
-		}
-		if !written {
-			return before, nil
-		}
-		return updated, nil
-	}
-	if err := store.Upsert(ctx, updated); err != nil {
+	written, err := writeExisting(ctx, s.VMs.Store(), updated)
+	if err != nil {
 		return before, fmt.Errorf("persist synced vm status: %w", err)
+	}
+	if !written {
+		return before, nil
 	}
 	return updated, nil
 }

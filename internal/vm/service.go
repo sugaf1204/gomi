@@ -100,15 +100,19 @@ func (s *Service) UpdateDeployStatus(ctx context.Context, name string, phase Pha
 	if v.Provisioning.CompletedAt != nil {
 		return v, nil
 	}
-	// The sync loop observed this window's domain and then saw it removed
-	// (the Missing mark postdates the observation); the deploy finishing
-	// later must not resurrect the window for a domain that is gone again.
-	// A Missing mark that predates the observation is the opposite case: the
-	// deploy defined the domain after a timed-out define gap, so the restore
-	// below re-arms the install.
-	if v.Phase == PhaseMissing && v.Provisioning.DomainObservedAt != nil &&
-		v.MissingSince != nil && v.MissingSince.After(*v.Provisioning.DomainObservedAt) {
-		return v, nil
+	// A window the sync loop has already ended must stay ended unless this is
+	// the define-gap case: the record was marked Missing before (or without)
+	// a domain observation and the deploy has now defined the domain, so the
+	// install is re-armed. Every other ended window — Missing marked after
+	// the observation (domain removed again) or a post-observation install
+	// timeout — must not be resurrected by a deploy finishing late.
+	if !v.Provisioning.Active {
+		missingBeforeObservation := v.Phase == PhaseMissing &&
+			(v.Provisioning.DomainObservedAt == nil || v.MissingSince == nil ||
+				!v.MissingSince.After(*v.Provisioning.DomainObservedAt))
+		if !missingBeforeObservation {
+			return v, nil
+		}
 	}
 	v.MissingSince = nil
 	// The domain-defined marker (and the deadline renewed with it) may have
@@ -127,8 +131,12 @@ func (s *Service) UpdateDeployStatus(ctx context.Context, name string, phase Pha
 	v.LastError = ""
 	v.Provisioning = provisioning
 	v.UpdatedAt = time.Now().UTC()
-	if err := s.store.Upsert(ctx, v); err != nil {
+	written, err := writeExisting(ctx, s.store, v)
+	if err != nil {
 		return VirtualMachine{}, err
+	}
+	if !written {
+		return VirtualMachine{}, resource.ErrNotFound
 	}
 	return v, nil
 }
@@ -153,8 +161,12 @@ func (s *Service) FailDeploy(ctx context.Context, name, lastAction, lastErr, com
 		v.Provisioning.Active = false
 	}
 	v.UpdatedAt = time.Now().UTC()
-	if err := s.store.Upsert(ctx, v); err != nil {
+	written, err := writeExisting(ctx, s.store, v)
+	if err != nil {
 		return VirtualMachine{}, err
+	}
+	if !written {
+		return VirtualMachine{}, resource.ErrNotFound
 	}
 	return v, nil
 }
