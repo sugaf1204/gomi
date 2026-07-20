@@ -104,9 +104,9 @@ func addRegisteredMAC(registeredMACs map[string]struct{}, h node.Node) {
 		return
 	}
 	for _, raw := range h.AllMACs() {
-		mac := strings.ToLower(strings.TrimSpace(raw))
-		if mac != "" {
-			registeredMACs[mac] = struct{}{}
+		mac, err := net.ParseMAC(strings.TrimSpace(raw))
+		if err == nil {
+			registeredMACs[mac.String()] = struct{}{}
 		}
 	}
 }

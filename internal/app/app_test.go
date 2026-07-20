@@ -171,12 +171,20 @@ func TestImageAppliedMachineUsesLocalBootMAC(t *testing.T) {
 	}
 }
 
-func TestAddRegisteredMACNormalizesMachineMAC(t *testing.T) {
-	registered := map[string]struct{}{}
-	addRegisteredMAC(registered, &machine.Machine{MAC: "52:54:00:AA:BB:CC"})
+func TestAddRegisteredMACCanonicalizesMachineMAC(t *testing.T) {
+	for _, input := range []string{
+		"52:54:00:AA:BB:CC",
+		"52-54-00-AA-BB-CC",
+		"5254.00aa.bbcc",
+	} {
+		t.Run(input, func(t *testing.T) {
+			registered := map[string]struct{}{}
+			addRegisteredMAC(registered, &machine.Machine{MAC: input})
 
-	if _, ok := registered["52:54:00:aa:bb:cc"]; !ok {
-		t.Fatalf("registered MAC set was not normalized: %#v", registered)
+			if _, ok := registered["52:54:00:aa:bb:cc"]; !ok {
+				t.Fatalf("registered MAC set was not canonicalized: %#v", registered)
+			}
+		})
 	}
 }
 
