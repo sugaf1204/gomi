@@ -9,7 +9,7 @@ import (
 )
 
 func TestLeasePool_Allocate(t *testing.T) {
-	p := newLeasePool("10.0.0.10", "10.0.0.12", nil)
+	p := newLeasePool("10.0.0.10", "10.0.0.12", nil, 0)
 
 	mac1, _ := net.ParseMAC("aa:bb:cc:dd:ee:01")
 	mac2, _ := net.ParseMAC("aa:bb:cc:dd:ee:02")
@@ -45,7 +45,7 @@ func TestLeasePool_Allocate(t *testing.T) {
 }
 
 func TestLeasePool_Release(t *testing.T) {
-	p := newLeasePool("10.0.0.10", "10.0.0.10", nil)
+	p := newLeasePool("10.0.0.10", "10.0.0.10", nil, 0)
 
 	mac1, _ := net.ParseMAC("aa:bb:cc:dd:ee:01")
 	mac2, _ := net.ParseMAC("aa:bb:cc:dd:ee:02")
@@ -84,7 +84,7 @@ func TestLeasePool_RestoreSkipsLeasesOutsideRange(t *testing.T) {
 		},
 	}
 
-	p := newLeasePool("10.0.0.10", "10.0.0.10", store)
+	p := newLeasePool("10.0.0.10", "10.0.0.10", store, 0)
 
 	mac1, _ := net.ParseMAC("aa:bb:cc:dd:ee:01")
 	if ip := p.Allocate(mac1, "", false); ip == nil || ip.String() != "10.0.0.10" {
@@ -97,6 +97,91 @@ func TestLeasePool_RestoreSkipsLeasesOutsideRange(t *testing.T) {
 	}
 	if !store.wasDeleted("aa:bb:cc:dd:ee:02") {
 		t.Fatal("expected stale lease to be deleted")
+	}
+}
+
+func TestLeasePool_AllocateReclaimsExpiredLease(t *testing.T) {
+	base := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+	clock := base
+	p := newLeasePool("10.0.0.10", "10.0.0.10", nil, time.Hour)
+	p.now = func() time.Time { return clock }
+
+	mac1, _ := net.ParseMAC("aa:bb:cc:dd:ee:01")
+	mac2, _ := net.ParseMAC("aa:bb:cc:dd:ee:02")
+
+	if ip := p.Allocate(mac1, "", false); ip == nil || ip.String() != "10.0.0.10" {
+		t.Fatalf("expected 10.0.0.10, got %v", ip)
+	}
+
+	// Still within TTL: the single-address pool is full for a new MAC.
+	clock = base.Add(30 * time.Minute)
+	if ip := p.Allocate(mac2, "", false); ip != nil {
+		t.Fatalf("expected pool full within TTL, got %s", ip)
+	}
+
+	// Past TTL without renewal: mac1's lease is reclaimed for mac2.
+	clock = base.Add(2 * time.Hour)
+	if ip := p.Allocate(mac2, "", false); ip == nil || ip.String() != "10.0.0.10" {
+		t.Fatalf("expected reclaimed 10.0.0.10 after TTL, got %v", ip)
+	}
+}
+
+func TestLeasePool_AllocateRenewsOwnLeaseBeforeExpiry(t *testing.T) {
+	base := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+	clock := base
+	p := newLeasePool("10.0.0.10", "10.0.0.11", nil, time.Hour)
+	p.now = func() time.Time { return clock }
+
+	mac1, _ := net.ParseMAC("aa:bb:cc:dd:ee:01")
+
+	ip1 := p.Allocate(mac1, "", false)
+
+	// Re-allocating just before expiry renews the timestamp and keeps the IP.
+	clock = base.Add(59 * time.Minute)
+	if ip := p.Allocate(mac1, "", false); !ip.Equal(ip1) {
+		t.Fatalf("expected renewed same IP, got %s vs %s", ip, ip1)
+	}
+
+	// The renewal moved leasedAt forward, so an hour after the original issue
+	// the lease is still valid and keeps its address.
+	clock = base.Add(90 * time.Minute)
+	if ip := p.Allocate(mac1, "", false); !ip.Equal(ip1) {
+		t.Fatalf("expected renewed lease to survive, got %s", ip)
+	}
+}
+
+func TestLeasePool_RestoreSkipsExpiredLease(t *testing.T) {
+	old := time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)
+	store := &testLeaseStore{
+		leases: map[string]DHCPLease{
+			"aa:bb:cc:dd:ee:01": {MAC: "aa:bb:cc:dd:ee:01", IP: "10.0.0.10", LeasedAt: old},
+		},
+	}
+
+	p := newLeasePool("10.0.0.10", "10.0.0.10", store, time.Hour)
+
+	mac2, _ := net.ParseMAC("aa:bb:cc:dd:ee:02")
+	if ip := p.Allocate(mac2, "", false); ip == nil || ip.String() != "10.0.0.10" {
+		t.Fatalf("expected expired lease to be reclaimable, got %v", ip)
+	}
+	if !store.wasDeleted("aa:bb:cc:dd:ee:01") {
+		t.Fatal("expected expired lease to be deleted on restore")
+	}
+}
+
+func TestLeasePool_ZeroTTLNeverExpires(t *testing.T) {
+	base := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+	clock := base
+	p := newLeasePool("10.0.0.10", "10.0.0.10", nil, 0)
+	p.now = func() time.Time { return clock }
+
+	mac1, _ := net.ParseMAC("aa:bb:cc:dd:ee:01")
+	mac2, _ := net.ParseMAC("aa:bb:cc:dd:ee:02")
+
+	p.Allocate(mac1, "", false)
+	clock = base.Add(1000 * time.Hour)
+	if ip := p.Allocate(mac2, "", false); ip != nil {
+		t.Fatalf("expected no expiry with zero TTL, got %s", ip)
 	}
 }
 

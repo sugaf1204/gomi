@@ -18,6 +18,24 @@ func (r *Runtime) currentPXEState() (*pxe.Server, pxeRuntimeState) {
 	return r.dhcpServer, r.pxeState
 }
 
+// releaseLease frees the DHCP lease held by a MAC. When the DHCP server is
+// running it releases through the live pool (clearing memory and store);
+// otherwise it deletes the persisted record directly so a deleted VM's address
+// does not remain claimed while PXE is temporarily down.
+func (r *Runtime) releaseLease(ctx context.Context, mac string) error {
+	if dhcpSrv, _ := r.currentPXEState(); dhcpSrv != nil {
+		return dhcpSrv.ReleaseLease(ctx, mac)
+	}
+	if r.leaseStore != nil {
+		hw, err := net.ParseMAC(strings.TrimSpace(mac))
+		if err != nil {
+			return err
+		}
+		return r.leaseStore.Delete(ctx, hw.String())
+	}
+	return nil
+}
+
 func (r *Runtime) stopPXE(reason string) {
 	r.pxeMu.Lock()
 	cancel := r.pxeCancel

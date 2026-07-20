@@ -15,24 +15,50 @@ type leasePool struct {
 	mu           sync.Mutex
 	start        net.IP
 	end          net.IP
-	leases       map[string]net.IP // MAC -> IP
-	reservations map[string]net.IP // MAC -> reserved IP
+	leases       map[string]leaseEntry // MAC -> lease
+	reservations map[string]net.IP     // MAC -> reserved IP
 	store        LeaseStore
+	// ttl bounds how long a dynamic lease is honored without renewal. Once a
+	// lease is older than ttl it is treated as expired and its address may be
+	// reclaimed for another client. A non-positive ttl disables expiry, so
+	// leases live forever (the historical behavior).
+	ttl time.Duration
+	now func() time.Time
 }
 
-func newLeasePool(start, end string, store LeaseStore) *leasePool {
+// leaseEntry is a dynamically assigned address plus the time it was last
+// (re)issued, used to decide when the lease has expired.
+type leaseEntry struct {
+	ip       net.IP
+	leasedAt time.Time
+}
+
+func newLeasePool(start, end string, store LeaseStore, ttl time.Duration) *leasePool {
 	p := &leasePool{
 		start:        net.ParseIP(start).To4(),
 		end:          net.ParseIP(end).To4(),
-		leases:       make(map[string]net.IP),
+		leases:       make(map[string]leaseEntry),
 		reservations: make(map[string]net.IP),
 		store:        store,
+		ttl:          ttl,
+		now:          time.Now,
 	}
 	p.restore()
 	return p
 }
 
-// restore loads existing leases from the store on startup.
+// expired reports whether a lease issued at leasedAt is past its TTL. A
+// non-positive TTL or a zero timestamp never expires.
+func (p *leasePool) expired(leasedAt time.Time) bool {
+	if p.ttl <= 0 || leasedAt.IsZero() {
+		return false
+	}
+	return p.now().Sub(leasedAt) > p.ttl
+}
+
+// restore loads existing leases from the store on startup. Leases outside the
+// pool range or already past their TTL are dropped so a restart does not carry
+// forward addresses that should have been reclaimed.
 func (p *leasePool) restore() {
 	if p.store == nil {
 		return
@@ -50,7 +76,7 @@ func (p *leasePool) restore() {
 	for _, l := range leases {
 		key := strings.ToLower(strings.TrimSpace(l.MAC))
 		ip := net.ParseIP(l.IP).To4()
-		if key == "" || ip == nil || !p.inRange(ip) {
+		if key == "" || ip == nil || !p.inRange(ip) || p.expired(l.LeasedAt) {
 			skipped++
 			if key != "" {
 				if err := p.store.Delete(ctx, key); err != nil {
@@ -59,12 +85,20 @@ func (p *leasePool) restore() {
 			}
 			continue
 		}
-		p.leases[key] = ip
+		p.leases[key] = leaseEntry{ip: ip, leasedAt: l.LeasedAt}
 		restored++
 	}
 	if restored > 0 || skipped > 0 {
 		log.Printf("dhcp: restored %d leases from store, skipped %d stale leases", restored, skipped)
 	}
+}
+
+// SetTTL updates the lease expiry duration in place. Existing leases keep
+// their issue time, so a shorter TTL can immediately mark old leases expired.
+func (p *leasePool) SetTTL(ttl time.Duration) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.ttl = ttl
 }
 
 // UpdateReservations replaces the current set of static DHCP reservations.
@@ -76,7 +110,8 @@ func (p *leasePool) UpdateReservations(reservations map[string]net.IP) {
 
 // Allocate returns an IP for the given MAC, reusing a previous lease if one
 // exists or picking the next free address from the pool.
-// Static reservations take priority over dynamic allocation.
+// Static reservations take priority over dynamic allocation. Expired leases
+// (own or others') are reclaimed so the pool does not exhaust on stale MACs.
 func (p *leasePool) Allocate(mac net.HardwareAddr, hostname string, pxeClient bool) net.IP {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -85,15 +120,18 @@ func (p *leasePool) Allocate(mac net.HardwareAddr, hostname string, pxeClient bo
 
 	// Check static reservations first.
 	if reservedIP, ok := p.reservations[key]; ok {
-		p.leases[key] = reservedIP
+		p.leases[key] = leaseEntry{ip: reservedIP, leasedAt: p.now()}
 		p.persistAsync(key, reservedIP, hostname, pxeClient)
 		return reservedIP
 	}
 
-	if ip, ok := p.leases[key]; ok {
-		if p.inRange(ip) {
-			p.persistAsync(key, ip, hostname, pxeClient)
-			return ip
+	// Reuse the client's own lease, renewing its timestamp. A lease that has
+	// fallen out of range or expired is dropped so it can be reassigned below.
+	if e, ok := p.leases[key]; ok {
+		if p.inRange(e.ip) && !p.expired(e.leasedAt) {
+			p.leases[key] = leaseEntry{ip: e.ip, leasedAt: p.now()}
+			p.persistAsync(key, e.ip, hostname, pxeClient)
+			return e.ip
 		}
 		delete(p.leases, key)
 		p.deleteLeaseAsync(key)
@@ -102,9 +140,22 @@ func (p *leasePool) Allocate(mac net.HardwareAddr, hostname string, pxeClient bo
 	startN := binary.BigEndian.Uint32(p.start)
 	endN := binary.BigEndian.Uint32(p.end)
 
+	// Reclaim expired leases before scanning so their addresses become free.
+	// Collect first, then delete, to avoid mutating the map during iteration.
+	var reclaimed []string
+	for k, e := range p.leases {
+		if p.expired(e.leasedAt) {
+			reclaimed = append(reclaimed, k)
+		}
+	}
+	for _, k := range reclaimed {
+		delete(p.leases, k)
+		p.deleteLeaseAsync(k)
+	}
+
 	used := make(map[uint32]bool, len(p.leases))
-	for _, ip := range p.leases {
-		used[binary.BigEndian.Uint32(ip.To4())] = true
+	for _, e := range p.leases {
+		used[binary.BigEndian.Uint32(e.ip.To4())] = true
 	}
 	// Also mark reserved IPs as used to avoid conflicts.
 	for _, ip := range p.reservations {
@@ -117,7 +168,7 @@ func (p *leasePool) Allocate(mac net.HardwareAddr, hostname string, pxeClient bo
 		}
 		ip := make(net.IP, 4)
 		binary.BigEndian.PutUint32(ip, n)
-		p.leases[key] = ip
+		p.leases[key] = leaseEntry{ip: ip, leasedAt: p.now()}
 		p.persistAsync(key, ip, hostname, pxeClient)
 		return ip
 	}
@@ -135,7 +186,7 @@ func (p *leasePool) persistAsync(mac string, ip net.IP, hostname string, pxeClie
 		IP:        ip.String(),
 		Hostname:  hostname,
 		PXEClient: pxeClient,
-		LeasedAt:  time.Now(),
+		LeasedAt:  p.now(),
 	}
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)

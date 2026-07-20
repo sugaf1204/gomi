@@ -51,6 +51,7 @@ type Server struct {
 	vmDeployer       *vm.Deployer
 	vmMigrator       *vm.Migrator
 	vmRuntimeDeleter func(ctx context.Context, v vm.VirtualMachine) error
+	leaseReleaser    func(ctx context.Context, mac string) error
 	bootenvs         *bootenv.Manager
 	setupMu          sync.Mutex
 }
@@ -106,7 +107,12 @@ type ServerConfig struct {
 	VMDeployer       *vm.Deployer
 	VMMigrator       *vm.Migrator
 	VMRuntimeDeleter func(ctx context.Context, v vm.VirtualMachine) error
-	BootEnvs         *bootenv.Manager
+	// LeaseReleaser frees the DHCP lease held by a MAC when its VM is deleted,
+	// so the address returns to the pool instead of lingering until it expires.
+	// When nil, the server falls back to deleting the lease record directly
+	// through LeaseStore.
+	LeaseReleaser func(ctx context.Context, mac string) error
+	BootEnvs      *bootenv.Manager
 }
 
 func NewServer(cfg ServerConfig) *Server {
@@ -140,6 +146,7 @@ func NewServer(cfg ServerConfig) *Server {
 		vmDeployer:       cfg.VMDeployer,
 		vmMigrator:       cfg.VMMigrator,
 		vmRuntimeDeleter: cfg.VMRuntimeDeleter,
+		leaseReleaser:    cfg.LeaseReleaser,
 		bootenvs:         cfg.BootEnvs,
 	}
 	if s.provisionTimeout <= 0 {
