@@ -171,6 +171,15 @@ func TestImageAppliedMachineUsesLocalBootMAC(t *testing.T) {
 	}
 }
 
+func TestAddRegisteredMACNormalizesMachineMAC(t *testing.T) {
+	registered := map[string]struct{}{}
+	addRegisteredMAC(registered, &machine.Machine{MAC: "52:54:00:AA:BB:CC"})
+
+	if _, ok := registered["52:54:00:aa:bb:cc"]; !ok {
+		t.Fatalf("registered MAC set was not normalized: %#v", registered)
+	}
+}
+
 func TestResolveDNSEmbeddedAddrUsesExplicitAddress(t *testing.T) {
 	r := &Runtime{Config: config.Config{DNSEmbeddedAddr: "127.0.0.1:1053"}}
 	if got, want := r.resolveDNSEmbeddedAddr(), "127.0.0.1:1053"; got != want {
