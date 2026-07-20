@@ -12,6 +12,16 @@ const maxProvisionFailureLogTailLen = 32 * 1024
 
 const maxProvisionTimingEvents = 240
 
+const serverTimingPXEBootScript = "server.pxe.boot_script"
+
+const serverTimingPXEBootScriptLocalBoot = "server.pxe.boot_script_local"
+
+const serverTimingCurtinConfig = "server.curtin_config"
+
+const serverTimingRebootToOS = "server.reboot_to_os"
+
+const serverTimingInstallComplete = "server.install_complete"
+
 const rootFSBIOSBootPartitionSizeMB int64 = 1
 
 const rootFSEFIPartitionSizeMB int64 = 512

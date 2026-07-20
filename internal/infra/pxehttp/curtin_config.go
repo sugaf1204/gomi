@@ -48,8 +48,18 @@ func (h *Handler) PXECurtinConfig(c echo.Context) error {
 	if err := validateAttemptInventory(target, info); err != nil {
 		return c.JSON(gohttp.StatusConflict, jsonErrorErr(err))
 	}
+	generateStarted := time.Now().UTC()
 	config, err := h.buildCurtinInstallConfig(ctx, c, target, img, info)
+	generateFinished := time.Now().UTC()
 	if err != nil {
+		buildErr := err
+		_ = h.updateProvisionProgress(ctx, target.Name, func(m *machine.Machine) {
+			if m.Provision == nil {
+				return
+			}
+			m.Provision.Timings = appendProvisionTiming(m.Provision.Timings,
+				serverTiming(serverTimingCurtinConfig, "generate curtin install config: "+buildErr.Error(), "failure", generateStarted, generateFinished, 0))
+		})
 		return c.JSON(gohttp.StatusConflict, jsonErrorErr(err))
 	}
 	configJSON, _ := json.Marshal(config)
@@ -61,6 +71,8 @@ func (h *Handler) PXECurtinConfig(c echo.Context) error {
 		m.Provision.CurtinConfig = configJSON
 		m.Provision.Message = "curtin config generated"
 		m.Provision.LastSignalAt = timePtr(time.Now().UTC())
+		m.Provision.Timings = appendProvisionTiming(m.Provision.Timings,
+			serverTiming(serverTimingCurtinConfig, "generate curtin install config", "success", generateStarted, generateFinished, 0))
 	})
 	return c.Blob(gohttp.StatusOK, "text/yaml; charset=utf-8", []byte(config))
 }

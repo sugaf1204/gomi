@@ -22,13 +22,15 @@ type pxeTarget struct {
 func (h *Handler) PXEBootScript(c echo.Context) error {
 	base := h.resolvePXEBaseURL(c)
 	rawMAC := c.QueryParam("mac")
-	target, provisioning, err := h.resolvePXETarget(c.Request().Context(), rawMAC)
+	ctx := c.Request().Context()
+	target, provisioning, err := h.resolvePXETarget(ctx, rawMAC)
 	if err != nil {
 		return c.JSON(gohttp.StatusInternalServerError, jsonErrorErr(err))
 	}
 
 	if !provisioning {
 		script := renderPXELocalBootScript(base)
+		h.recordPXEBootScriptMarker(ctx, target, false)
 		return c.Blob(gohttp.StatusOK, "text/plain; charset=utf-8", []byte(script))
 	}
 
@@ -36,6 +38,7 @@ func (h *Handler) PXEBootScript(c echo.Context) error {
 	token := pxeTargetToken(target)
 	completeURL := buildPXEInstallCompleteURL(base, token, target.installType)
 	script := renderPXEInstallScriptWithVariant(base, target.installType, mac, completeURL, target.variant, target.node)
+	h.recordPXEBootScriptMarker(ctx, target, true)
 	return c.Blob(gohttp.StatusOK, "text/plain; charset=utf-8", []byte(script))
 }
 

@@ -5,6 +5,30 @@ export function formatDate(value?: string) {
   return new Date(value).toLocaleString('en-US', { hour12: false })
 }
 
+export function formatMillis(ms?: number) {
+  if (typeof ms !== 'number' || !Number.isFinite(ms)) return '-'
+  const value = Math.max(0, ms)
+  if (value < 1000) return `${Math.round(value)} ms`
+  if (value < 60_000) return `${(value / 1000).toFixed(1)} s`
+  const totalSeconds = Math.floor(value / 1000)
+  if (value < 3_600_000) {
+    return `${Math.floor(totalSeconds / 60)}m ${(totalSeconds % 60).toString().padStart(2, '0')}s`
+  }
+  const totalMinutes = Math.floor(totalSeconds / 60)
+  return `${Math.floor(totalMinutes / 60)}h ${(totalMinutes % 60).toString().padStart(2, '0')}m`
+}
+
+export function formatRelativeOffset(ms?: number) {
+  if (typeof ms !== 'number' || !Number.isFinite(ms)) return '-'
+  const totalSeconds = Math.floor(Math.max(0, ms) / 1000)
+  const hours = Math.floor(totalSeconds / 3600)
+  const minutes = Math.floor((totalSeconds % 3600) / 60)
+  const seconds = totalSeconds % 60
+  if (hours > 0) return `T+${hours}h${minutes.toString().padStart(2, '0')}m${seconds.toString().padStart(2, '0')}s`
+  if (minutes > 0) return `T+${minutes}m${seconds.toString().padStart(2, '0')}s`
+  return `T+${seconds}s`
+}
+
 export function phaseClass(phase?: string) {
   const base = 'inline-flex items-center w-fit font-ui rounded-full text-[0.71rem] font-semibold px-2 py-0.5'
   switch ((phase ?? '').toLowerCase()) {
