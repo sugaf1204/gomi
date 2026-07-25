@@ -58,9 +58,9 @@ function DeleteDialog({ deleteConfirm, setDeleteConfirm, onDeleteConfirm, virtua
   const allMissing = missingTargets.length > 0 && missingTargets.length === deleteConfirm.targets.length
   return (
     <ModalOverlay onBackdropClick={() => { if (!deleteConfirm.running) close() }}>
-      <div className="w-[min(520px,100%)] bg-white border border-line-strong shadow-[0_20px_45px_rgba(52,43,34,0.2)] p-[1.1rem] grid gap-[0.65rem]">
+      <div className="w-[min(520px,100%)] bg-panel border border-line-strong shadow-[0_20px_45px_rgba(52,43,34,0.2)] p-[1.1rem] grid gap-[0.65rem]">
         <div className="flex justify-between items-center">
-          <h3 className="text-[1.2rem] text-[#9b2d2d]">Delete Virtual Machine{deleteConfirm.targets.length > 1 ? 's' : ''}</h3>
+          <h3 className="text-[1.2rem] text-danger">Delete Virtual Machine{deleteConfirm.targets.length > 1 ? 's' : ''}</h3>
           <button aria-label="Close" className="border-0 bg-transparent shadow-none p-0 w-[1.8rem] h-[1.8rem] flex items-center justify-center text-[1.4rem] leading-none text-ink-soft hover:text-ink hover:shadow-none!" disabled={deleteConfirm.running} onClick={close}>x</button>
         </div>
         <p className="m-0 text-ink-soft text-[0.84rem]">
@@ -76,7 +76,7 @@ function DeleteDialog({ deleteConfirm, setDeleteConfirm, onDeleteConfirm, virtua
         <TargetList targets={deleteConfirm.targets} />
         <div className="flex justify-end gap-[0.45rem] pt-[0.2rem]">
           <button type="button" onClick={close} disabled={deleteConfirm.running}>Cancel</button>
-          <button type="button" disabled={deleteConfirm.running} className="bg-[#d86b6b] border-[#be5252] text-white" onClick={onDeleteConfirm}>
+          <button type="button" disabled={deleteConfirm.running} className="bg-danger-line border-danger text-white" onClick={onDeleteConfirm}>
             {deleteConfirm.running ? 'Deleting...' : `Delete (${deleteConfirm.targets.length})`}
           </button>
         </div>
@@ -102,7 +102,7 @@ function BulkRedeployDialog({
 
   return (
     <ModalOverlay onBackdropClick={() => { if (!bulkRedeployConfirm.running) close() }}>
-      <div className="w-[min(1040px,100%)] bg-white border border-line-strong shadow-[0_20px_45px_rgba(52,43,34,0.2)] p-[1.1rem] grid gap-[0.8rem] max-h-[90vh] overflow-auto">
+      <div className="w-[min(1040px,100%)] bg-panel border border-line-strong shadow-[0_20px_45px_rgba(52,43,34,0.2)] p-[1.1rem] grid gap-[0.8rem] max-h-[90vh] overflow-auto">
         <div className="flex justify-between items-center gap-[0.8rem]">
           <div>
             <h3 className="text-[1.2rem]">Bulk Redeploy Virtual Machines</h3>
@@ -111,7 +111,7 @@ function BulkRedeployDialog({
           <button aria-label="Close" className="border-0 bg-transparent shadow-none p-0 w-[1.8rem] h-[1.8rem] flex items-center justify-center text-[1.4rem] leading-none text-ink-soft hover:text-ink hover:shadow-none!" disabled={bulkRedeployConfirm.running} onClick={close}>x</button>
         </div>
         <div className="grid grid-cols-[250px_minmax(0,1fr)] gap-[0.85rem] max-md:grid-cols-1">
-          <div className="border border-line bg-[#f9f7f4] p-[0.55rem] max-h-[68vh] overflow-auto">
+          <div className="border border-line bg-panel-2 p-[0.55rem] max-h-[68vh] overflow-auto">
             <p className="m-0 mb-[0.45rem] text-ink-soft text-[0.78rem]">Targets ({bulkRedeployConfirm.targets.length})</p>
             <div className="grid gap-[0.35rem]">
               {bulkRedeployConfirm.targets.map((target) => (
@@ -128,9 +128,9 @@ function BulkRedeployDialog({
           <div className="min-w-0 grid gap-[0.55rem]">
             {activeForm && (
               <>
-                <div className="bg-[#f9f7f4] border border-line p-[0.6rem] text-[0.84rem]">
+                <div className="bg-panel-2 border border-line p-[0.6rem] text-[0.84rem]">
                   <p className="m-0 text-ink-soft">Editing <strong className="text-ink">{activeTarget}</strong></p>
-                  {invalidTargets.includes(activeTarget) && <p className="m-0 mt-[0.2rem] text-[#9b2d2d] font-medium">Required fields are missing for this target.</p>}
+                  {invalidTargets.includes(activeTarget) && <p className="m-0 mt-[0.2rem] text-danger font-medium">Required fields are missing for this target.</p>}
                 </div>
                 <fieldset disabled={bulkRedeployConfirm.running} className="grid gap-[0.55rem] border-0 p-0 m-0 min-w-0 disabled:opacity-80">
                   {renderFields(
@@ -161,13 +161,13 @@ function PowerDialog({ powerConfirm, setPowerConfirm, onPowerConfirm }: VMAction
   const close = () => setPowerConfirm(initialPowerConfirm)
   return (
     <ModalOverlay onBackdropClick={() => { if (!powerConfirm.running) close() }}>
-      <div className="w-[min(520px,100%)] bg-white border border-line-strong shadow-[0_20px_45px_rgba(52,43,34,0.2)] p-[1.1rem] grid gap-[0.65rem]">
+      <div className="w-[min(520px,100%)] bg-panel border border-line-strong shadow-[0_20px_45px_rgba(52,43,34,0.2)] p-[1.1rem] grid gap-[0.65rem]">
         <h3 className="text-[1.2rem]">{powerConfirm.action === 'power-on' ? 'Confirm Power On' : 'Confirm Power Off'}</h3>
         <p className="m-0 text-ink-soft text-[0.84rem]">Target virtual machines ({powerConfirm.targets.length}):</p>
         <TargetList targets={powerConfirm.targets} />
         <div className="flex justify-end gap-[0.45rem] pt-[0.2rem]">
           <button type="button" onClick={close} disabled={powerConfirm.running}>Cancel</button>
-          <button type="button" disabled={powerConfirm.running} className={clsx('text-white', powerConfirm.action === 'power-on' ? 'bg-brand border-brand-strong' : 'bg-[#d86b6b] border-[#be5252]')} onClick={onPowerConfirm}>
+          <button type="button" disabled={powerConfirm.running} className={clsx('text-white', powerConfirm.action === 'power-on' ? 'bg-brand border-brand-strong' : 'bg-danger-line border-danger')} onClick={onPowerConfirm}>
             {powerConfirm.running ? (powerConfirm.action === 'power-on' ? 'Powering On...' : 'Powering Off...') : (powerConfirm.action === 'power-on' ? 'Power On' : 'Power Off')}
           </button>
         </div>
@@ -185,7 +185,7 @@ function MigrateDialog({ migrateConfirm, setMigrateConfirm, onMigrateConfirm, vi
 
   return (
     <ModalOverlay onBackdropClick={() => { if (!migrateConfirm.running) close() }}>
-      <div className="w-[min(520px,100%)] bg-white border border-line-strong shadow-[0_20px_45px_rgba(52,43,34,0.2)] p-[1.1rem] grid gap-[0.65rem]">
+      <div className="w-[min(520px,100%)] bg-panel border border-line-strong shadow-[0_20px_45px_rgba(52,43,34,0.2)] p-[1.1rem] grid gap-[0.65rem]">
         <div className="flex justify-between items-center">
           <h3 className="text-[1.2rem]">Migrate VM: {migrateConfirm.vmName}</h3>
           <button aria-label="Close" className="border-0 bg-transparent shadow-none p-0 w-[1.8rem] h-[1.8rem] flex items-center justify-center text-[1.4rem] leading-none text-ink-soft hover:text-ink hover:shadow-none!" disabled={migrateConfirm.running} onClick={close}>x</button>
@@ -215,7 +215,7 @@ function MigrateDialog({ migrateConfirm, setMigrateConfirm, onMigrateConfirm, vi
 
 function TargetList({ targets }: { targets: string[] }) {
   return (
-    <div className="max-h-[180px] overflow-auto border border-line p-[0.55rem] bg-[#f9f7f4]">
+    <div className="max-h-[180px] overflow-auto border border-line p-[0.55rem] bg-panel-2">
       <ul className="m-0 pl-[1.1rem]">
         {targets.map((target) => <li key={target}><code>{target}</code></li>)}
       </ul>
@@ -236,16 +236,16 @@ function RedeployTargetButton({
 }) {
   const state = status?.state ?? 'pending'
   return (
-    <button type="button" className={clsx('w-full text-left border border-line shadow-none px-[0.55rem] py-[0.48rem] bg-white hover:bg-[#f3efe8]', active && 'border-brand bg-[rgba(43,122,120,0.08)]')} onClick={onSelect}>
+    <button type="button" className={clsx('w-full text-left border border-line shadow-none px-[0.55rem] py-[0.48rem] bg-panel hover:bg-panel-3', active && 'border-brand bg-brand-wash')} onClick={onSelect}>
       <span className="block font-medium break-anywhere">{target}</span>
       <span className={clsx(
         'mt-[0.18rem] inline-flex text-[0.68rem] font-medium px-[0.35rem] py-[0.05rem] rounded-sm border',
-        state === 'succeeded' && 'bg-[#e9f6ec] text-[#25633a] border-[#b8dec3]',
-        state === 'failed' && 'bg-[#fff0ee] text-[#9b2d2d] border-[#ecc1ba]',
-        state === 'running' && 'bg-[#eef5ff] text-[#265f9b] border-[#bfd5ee]',
-        state === 'pending' && 'bg-[#f3f0ea] text-ink-soft border-[#e0dbd2]'
+        state === 'succeeded' && 'bg-ok-bg text-ok border-ok-line',
+        state === 'failed' && 'bg-danger-bg text-danger border-error-line',
+        state === 'running' && 'bg-warn-bg text-warn border-warn-line',
+        state === 'pending' && 'bg-panel-3 text-ink-soft border-line-soft'
       )}>{state}</span>
-      {status?.error && <span className="block mt-[0.2rem] text-[#9b2d2d] text-[0.72rem] leading-tight">{status.error}</span>}
+      {status?.error && <span className="block mt-[0.2rem] text-danger text-[0.72rem] leading-tight">{status.error}</span>}
     </button>
   )
 }

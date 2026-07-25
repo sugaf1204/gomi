@@ -16,7 +16,7 @@ export function AuthView({ mode, checking = false, authForm, onAuthFormChange, o
 
   return (
     <main className="min-h-screen grid place-items-center p-[1.2rem]">
-      <section className="ui-panel w-[min(440px,100%)] bg-white/86 backdrop-blur-[4px] border border-white/80 shadow-[0_24px_70px_rgba(78,66,52,0.15)] p-[1.35rem] grid gap-[0.95rem]">
+      <section className="ui-panel w-[min(440px,100%)] bg-panel/86 backdrop-blur-[4px] border border-line shadow-[0_24px_70px_rgba(78,66,52,0.15)] p-[1.35rem] grid gap-[0.95rem]">
         <p className="m-0 font-ui font-medium text-[0.72rem] uppercase tracking-[0.08em] text-ink-soft">gomi control plane</p>
         <h1 className="text-[clamp(1.9rem,4vw,2.4rem)]">{isSetup ? 'Create First Admin' : 'Sign In'}</h1>
         <p className="m-0 text-ink-soft">

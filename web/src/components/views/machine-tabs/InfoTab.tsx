@@ -36,7 +36,7 @@ export function InfoTab({ machine }: Props) {
         <dt className="text-ink-soft text-[0.84rem]">Last Error</dt>
         <dd className="m-0">
           {machine.lastError ? (
-            <code className="inline-block max-w-full font-mono text-[0.82rem] leading-[1.45] whitespace-pre-wrap break-anywhere border border-line bg-[rgba(241,237,228,0.95)] text-[#6e2d2d] py-[0.22rem] px-[0.42rem]">
+            <code className="inline-block max-w-full font-mono text-[0.82rem] leading-[1.45] whitespace-pre-wrap break-anywhere border border-line bg-panel-3 text-error py-[0.22rem] px-[0.42rem]">
               {machine.lastError}
             </code>
           ) : (

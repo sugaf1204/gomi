@@ -85,13 +85,13 @@ export function VMConsolePanel({ vm, onClose }: Props) {
 
   if (!isRunning) {
     return (
-      <div className="p-[1rem] bg-surface-raised border border-edge rounded-lg">
+      <div className="p-[1rem] bg-panel-2 border border-line rounded-lg">
         <div className="flex items-center justify-between mb-[0.5rem]">
           <h4 className="m-0 text-ink">Console: {vm.name}</h4>
           <button
             type="button"
             onClick={onClose}
-            className="px-[0.5rem] py-[0.15rem] text-[0.82rem] bg-surface-raised text-ink border border-edge rounded cursor-pointer"
+            className="px-[0.5rem] py-[0.15rem] text-[0.82rem] bg-panel-2 text-ink border border-line rounded cursor-pointer"
           >
             Close
           </button>
@@ -104,13 +104,13 @@ export function VMConsolePanel({ vm, onClose }: Props) {
   }
 
   return (
-    <div className="p-[1rem] bg-surface-raised border border-edge rounded-lg grid gap-[0.5rem]">
+    <div className="p-[1rem] bg-panel-2 border border-line rounded-lg grid gap-[0.5rem]">
       <div className="flex items-center justify-between">
         <h4 className="m-0 text-ink">Console: {vm.name}</h4>
         <button
           type="button"
           onClick={onClose}
-          className="px-[0.5rem] py-[0.15rem] text-[0.82rem] bg-surface-raised text-ink border border-edge rounded cursor-pointer"
+          className="px-[0.5rem] py-[0.15rem] text-[0.82rem] bg-panel-2 text-ink border border-line rounded cursor-pointer"
         >
           Close
         </button>
@@ -130,7 +130,7 @@ export function VMConsolePanel({ vm, onClose }: Props) {
           <button
             type="button"
             onClick={disconnect}
-            className="px-[0.6rem] py-[0.25rem] text-[0.84rem] bg-surface-raised text-ink border border-edge rounded cursor-pointer"
+            className="px-[0.6rem] py-[0.25rem] text-[0.84rem] bg-panel-2 text-ink border border-line rounded cursor-pointer"
           >
             Disconnect
           </button>

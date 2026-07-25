@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "gomi-web-mocks",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "test", "--prefix", "web"],
+      "port": 5173
+    }
+  ]
+}

@@ -70,7 +70,7 @@ function PhaseDot({ event, timeline }: { event: ResolvedEvent; timeline: DeployT
 }
 
 function EventRow({ event, timeline, startMs }: { event: ResolvedEvent; timeline: DeployTimeline; startMs?: number }) {
-  const rowClass = event.failed ? 'bg-[#f6dada]' : ''
+  const rowClass = event.failed ? 'bg-error-bg' : ''
   return (
     <tr className={`border-t border-line align-baseline ${rowClass}`}>
       <td className="py-[0.28rem] pr-[0.5rem]">
@@ -84,7 +84,7 @@ function EventRow({ event, timeline, startMs }: { event: ResolvedEvent; timeline
       <td className="py-[0.28rem] pr-[0.5rem]">
         <span className={event.failed ? 'text-error font-medium' : ''}>{event.name}</span>
         {event.timeSource === 'unresolved' && (
-          <span className="ml-[0.4rem] rounded-full bg-[#e8e4df] px-[0.4rem] text-[0.66rem] text-ink-soft">no timestamp</span>
+          <span className="ml-[0.4rem] rounded-full bg-neutral-bg px-[0.4rem] text-[0.66rem] text-ink-soft">no timestamp</span>
         )}
         {event.message && (
           <span className="block text-[0.7rem] leading-[1.35] text-ink-soft break-anywhere">{event.message}</span>

@@ -8,10 +8,10 @@ type Props = {
 }
 
 const STATUS_STYLES: Record<string, string> = {
-  complete: 'bg-[#d9f1e5] text-ok',
-  'in-progress': 'bg-[#f8e6cc] text-warn',
-  failed: 'bg-[#f6dada] text-error',
-  empty: 'bg-[#e8e4df] text-ink-soft',
+  complete: 'bg-ok-bg text-ok',
+  'in-progress': 'bg-warn-bg text-warn',
+  failed: 'bg-error-bg text-error',
+  empty: 'bg-neutral-bg text-ink-soft',
 }
 
 const STATUS_LABELS: Record<string, string> = {
@@ -60,7 +60,7 @@ export function DeploySummary({ timeline, provision }: Props) {
   return (
     <div className="grid grid-cols-[repeat(auto-fit,minmax(150px,1fr))] gap-[0.55rem]">
       {cards.map((card) => (
-        <div key={card.label} className="border border-line bg-surface-muted px-[0.65rem] py-[0.55rem]">
+        <div key={card.label} className="border border-line bg-panel-2 px-[0.65rem] py-[0.55rem]">
           <p className="m-0 text-[0.72rem] uppercase text-ink-soft">{card.label}</p>
           <p className="m-0 mt-[0.18rem] text-[1rem] font-medium tabular-nums">{card.value}</p>
           {card.detail && (
