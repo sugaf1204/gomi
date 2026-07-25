@@ -55,6 +55,21 @@ func (s *VMStore) Insert(_ context.Context, v vm.VirtualMachine) error {
 	return nil
 }
 
+// DeleteCreatedToken removes the VM only while it still carries the given
+// completion token. It implements vm.CreatedDeleter; the comparison and the
+// delete share the write lock so no recreate can slip between them.
+func (s *VMStore) DeleteCreatedToken(_ context.Context, name, completionToken string) (bool, error) {
+	s.b.mu.Lock()
+	defer s.b.mu.Unlock()
+	existing, ok := s.b.vms[name]
+	if !ok || existing.Provisioning.CompletionToken != completionToken {
+		return false, nil
+	}
+	delete(s.b.vms, name)
+	s.notify()
+	return true, nil
+}
+
 // UpdateExisting writes the VM only if its row still exists. It implements
 // vm.ExistingUpdater.
 func (s *VMStore) UpdateExisting(_ context.Context, v vm.VirtualMachine) (bool, error) {

@@ -26,6 +26,16 @@ type ExistingUpdater interface {
 	UpdateExisting(ctx context.Context, v VirtualMachine) (bool, error)
 }
 
+// CreatedDeleter is optionally implemented by Store backends that can delete a
+// VM row only while it still carries the given provisioning completion token,
+// reporting whether a row was deleted. A create rolling back after its insert
+// uses it so the ownership check and the delete are one statement: a
+// delete-and-recreate landing in between must not let the rollback remove a
+// replacement that owns the name under a different token.
+type CreatedDeleter interface {
+	DeleteCreatedToken(ctx context.Context, name, completionToken string) (bool, error)
+}
+
 // OwnedDeleter is optionally implemented by Store backends that can delete a
 // VM row only while it still references the given hypervisor, reporting
 // whether a row was deleted. The record-only cascade uses it so a concurrent

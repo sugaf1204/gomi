@@ -71,3 +71,46 @@ func TestVMStoreInsertThenUpsertStillOverwrites(t *testing.T) {
 		t.Fatalf("expected Upsert to overwrite, got hypervisorRef=%s", got.HypervisorRef)
 	}
 }
+
+// The token comparison must be part of the DELETE. A separate lookup followed
+// by a delete-by-name would remove a replacement that took the name in between.
+func TestVMStoreDeleteCreatedTokenMatchesGeneration(t *testing.T) {
+	s := newTestBackend(t).VMs()
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Second)
+
+	v := vm.VirtualMachine{
+		Name:          "vm-generation",
+		HypervisorRef: "hv1",
+		Resources:     vm.ResourceSpec{CPUCores: 1},
+		Provisioning:  vm.ProvisioningStatus{Active: true, CompletionToken: "token-replacement"},
+		CreatedAt:     now,
+		UpdatedAt:     now,
+	}
+	if err := s.Insert(ctx, v); err != nil {
+		t.Fatalf("Insert: %v", err)
+	}
+
+	// A stale rollback carrying the previous generation's token must not match.
+	deleted, err := s.DeleteCreatedToken(ctx, v.Name, "token-original")
+	if err != nil {
+		t.Fatalf("DeleteCreatedToken with stale token: %v", err)
+	}
+	if deleted {
+		t.Fatal("stale rollback deleted the replacement row")
+	}
+	if _, err := s.Get(ctx, v.Name); err != nil {
+		t.Fatalf("replacement must survive: %v", err)
+	}
+
+	deleted, err = s.DeleteCreatedToken(ctx, v.Name, "token-replacement")
+	if err != nil {
+		t.Fatalf("DeleteCreatedToken with owning token: %v", err)
+	}
+	if !deleted {
+		t.Fatal("owning generation should have been deleted")
+	}
+	if _, err := s.Get(ctx, v.Name); !errors.Is(err, resource.ErrNotFound) {
+		t.Fatalf("expected the row to be gone, got %v", err)
+	}
+}

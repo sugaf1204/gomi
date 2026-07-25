@@ -289,6 +289,12 @@ func (s *Service) DeleteOwned(ctx context.Context, name, hypervisorRef string) (
 // meantime, leaving that request deploying host artifacts for a record that no
 // longer exists.
 func (s *Service) DeleteCreated(ctx context.Context, name, completionToken string) (bool, error) {
+	if deleter, ok := s.store.(CreatedDeleter); ok {
+		return deleter.DeleteCreatedToken(ctx, name, completionToken)
+	}
+	// Fallback for backends without a conditional delete. The check and the
+	// delete are separate here, so a delete-and-recreate in between can still
+	// race; backends used in production implement CreatedDeleter.
 	v, err := s.store.Get(ctx, name)
 	if err != nil {
 		if errors.Is(err, resource.ErrNotFound) {
