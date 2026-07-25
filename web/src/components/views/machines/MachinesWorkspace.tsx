@@ -1,6 +1,6 @@
 import type { Dispatch, RefObject, SetStateAction } from 'react'
 import clsx from 'clsx'
-import type { GuardedAction, MachineTab } from '../../../app-types'
+import type { GroupBy, GuardedAction, MachineTab } from '../../../app-types'
 import { phaseClass, powerStateClass, powerStateLabel } from '../../../lib/formatters'
 import type { AuditEvent, Hypervisor, Machine, PowerConfig, Subnet } from '../../../types'
 import { ActivityTab } from '../machine-tabs/ActivityTab'
@@ -11,6 +11,7 @@ import { DetailTab } from '../machine-tabs/DetailTab'
 import { InfoTab } from '../machine-tabs/InfoTab'
 import { MachineTabBar } from '../machine-tabs/MachineTabBar'
 import { NetworkTab } from '../machine-tabs/NetworkTab'
+import { MachineListColumn } from './MachineListColumn'
 import type { MachinePrimaryAction } from './machineFormState'
 
 type MachinesWorkspaceProps = {
@@ -47,79 +48,24 @@ type MachinesWorkspaceProps = {
   machineSettingsPower: PowerConfig
   onMachineSettingsPowerChange: (value: PowerConfig) => void
   onOpenConfirm: (action: GuardedAction) => void
+  groupBy: GroupBy
+  onGroupByChange: (groupBy: GroupBy) => void
+  hypervisors: Hypervisor[]
 }
 
 export function MachinesWorkspace(props: MachinesWorkspaceProps) {
   return (
-    <section className="min-h-0 grid grid-cols-1 md:grid-cols-[310px_minmax(0,1fr)] gap-[0.9rem]">
-      <div className="min-h-0 grid grid-rows-[auto_minmax(0,1fr)] gap-[0.6rem]">
-        <div className="grid gap-[0.45rem]">
-          <div className="flex justify-between items-center gap-2">
-            <h2 className="text-[1.4rem]">Machine List</h2>
-            <div className="flex items-center justify-end flex-wrap gap-[0.35rem]">
-              <button className="bg-brand border-brand-strong text-white py-[0.35rem] px-[0.55rem] text-[0.82rem]" disabled={props.quickDeploying} onClick={props.onQuickDeploy}>
-                {props.quickDeploying ? 'Deploying...' : 'Quick Deploy'}
-              </button>
-              <button className="py-[0.35rem] px-[0.55rem] text-[0.82rem]" disabled={props.quickDeploying} onClick={props.onOpenQuickDeploySettings}>Preset</button>
-              <button className="py-[0.35rem] px-[0.55rem] text-[0.82rem]" onClick={props.onOpenCreateDialog}>Add</button>
-            </div>
-          </div>
-          <input aria-label="Machine filter" placeholder="Search name, host, MAC" value={props.machineFilter} onChange={(e) => props.onMachineFilterChange(e.target.value)} />
-        </div>
-        <MachineList {...props} />
-      </div>
+    <section className="h-full min-h-0 grid grid-cols-1 md:grid-cols-[352px_minmax(0,1fr)]">
+      <MachineListColumn {...props} />
       <MachineDetailPane {...props} />
     </section>
-  )
-}
-
-function MachineList({
-  filteredMachines,
-  dataLoading,
-  selectedMachineName,
-  selectedMachines,
-  onSelectMachine,
-  toggleMachineSelect,
-  toggleSelectAll
-}: MachinesWorkspaceProps) {
-  return (
-    <div className="overflow-auto border-t border-line pr-[0.1rem]">
-      {dataLoading && filteredMachines.length === 0 && (
-        <div className="grid place-items-center py-[2.4rem] text-center text-ink-soft gap-[0.55rem]">
-          <div className="loading-spinner" aria-hidden="true" />
-          <p className="m-0 text-[0.84rem]">Loading machines...</p>
-        </div>
-      )}
-      {filteredMachines.length > 0 && (
-        <div className="flex items-center gap-[0.45rem] py-[0.35rem] pl-[0.55rem] border-b border-line bg-panel-2">
-          <input type="checkbox" className="w-[0.95rem] h-[0.95rem] m-0 shrink-0 accent-brand cursor-pointer" checked={selectedMachines.size === filteredMachines.length && filteredMachines.length > 0} onChange={toggleSelectAll} />
-          <span className="text-[0.78rem] text-ink-soft">Select All</span>
-        </div>
-      )}
-      {filteredMachines.map((machine) => (
-        <div key={machine.name} className={clsx('flex items-start border-0 border-b border-line border-l-[3px] border-l-transparent', selectedMachineName === machine.name && '!border-l-brand bg-brand-wash')}>
-          <div className="flex items-center pl-[0.55rem] pt-[0.72rem] shrink-0">
-            <input type="checkbox" className="w-[0.95rem] h-[0.95rem] m-0 accent-brand cursor-pointer" checked={selectedMachines.has(machine.name)} onChange={() => toggleMachineSelect(machine.name)} />
-          </div>
-          <button className="text-left flex-1 min-w-0 border-0 bg-transparent flex justify-between items-start gap-[0.75rem] py-[0.62rem] pl-[0.45rem] pr-[0.1rem] shadow-none hover:transform-none!" onClick={() => onSelectMachine(machine.name)}>
-            <div className="min-w-0">
-              <p className="m-0 font-ui font-medium tracking-normal truncate">{machine.name}</p>
-              <p className="m-0 text-ink-soft text-[0.82rem]">{machine.osPreset.family} {machine.osPreset.version} - {machine.firmware.toUpperCase()}</p>
-            </div>
-            {machine.role === 'hypervisor' && <span className="text-[0.7rem] px-1.5 py-0.5 rounded bg-hv-bg text-hv font-medium shrink-0">HV</span>}
-            <span className={clsx(phaseClass(machine.phase), 'shrink-0')}>{machine.phase}</span>
-          </button>
-        </div>
-      ))}
-      {!dataLoading && filteredMachines.length === 0 && <p className="m-0 text-ink-soft">No machines found</p>}
-    </div>
   )
 }
 
 function MachineDetailPane(props: MachinesWorkspaceProps) {
   const { selectedMachine, multiSelectActive } = props
   return (
-    <div className="min-h-0 grid content-start gap-[0.85rem]">
+    <div className="min-h-0 overflow-auto grid content-start gap-[18px] p-[20px_22px]">
       {!selectedMachine && !multiSelectActive && (
         <section className="bg-transparent border-0 border-t border-line shadow-none pt-[0.85rem] grid gap-[0.45rem]">
           <h2>Select a machine</h2>
