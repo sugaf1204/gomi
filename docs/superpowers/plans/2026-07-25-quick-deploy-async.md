@@ -92,6 +92,34 @@ The epoch fix above introduced its own failure modes, corrected in turn:
     provisioning window and domain marker across `Pending`/`Missing`/`Provisioning`
     (Task 4).
 
+### Third round
+
+Fixes 8 and 11 combined into a defect that broke the normal path:
+
+12. **Every healthy VM would have been re-finalized every 5 seconds.** A successful
+    deploy ends in `Provisioning` with an active window and `DomainObservedAt` set
+    (`internal/vm/deploy.go:119`), and fix 8 then clears its epoch — making it
+    indistinguishable from a crash just before `StartDomain`, which fix 11 had just
+    made a finalize candidate. Absence of an epoch cannot mean "orphaned". Added a
+    positive `HostSetupDoneAt` marker written when server-side work completes; records
+    carrying it are never recovery candidates (Task 2c, Task 4).
+13. **Resumed workers never released their lease.** Fix 8 covered only the create
+    goroutine. A resumed worker stamps the epoch but had no release on any exit path,
+    stranding the record permanently (Task 6).
+14. **Lease release was a read-modify-write race.** `writeExisting` only checks that a
+    record exists (`internal/vm/store.go:32`), so a delete-and-recreate between the
+    read and the write let a stale worker overwrite the replacement. Release is now a
+    single conditional update matching name and token (Task 2c).
+15. **Stale cleanup used the expired deploy context.** When `Deploy` returns at the
+    provisioning timeout, `ctx` is already cancelled: the identity read fails with
+    "context deadline exceeded" — matching neither stale condition — and teardown
+    cannot connect. Both now use a fresh bounded context (Task 3).
+16. **Finalize left an expired deadline.** `SyncAll` runs immediately after the sweep
+    and fails any record whose active window has expired
+    (`internal/vm/runtime_sync.go:291-294`), so a VM recovered from a slow define was
+    failed microseconds later. Finalize now renews the deadline and restores the
+    marker in the same write (Task 7b).
+
 ---
 
 ### Task 1: Make the Deployer's libvirt executor injectable
@@ -493,10 +521,24 @@ In `internal/vm/types.go`, inside `ProvisioningStatus`:
 	// DeployEpoch identifies the server process that started this deploy. The
 	// resume sweep uses it to tell an orphaned deploy from a live one: a
 	// record carrying the running process's epoch is owned by a goroutine that
-	// is either still working or died with the process. Records from an
-	// earlier epoch have no owner and are safe to recover.
+	// is either still working or died with the process. The stamp is cleared
+	// on every exit path, so its absence alone does not mean orphaned — see
+	// HostSetupDoneAt.
 	DeployEpoch string `json:"deployEpoch,omitempty"`
+
+	// HostSetupDoneAt records that the server finished everything it owes this
+	// deploy: the domain is defined, started, and booting from disk. What
+	// remains is the guest's own install, governed by the provisioning window.
+	// Recovery needs this positive marker because a finished deploy and a
+	// deploy that crashed just before StartDomain are otherwise identical —
+	// both sit in Provisioning with an active window, DomainObservedAt set and
+	// no epoch.
+	HostSetupDoneAt *time.Time `json:"hostSetupDoneAt,omitempty"`
 ```
+
+Stamp it in `Deploy` where the successful path already persists status (`internal/vm/deploy.go:119`), in the same `UpdateDeployStatus` write, so a crash cannot land between starting the domain and recording that fact. Set it for the `PhaseStopped` branch (`internal/vm/deploy.go:123`) too — that deploy also has no remaining server-side work.
+
+Redeploy (`internal/vm/deploy.go:130`) arms a fresh provisioning window, so it must clear `HostSetupDoneAt` when it does; otherwise a redeploy interrupted before `StartDomain` would be treated as already finished.
 
 It is stored inside the existing `status` JSON column, so no migration is required — confirm by checking `marshalVMColumns` in `internal/infra/sql/vm_store.go`.
 
@@ -522,29 +564,36 @@ In `internal/infra/api/vm.go`, extend the `v.Provisioning` initialisation at lin
 
 In `internal/vm/service.go`, beside `FailDeploy` (which already shows the token-guard pattern at `internal/vm/service.go:193-200`):
 
+This must be a **single conditional update**, not read-modify-write. A read, token check, then write lets a delete-and-recreate slip in between, and the stale worker's snapshot overwrites the replacement's row. `writeExisting` does not save you: it only checks that *a* record exists (`internal/vm/store.go:32`) and falls back to a plain `Upsert` on stores without `ExistingUpdater` (`:36`).
+
+Add a store method that clears the epoch where the name and token both match, in one statement. In `internal/infra/sql/vm_store.go`:
+
 ```go
-// ReleaseDeployEpoch clears the ownership stamp when the deploy that took it
-// finishes or dies. The token guard stops a stale worker from releasing a lease
-// a newer deploy has since taken.
-func (s *Service) ReleaseDeployEpoch(ctx context.Context, name, completionToken string) error {
-	v, err := s.store.Get(ctx, name)
+// ReleaseDeployEpoch clears the ownership stamp in a single conditional write.
+// Matching on the completion token inside the statement keeps a stale worker
+// from clobbering a record a newer deploy has since taken over.
+func (s *VMStore) ReleaseDeployEpoch(ctx context.Context, name, completionToken string) error {
+	res, err := s.b.exec(ctx, `
+		UPDATE virtual_machines
+		SET status = json_set(json_remove(status, '$.provisioning.deployEpoch'), '$.x', '$.x'),
+		    updated_at = ?
+		WHERE name = ?
+		  AND json_extract(status, '$.provisioning.completionToken') = ?`,
+		time.Now().UTC(), name, completionToken)
 	if err != nil {
-		if errors.Is(err, resource.ErrNotFound) {
-			return nil
-		}
 		return err
 	}
-	if v.Provisioning.CompletionToken != completionToken || v.Provisioning.DeployEpoch == "" {
-		return nil
-	}
-	v.Provisioning.DeployEpoch = ""
-	v.UpdatedAt = time.Now().UTC()
-	_, err = writeExisting(ctx, s.store, v)
-	return err
+	_, _ = res.RowsAffected()
+	s.notify()
+	return nil
 }
 ```
 
-Add a test asserting that a release with a mismatched token is a no-op, and that a matching release clears the stamp so `DecideResumeAction` stops returning `ResumeNone`.
+The JSON manipulation above is illustrative — SQLite and PostgreSQL differ here, and this project supports both. Check how `marshalVMColumns` shapes the `status` column and how other conditional updates in this file handle the two drivers, then write the equivalent for each. If per-driver JSON surgery proves unwieldy, an acceptable alternative is a compare-and-swap on the whole `status` column: read it, compute the new value, and `UPDATE ... WHERE name = ? AND status = <old>`, retrying once on zero rows affected. What is not acceptable is a read-then-unconditional-write.
+
+Mirror the same semantics in the in-memory store under its existing lock.
+
+Add tests: a release with a mismatched token is a no-op; a matching release clears the stamp so `DecideResumeAction` stops returning `ResumeNone`; and a release racing a same-name recreation leaves the new record intact.
 
 - [ ] **Step 4: Build and test**
 
@@ -736,11 +785,19 @@ func (s *Server) runVMDeploy(deployHV hypervisor.Hypervisor, created vm.VirtualM
 	// deploys a VM can be deleted and recreated under the same name while this
 	// goroutine runs; an existence-only check would find the new record, skip
 	// cleanup, and orphan this deploy's domain and volume on deployHV.
-	current, getErr := s.vms.Get(ctx, created.Name)
+	//
+	// Use a fresh context: when Deploy returned because s.provisionTimeout
+	// expired, ctx is already cancelled, the read would fail with "context
+	// deadline exceeded" (matching neither stale condition, so a deleted VM
+	// goes unnoticed), and TeardownHostState could not even connect.
+	checkCtx, checkCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer checkCancel()
+
+	current, getErr := s.vms.Get(checkCtx, created.Name)
 	stale := errors.Is(getErr, resource.ErrNotFound) ||
 		(getErr == nil && current.Provisioning.CompletionToken != token)
 	if stale {
-		if cleanupErr := s.vmDeployer.TeardownHostState(ctx, deployHV, created); cleanupErr != nil {
+		if cleanupErr := s.vmDeployer.TeardownHostState(checkCtx, deployHV, created); cleanupErr != nil {
 			log.Printf("create vm %s: cleanup after superseded deploy: %v", created.Name, cleanupErr)
 		}
 		return
@@ -871,6 +928,14 @@ func TestDecideResumeAction(t *testing.T) {
 			want: ResumeRedeploy,
 		},
 		{
+			// Regression guard: this is what a successful deploy looks like once
+			// its lease is released. Classifying it as work would re-finalize
+			// every healthy VM every 5 seconds.
+			name: "successfully deployed vm awaiting guest install is left alone",
+			vm:   VirtualMachine{Phase: PhaseProvisioning, Provisioning: ProvisioningStatus{Active: true, DeadlineAt: &future, DomainObservedAt: &observed, HostSetupDoneAt: &observed, DeployEpoch: ""}},
+			want: ResumeNone,
+		},
+		{
 			name: "inactive provisioning window is ignored",
 			vm:   VirtualMachine{Phase: PhasePending, Provisioning: ProvisioningStatus{Active: false, DeadlineAt: &future, DeployEpoch: priorEpoch}},
 			want: ResumeNone,
@@ -957,6 +1022,15 @@ func DecideResumeAction(v VirtualMachine, currentEpoch string, now time.Time) Re
 	// A live goroutine in this process owns it. The lease is released on every
 	// exit path, so a stamp that is still present means the owner is alive.
 	if v.Provisioning.DeployEpoch == currentEpoch {
+		return ResumeNone
+	}
+	// Server-side work finished. Absence of an epoch cannot mean "orphaned" on
+	// its own: a successful deploy also ends with no epoch, sitting in
+	// Provisioning with an active window and DomainObservedAt set
+	// (internal/vm/deploy.go:119) — identical to a crash just before
+	// StartDomain. Without this positive marker every healthy VM would be
+	// re-finalized on every 5-second tick for the whole guest install.
+	if v.Provisioning.HostSetupDoneAt != nil {
 		return ResumeNone
 	}
 	if v.Provisioning.DomainObservedAt != nil {
@@ -1374,6 +1448,10 @@ Make the scan cheap and the work asynchronous: `ResumeInterruptedDeploys` classi
 
 Because the resumed deploy now runs off the tick, it must stamp the current epoch on the record when it starts, exactly as `CreateVirtualMachine` does; otherwise the next tick classifies it as interrupted again and dispatches a duplicate.
 
+**And it must release that stamp on every exit path**, with the same deferred fresh-context release `runVMDeploy` uses (Task 3). This applies to all of: success, an early return from hypervisor resolution, an early return from teardown, a superseded-identity skip, and a `Deploy` that hit its own deadline. Removing the in-flight-set entry is not sufficient — that is process memory, while the epoch is persisted, so a worker that exits without releasing leaves the record carrying the current epoch and every subsequent sweep returns `ResumeNone` for it. The record is then stranded until the next restart.
+
+Write this as a single `defer` at the top of the worker, before any early return can be taken, rather than at each exit site.
+
 Check whether `Runtime` already stores the deployer. Run:
 
 `grep -n "vmDeployer" internal/app/app.go`
@@ -1482,7 +1560,16 @@ git commit -m "Reserve next Quick Deploy name on click to allow rapid consecutiv
 
 `DecideResumeAction` already returns `ResumeFinalize` (Task 4) for a prior-epoch record with an active window and `DomainObservedAt` set, in any of the `Pending`/`Missing`/`Provisioning` phases. This task supplies the executor.
 
-Recovery does not redeploy: it inspects the domain and, if it is not running, calls `StartDomain` and reasserts the boot device to `hd`. Both operations are idempotent — starting a running domain and setting an already-`hd` boot device are no-ops — so the path is safe to repeat. Restore the phase to `Provisioning` on success, since a re-armed record may still read `Missing`.
+Recovery does not redeploy: it inspects the domain and, if it is not running, calls `StartDomain` and reasserts the boot device to `hd`. Both operations are idempotent — starting a running domain and setting an already-`hd` boot device are no-ops — so the path is safe to repeat.
+
+**Persist four things in one write before the sweep returns:**
+
+1. `Phase = Provisioning` — a re-armed record may still read `Missing`.
+2. `DomainObservedAt`, if nil. Finalize can be reached via host verification when the original marker write failed (`internal/vm/deploy.go:241`); leaving it nil would re-classify the VM as `ResumeRedeploy` next tick and destroy the running domain.
+3. `DeadlineAt`, renewed from now by the original window length — the same renewal `markDomainDefined` performs (`internal/vm/deploy.go:232-236`).
+4. `HostSetupDoneAt` — server-side work is now complete.
+
+Item 3 is not optional. A slow define that outlived its deadline reaches finalize with an expired window, and `SyncAll` runs immediately after on the same tick: it marks any record with an expired active window `Error` for provisioning timeout (`internal/vm/runtime_sync.go:291-294`). Without the renewal the sweep would recover the VM and the sync loop would fail it microseconds later.
 
 Do not fold this into `ResumeRedeploy`: tearing down a defined domain to rebuild it would discard an install that may already be under way.
 
@@ -1494,8 +1581,9 @@ Using the `resumeExecutor` fake:
 - domain is running with boot device still `network` → expect `SetDomainBootDevice` to `hd`
 - record is `Missing` with an active re-armed window and a defined domain → expect finalize, not `ResumeNone`. This is the timeout-before-define path: `markDomainDefined` re-arms the window (`internal/vm/deploy.go:237`) without restoring the phase, and `SyncAll` maps the shut-off domain to `Provisioning` (`internal/vm/runtime_sync.go:401-405`) but never starts it.
 - nil `DomainObservedAt` but the domain exists on the host → expect finalize, **not** teardown. This is the lost-checkpoint case from `internal/vm/deploy.go:241`.
+- expired `DeadlineAt` reached via host verification → after finalize, run `SyncAll` and assert the VM is **not** `Error`. This proves the deadline renewal actually protects the recovered VM from the sync loop on the same tick.
 
-Assert no volume is deleted in any of these.
+Assert no volume is deleted in any of these, and that `HostSetupDoneAt` is set afterwards so the next tick returns `ResumeNone`.
 
 - [ ] **Step 3: Commit**
 
@@ -1560,7 +1648,12 @@ Walk the "Verification" section of `docs/superpowers/specs/2026-07-25-quick-depl
 | Teardown not-attempted marker preserved | Task 2 Step 5b |
 | Stale-deploy identity check | Task 3 Step 4 |
 | Post-definition crash windows | Task 7b Step 2 |
+| **Healthy VMs never re-finalized** | Task 4 Step 1 (`HostSetupDoneAt` case) |
 | Lease released on goroutine timeout | Task 2c Step 3b + Task 4 Step 1 |
+| Lease released by resumed workers too | Task 6 Step 1 |
+| Lease release is atomic vs. recreate | Task 2c Step 3b |
+| Stale cleanup survives an expired deploy context | Task 3 Step 4 |
+| Finalize renews the deadline before SyncAll | Task 7b Step 2 |
 | Dispatch race (recreated during recovery) | Task 5 Step 3 (`resumeOne` re-read) |
 | Lost checkpoint: defined domain, nil marker | Task 5 Step 3 + Task 7b Step 2 |
 | Re-armed Missing finalized | Task 4 Step 1 + Task 7b Step 2 |

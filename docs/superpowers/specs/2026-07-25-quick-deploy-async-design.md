@@ -149,15 +149,36 @@ after deploying that `runVMDeploy` performs.
 
 #### Decision logic
 
-Candidates are records with an active, uncompleted provisioning window whose phase has
-not reached a terminal state — `Pending`, `Missing` or `Provisioning`. Phase alone does
-not select them, for the re-armed `Missing` reason above.
+#### Recovery needs a positive record of unfinished work
+
+Inferring "orphaned" from the *absence* of an epoch does not work, because a
+successfully finished deploy also has no epoch — the lease is released on exit. A
+completed deploy ends at `Phase=Provisioning` with an active window and
+`DomainObservedAt` set (`internal/vm/deploy.go:119`), which is indistinguishable from a
+deploy that crashed just before `StartDomain`. Treating that as recoverable would
+re-finalize every healthy VM on every 5-second tick for the whole install.
+
+The deploy therefore records when its **server-side work is complete** — a
+`HostSetupDoneAt` stamp written after `StartDomain` and the boot-device switch succeed.
+This is a positive assertion that nothing remains for the server to do; what follows is
+the guest's own install, which the provisioning window and completion signal already
+govern.
+
+Recovery considers only records that have an epoch from a previous process **or** are
+missing `HostSetupDoneAt`. A record with neither an epoch nor the stamp is a genuine
+crash victim; a record with the stamp is finished server-side and is never touched.
+
+#### Decision logic
+
+Candidates are records with an active, uncompleted provisioning window in a
+non-terminal phase — `Pending`, `Missing` or `Provisioning`.
 
 ```
-DeployEpoch == currentEpoch -> a live goroutine owns it -> leave alone
-DomainObservedAt != nil     -> domain defined -> finalize (start + boot device)
-DeadlineAt passed           -> clean up host state, then FailDeploy(Phase=Error)
-otherwise                   -> domain not yet defined -> clean up, then re-run Deploy()
+DeployEpoch == currentEpoch -> a live goroutine owns it        -> leave alone
+HostSetupDoneAt != nil      -> server-side work finished       -> leave alone
+DomainObservedAt != nil      -> domain defined, setup unfinished -> finalize
+DeadlineAt passed            -> clean up host state, then FailDeploy(Phase=Error)
+otherwise                    -> domain not yet defined -> clean up, then re-run Deploy()
 ```
 
 The last two branches are host-verified, not marker-verified: before tearing anything
@@ -262,9 +283,53 @@ shut-off domain to `Provisioning` (`internal/vm/runtime_sync.go:401-405`) but ne
 starts it, and a `Pending`-only rule ignores it — so the VM never boots.
 
 Finalization is therefore selected by the provisioning window and domain marker, not
-by phase: any prior-epoch record with an active, uncompleted window whose domain is
+by phase: any recoverable record with an active, uncompleted window whose domain is
 defined is a finalize candidate, whether its phase reads `Pending`, `Missing` or
 `Provisioning`.
+
+**Finalization must renew the window, not just the phase.** A slow define that
+outlived the original deadline reaches finalize with an expired `DeadlineAt` — and
+`SyncAll`, which runs immediately after on the same tick, marks any record with an
+expired active window `Error` for provisioning timeout
+(`internal/vm/runtime_sync.go:291-294`). Restoring only the phase would hand the sync
+loop a VM that was just recovered and let it fail it immediately.
+
+Finalization therefore persists, in one write before the sweep returns: the
+`DomainObservedAt` marker (which may be missing if the original write failed), a
+deadline renewed from now by the original window length — the same renewal
+`markDomainDefined` performs (`internal/vm/deploy.go:232-236`) — the restored
+`Provisioning` phase, and `HostSetupDoneAt`.
+
+#### Every worker releases its lease
+
+The rule is not specific to the create goroutine. A resumed worker also stamps the
+current epoch when it starts, and must clear it on every exit path — success, early
+return from hypervisor resolution or teardown, or a `Deploy` that hit its own deadline
+— using a fresh context. Omitting the release on any path strands the record
+permanently, because subsequent sweeps see the current epoch and skip it.
+
+#### Cleanup after a timed-out deploy
+
+Both the stale-identity recheck and the teardown that follows it must use a fresh,
+bounded context rather than the deploy context. When `Deploy` returns because the
+provisioning timeout expired, the deploy context is already cancelled: the identity
+read fails with `context deadline exceeded` (matching neither stale condition, so a
+concurrently deleted VM goes unnoticed) and `TeardownHostState` cannot open a
+connection. The lease release already uses a fresh context; the recheck and cleanup
+need the same treatment.
+
+#### Conditional writes, not read-modify-write
+
+Releasing the lease by reading the record, comparing the token, and writing it back is
+a race: between the read and the write the VM can be deleted and recreated under the
+same name, and the stale worker's snapshot then overwrites the replacement's row.
+`writeExisting` does not prevent this — it only checks that *a* record exists
+(`internal/vm/store.go:32`), and falls back to a plain `Upsert` on stores without
+`ExistingUpdater`.
+
+The release must be a single store-level conditional update: clear the epoch **where**
+the name and completion token both still match. The same applies to any other
+token-guarded mutation introduced by this design.
 
 #### Backing image integrity
 
@@ -333,9 +398,18 @@ Correctness checks required before this is considered done:
 - **Post-definition crash windows**: a crash after `DefineDomain` but before
   `StartDomain`, and after `StartDomain` but before the boot-device switch, both
   recover to a running VM booting from disk.
+- **Healthy VMs are never re-finalized**: a successfully deployed VM sitting in
+  `Provisioning` with its lease released survives many sweep ticks with no libvirt
+  calls at all. This is the primary regression risk of the recovery design.
 - **Lease release on timeout**: a deploy goroutine that hits its context deadline
   releases its epoch, so the next sweep recovers the record instead of treating a dead
-  worker as live forever.
+  worker as live forever. Resumed workers release on every exit path too.
+- **Release is atomic**: a delete-and-recreate racing a lease release does not let the
+  stale worker overwrite the replacement's row.
+- **Expired-context cleanup**: a deploy that returns at its provisioning timeout still
+  detects a concurrently deleted VM and tears down its host state.
+- **Finalize renews the deadline**: a VM recovered by finalization is not immediately
+  failed by the `SyncAll` that runs on the same tick.
 - **Dispatch race**: a VM deleted and recreated between sweep classification and worker
   execution is not torn down by the stale worker.
 - **Lost checkpoint**: a successful `DefineDomain` whose marker write failed, followed
