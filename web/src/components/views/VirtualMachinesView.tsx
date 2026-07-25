@@ -15,10 +15,9 @@ import {
   initialMigrateConfirm,
   initialPowerConfirm,
   initialReinstallForm,
-  readQuickDeployPreset,
-  VM_SELECTION_STORAGE_KEY,
-  writeQuickDeployPreset
+  VM_SELECTION_STORAGE_KEY
 } from './virtual-machines/vmFormState'
+import { readQuickDeployPreset, writeQuickDeployPreset } from './virtual-machines/quickDeployPreset'
 import type {
   QuickDeployPreset,
   VMConfigForm,

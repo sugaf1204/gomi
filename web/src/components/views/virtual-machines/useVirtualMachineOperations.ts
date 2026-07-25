@@ -10,11 +10,10 @@ import {
   initialForm,
   initialMigrateConfirm,
   initialPowerConfirm,
-  invalidVMConfigReason,
   mergeSelectedCloudInitRef,
-  renderPresetTemplateName,
   toReinstallForm
 } from './vmFormState'
+import { invalidVMConfigReason, renderPresetTemplateName } from './quickDeployPreset'
 import type {
   QuickDeployPreset,
   VMBulkRedeployConfirmState,

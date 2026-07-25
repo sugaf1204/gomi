@@ -1,12 +1,11 @@
 import { beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import {
-  QUICK_DEPLOY_STORAGE_KEY,
-  initialQuickDeployPreset,
   invalidVMConfigReason,
   readQuickDeployPreset,
   renderPresetTemplateName,
   writeQuickDeployPreset
-} from './vmFormState'
+} from './quickDeployPreset'
+import { QUICK_DEPLOY_STORAGE_KEY, initialQuickDeployPreset } from './vmFormState'
 
 // The preset helpers only need window + localStorage, so a minimal stub keeps
 // these tests in the default node environment instead of pulling in jsdom.
@@ -175,11 +174,11 @@ describe('invalidVMConfigReason', () => {
     ['memoryMB', 'Memory (MB)'],
     ['diskGB', 'Disk (GB)']
   ] as const)('rejects a blank %s', (field, label) => {
-    expect(invalidVMConfigReason({ ...valid, [field]: '' })).toBe(`${label} must be a positive number`)
+    expect(invalidVMConfigReason({ ...valid, [field]: '' })).toBe(`${label} must be a positive whole number`)
   })
 
   it.each(['0', '-1', 'abc'] as const)('rejects cpuCores of %s', (value) => {
-    expect(invalidVMConfigReason({ ...valid, cpuCores: value })).toBe('CPU cores must be a positive number')
+    expect(invalidVMConfigReason({ ...valid, cpuCores: value })).toBe('CPU cores must be a positive whole number')
   })
 
   it('rejects cpu pinning that targets a vcpu beyond cpuCores', () => {
@@ -259,6 +258,34 @@ describe('invalidVMConfigReason', () => {
 
   it('ignores the static IP when assignment is dhcp', () => {
     expect(invalidVMConfigReason({ ...valid, ipAssignment: 'dhcp', staticIP: 'nonsense' })).toBeUndefined()
+  })
+
+  // Go decodes these into int/int64, so a fractional value fails to decode.
+  it.each([
+    ['cpuCores', 'CPU cores'],
+    ['memoryMB', 'Memory (MB)'],
+    ['diskGB', 'Disk (GB)']
+  ] as const)('rejects a fractional %s', (field, label) => {
+    expect(invalidVMConfigReason({ ...valid, [field]: '1.5' })).toBe(`${label} must be a positive whole number`)
+  })
+
+  it('accepts a whole number written with a trailing zero', () => {
+    // Number('2.0') === 2, and JSON.stringify emits 2, so this is safe to send.
+    expect(invalidVMConfigReason({ ...valid, cpuCores: '2.0' })).toBeUndefined()
+  })
+
+  // Mirrors linuxUsernamePattern in internal/vm/validate.go.
+  it.each(['Admin', '1abc', 'ab.cd', 'a'.repeat(33), 'has space'] as const)('rejects login username %s', (username) => {
+    expect(invalidVMConfigReason({ ...valid, loginUserUsername: username }))
+      .toBe('Login username must be lowercase, start with a letter or underscore, and be at most 32 characters')
+  })
+
+  it.each(['ubuntu', 'root1', 'a-b_c', '_svc', 'a'.repeat(32)] as const)('accepts login username %s', (username) => {
+    expect(invalidVMConfigReason({ ...valid, loginUserUsername: username })).toBeUndefined()
+  })
+
+  it('accepts an empty login username, meaning no login user', () => {
+    expect(invalidVMConfigReason({ ...valid, loginUserUsername: '' })).toBeUndefined()
   })
 })
 
