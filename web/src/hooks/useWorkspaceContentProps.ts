@@ -1,5 +1,5 @@
 import type { FormEvent } from 'react'
-import type { ActivitySummary, ActivityType, Appearance, MachineStats, MachineTab, Theme, View } from '../app-types'
+import type { ActivitySummary, ActivityType, Appearance, GroupBy, MachineStats, MachineTab, Theme, View } from '../app-types'
 import type { ActivityItem, GuardedAction, SubnetFormState } from '../app-types'
 import type { WorkspaceContentProps } from '../components/layout/WorkspaceContent'
 import { useRelativeTime } from './useRelativeTime'
@@ -50,6 +50,8 @@ type Params = {
   view: View
   appearance: Appearance
   setAppearance: (appearance: Appearance) => void
+  groupBy: GroupBy
+  setGroupBy: (groupBy: GroupBy) => void
   machineStats: MachineStats
   machineFilter: string
   setMachineFilter: (value: string) => void
@@ -149,7 +151,9 @@ export function useWorkspaceContentProps({
   selectedSubnetData,
   view,
   appearance,
-  setAppearance
+  setAppearance,
+  groupBy,
+  setGroupBy
 }: Params): Result {
   const syncedAgo = useRelativeTime(lastSyncedAt)
 
@@ -205,7 +209,9 @@ export function useWorkspaceContentProps({
       hypervisors,
       osImages,
       cloudInits,
-      sshKeys
+      sshKeys,
+      groupBy,
+      onGroupByChange: setGroupBy
     },
     hypervisors: {
       hypervisors,
