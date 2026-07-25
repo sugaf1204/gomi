@@ -80,6 +80,33 @@ redeploy; round 9 adds delete:
     `DomainObservedAt` is persisted yields `Error` via `IsProvisioningTimedOut` — so
     correct late-stage behaviour would read as a regression.
 
+### Tenth round — the guard grows a fourth time
+
+37. **Power actions are not in the guard.** `runPrimaryAction` gates `console` and
+    `migrate` on phase but not power
+    (`web/src/components/views/virtual-machines/useVirtualMachineOperations.ts:350-351`),
+    and the server's power handlers have no phase rejection either. Immediately after
+    the new `201`, a user can power off a `Pending` VM — marking it `Missing` while the
+    create worker goes on to define and start the domain — or race a second
+    `StartDomain` via power on.
+
+38. **The per-name guard has an ordering flaw.** Round eight moved acquisition inside
+    the worker so the handler would not block. But dispatch order then does not
+    determine acquisition order: if the original worker has been dispatched and not yet
+    scheduled, a delete/recreate can dispatch a replacement whose goroutine takes the
+    guard first. The stale worker then acquires it afterwards, mutates same-named host
+    artifacts, and tears down the replacement during its identity cleanup. A FIFO slot
+    must be reserved synchronously in the handler (without waiting), with the goroutine
+    awaiting its predecessor.
+
+    Note this is the round-eight fix producing a round-ten defect, which is the pattern
+    itself rather than an isolated bug.
+
+**Guard growth by round:** create↔create (7) → redeploy (8) → delete (9) → power (10).
+Four rounds, four paths, no sign of the enumeration closing. Every handler that touches
+a VM name is a candidate, and each new one also has to interact correctly with the
+guard's own semantics (finding 38).
+
 ## Scope options
 
 Findings 29-30 are not two bugs; they are two more instances of one rule: **detaching
@@ -380,7 +407,11 @@ A panic inside `Deploy` unwinds before it can return anything, so the caller's `
 
 **Arm it only after the first successful host mutation.** Placing it immediately after `hv` is resolved would make a panic in `resolvePXEBaseURL`, `BuildLibvirtConfig` or executor construction — all before this deploy touches the host — destroy a same-named domain and volume that a previous partial deploy left behind. The normal create path fails without deleting that state, and recovery cleanup must not be more destructive than the path it stands in for.
 
-Set a `mutated` flag after the first successful `CreateVolume`/`CreateOverlayVolume`/`DefineDomain`, and have the defer return early when it is false. Tracking exactly which artifacts this invocation created is a stricter alternative. Re-panicking keeps the caller's existing responsibilities — `FailDeploy`, the audit event, and not killing the process — intact.
+A single `mutated` boolean is **not** sufficient. Consider a host that already has a same-named domain but no volume: this deploy creates the volume, sets the flag, then panics defining the domain — and `TeardownHostState` destroys both the new volume *and* the pre-existing domain.
+
+Track ownership per artifact: separate `createdVolume` / `definedDomain` flags set after each successful mutation, and tear down only what this invocation created. Rejecting the mixed pre-existing state before mutating is an acceptable alternative.
+
+Test a domain-only pre-existing state with a panic during domain definition, asserting the pre-existing domain survives. Re-panicking keeps the caller's existing responsibilities — `FailDeploy`, the audit event, and not killing the process — intact.
 
 Test with an executor whose `CreateOverlayVolume` panics after `CreateVolume` succeeded, asserting the volume is deleted and the panic still reaches the caller.
 
@@ -1176,7 +1207,12 @@ func (s *Server) runVMDeploy(actor httputil.Actor, deployHV hypervisor.Hyperviso
 	if deployErr != nil {
 		outcome, detail = "partial", "vm created but deploy failed: "+deployErr.Error()
 	}
-	httputil.CreateAuditFor(checkCtx, s.authStore, actor, created.Name, "create-vm", outcome, detail, nil)
+	// Own context, for the same reason as the superseded branch: the timeout
+	// cleanup above can exhaust or outlive checkCtx, since libvirt RPCs ignore
+	// cancellation, and the terminal event would then be silently dropped.
+	doneCtx, doneCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer doneCancel()
+	httputil.CreateAuditFor(doneCtx, s.authStore, actor, created.Name, "create-vm", outcome, detail, nil)
 }
 ```
 
@@ -2201,7 +2237,7 @@ Validate **only the rows in the table below**. Do not walk the design document's
 | Same-name delete+recreate does not destroy the replacement | Task 3 Step 4b |
 | Same-name guard does not delay the 201 | Task 3 Step 4b |
 | Redeploy during an in-flight create is rejected/serialised | Task 3 Step 4b |
-| Batch create respects the deploy concurrency limit | Task 3 Step 4a |
+| Batch create respects the deploy concurrency limit | Task 3 Step 4a — **only if** a bounded pool was implemented. Step 4a permits leaving fan-out unbounded when neither cancellable RPCs nor per-hypervisor partitioning is in scope; if that fallback is taken, strike this row and record the limitation in the PR instead. Do not invent a global pool to satisfy it. |
 | Panic inside Deploy cleans up on the host it selected | Task 1 Step 3c |
 | Pre-mutation panic leaves existing host state untouched | Task 1 Step 3c |
 | Delete works with BOTH VMDeployer and VMRuntimeDeleter nil | Task 2 Step 5 |
