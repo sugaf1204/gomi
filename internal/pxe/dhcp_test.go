@@ -6,6 +6,8 @@ import (
 
 	"github.com/insomniacslk/dhcp/dhcpv4"
 	"github.com/insomniacslk/dhcp/iana"
+
+	"github.com/sugaf1204/gomi/internal/subnet"
 )
 
 func TestSelectBootFile(t *testing.T) {
@@ -87,4 +89,92 @@ func TestNormalizeBootConfig(t *testing.T) {
 	if got.UEFILocalBootFile != "ipxe.efi" {
 		t.Fatalf("unexpected default UEFI local bootfile: %q", got.UEFILocalBootFile)
 	}
+}
+
+func TestHandleFullOmitsBootOptionsForUnregisteredPXEClient(t *testing.T) {
+	server, req, spec, boot, pool := newDHCPTestRequest(t)
+
+	resp, err := server.handleFull(req, spec, boot, false, false, pool)
+	if err != nil {
+		t.Fatalf("handleFull: %v", err)
+	}
+	if resp.YourIPAddr == nil || resp.YourIPAddr.IsUnspecified() {
+		t.Fatal("unregistered client must still receive an IP address")
+	}
+	if got := resp.Options.Get(dhcpv4.OptionTFTPServerName); len(got) != 0 {
+		t.Fatalf("unregistered client received option 66: %q", got)
+	}
+	if got := resp.Options.Get(dhcpv4.OptionBootfileName); len(got) != 0 {
+		t.Fatalf("unregistered client received option 67: %q", got)
+	}
+	if resp.BootFileName != "" {
+		t.Fatalf("unregistered client received boot filename field: %q", resp.BootFileName)
+	}
+}
+
+func TestHandleFullIncludesBootOptionsForRegisteredPXEClient(t *testing.T) {
+	server, req, spec, boot, pool := newDHCPTestRequest(t)
+
+	resp, err := server.handleFull(req, spec, boot, true, false, pool)
+	if err != nil {
+		t.Fatalf("handleFull: %v", err)
+	}
+	if got := string(resp.Options.Get(dhcpv4.OptionTFTPServerName)); got != "192.0.2.1" {
+		t.Fatalf("option 66 mismatch: %q", got)
+	}
+	if got := string(resp.Options.Get(dhcpv4.OptionBootfileName)); got != boot.BIOSBootFile {
+		t.Fatalf("option 67 mismatch: %q", got)
+	}
+}
+
+func TestHandleProxyIgnoresUnregisteredPXEClient(t *testing.T) {
+	server, req, _, boot, _ := newDHCPTestRequest(t)
+
+	resp, err := server.handleProxy(req, boot, false, false)
+	if err != nil {
+		t.Fatalf("handleProxy: %v", err)
+	}
+	if resp != nil {
+		t.Fatal("proxy mode must not answer an unregistered PXE client")
+	}
+}
+
+func TestHandleProxyIncludesBootOptionsForRegisteredPXEClient(t *testing.T) {
+	server, req, _, boot, _ := newDHCPTestRequest(t)
+
+	resp, err := server.handleProxy(req, boot, true, false)
+	if err != nil {
+		t.Fatalf("handleProxy: %v", err)
+	}
+	if resp == nil {
+		t.Fatal("proxy mode must answer a registered PXE client")
+	}
+	if got := string(resp.Options.Get(dhcpv4.OptionTFTPServerName)); got != "192.0.2.1" {
+		t.Fatalf("option 66 mismatch: %q", got)
+	}
+	if got := string(resp.Options.Get(dhcpv4.OptionBootfileName)); got != boot.BIOSBootFile {
+		t.Fatalf("option 67 mismatch: %q", got)
+	}
+}
+
+func newDHCPTestRequest(t *testing.T) (*Server, *dhcpv4.DHCPv4, subnet.SubnetSpec, BootConfig, *leasePool) {
+	t.Helper()
+	spec := subnet.SubnetSpec{
+		CIDR: "192.0.2.0/24",
+		PXEAddressRange: &subnet.AddressRange{
+			Start: "192.0.2.100",
+			End:   "192.0.2.110",
+		},
+	}
+	boot := normalizeBootConfig(BootConfig{})
+	server := NewServer("full", "test0", net.ParseIP("192.0.2.1"), spec, boot, nil)
+	req, err := dhcpv4.New(
+		dhcpv4.WithMessageType(dhcpv4.MessageTypeDiscover),
+		dhcpv4.WithHwAddr(net.HardwareAddr{0x52, 0x54, 0x00, 0xaa, 0xbb, 0xcc}),
+		dhcpv4.WithOption(dhcpv4.OptClassIdentifier("PXEClient:Arch:00000:UNDI:002001")),
+	)
+	if err != nil {
+		t.Fatalf("dhcpv4.New: %v", err)
+	}
+	return server, req, spec, boot, server.leases
 }

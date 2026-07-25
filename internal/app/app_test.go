@@ -171,6 +171,23 @@ func TestImageAppliedMachineUsesLocalBootMAC(t *testing.T) {
 	}
 }
 
+func TestAddRegisteredMACCanonicalizesMachineMAC(t *testing.T) {
+	for _, input := range []string{
+		"52:54:00:AA:BB:CC",
+		"52-54-00-AA-BB-CC",
+		"5254.00aa.bbcc",
+	} {
+		t.Run(input, func(t *testing.T) {
+			registered := map[string]struct{}{}
+			addRegisteredMAC(registered, &machine.Machine{MAC: input})
+
+			if _, ok := registered["52:54:00:aa:bb:cc"]; !ok {
+				t.Fatalf("registered MAC set was not canonicalized: %#v", registered)
+			}
+		})
+	}
+}
+
 func TestResolveDNSEmbeddedAddrUsesExplicitAddress(t *testing.T) {
 	r := &Runtime{Config: config.Config{DNSEmbeddedAddr: "127.0.0.1:1053"}}
 	if got, want := r.resolveDNSEmbeddedAddr(), "127.0.0.1:1053"; got != want {

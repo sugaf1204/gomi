@@ -99,6 +99,18 @@ func addLocalBootMAC(localBootMACs map[string]struct{}, h node.Node) {
 	}
 }
 
+func addRegisteredMAC(registeredMACs map[string]struct{}, h node.Node) {
+	if h == nil {
+		return
+	}
+	for _, raw := range h.AllMACs() {
+		mac, err := net.ParseMAC(strings.TrimSpace(raw))
+		if err == nil {
+			registeredMACs[mac.String()] = struct{}{}
+		}
+	}
+}
+
 func addActiveProvisioningMAC(provisioningMACs map[string]struct{}, h node.Node) {
 	if h == nil || !h.IsProvisioningActive() || shouldDirectLocalBoot(h) {
 		return
@@ -137,6 +149,7 @@ func (r *Runtime) syncDHCPReservations(ctx context.Context) {
 	}
 
 	reservations := make(map[string]net.IP)
+	registeredMACs := make(map[string]struct{})
 	localBootMACs := make(map[string]struct{})
 	provisioningMACs := make(map[string]struct{})
 
@@ -156,24 +169,33 @@ func (r *Runtime) syncDHCPReservations(ctx context.Context) {
 	machines, err := r.machineStore.List(ctx)
 	if err == nil {
 		for i := range machines {
+			addRegisteredMAC(registeredMACs, &machines[i])
 			addStaticReservation(reservations, &machines[i])
 			addLocalBootMAC(localBootMACs, &machines[i])
 			addActiveProvisioningMAC(provisioningMACs, &machines[i])
 		}
+	} else {
+		log.Printf("dhcp: reservation sync: list machines: %v", err)
 	}
 
 	// 3. Static VMs
 	vms, vmErr := r.vmStore.List(ctx)
 	if vmErr == nil {
 		for i := range vms {
+			addRegisteredMAC(registeredMACs, &vms[i])
 			addStaticReservation(reservations, &vms[i])
 			addLocalBootMAC(localBootMACs, &vms[i])
 			addActiveProvisioningMAC(provisioningMACs, &vms[i])
 		}
+	} else {
+		log.Printf("dhcp: reservation sync: list virtual machines: %v", vmErr)
 	}
 
 	removeProvisioningLocalBootMACs(localBootMACs, provisioningMACs)
 	dhcpSrv.UpdateReservations(reservations)
+	if err == nil && vmErr == nil {
+		dhcpSrv.UpdateRegisteredMACs(registeredMACs)
+	}
 	dhcpSrv.UpdateLocalBootMACs(localBootMACs)
-	log.Printf("dhcp: reservation sync: %d reservations, %d direct local boot macs", len(reservations), len(localBootMACs))
+	log.Printf("dhcp: reservation sync: %d reservations, %d registered macs, %d direct local boot macs", len(reservations), len(registeredMACs), len(localBootMACs))
 }

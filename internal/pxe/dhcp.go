@@ -33,27 +33,29 @@ func leaseTTL(spec subnet.SubnetSpec) time.Duration {
 
 // Server holds DHCP server state for both full and proxy modes.
 type Server struct {
-	mu            sync.RWMutex
-	mode          string // "full" or "proxy"
-	iface         string
-	serverIP      net.IP
-	subnet        subnet.SubnetSpec
-	boot          BootConfig
-	localBootMACs map[string]struct{}
-	leases        *leasePool // nil in proxy mode
-	store         LeaseStore
+	mu             sync.RWMutex
+	mode           string // "full" or "proxy"
+	iface          string
+	serverIP       net.IP
+	subnet         subnet.SubnetSpec
+	boot           BootConfig
+	registeredMACs map[string]struct{}
+	localBootMACs  map[string]struct{}
+	leases         *leasePool // nil in proxy mode
+	store          LeaseStore
 }
 
 // NewServer creates a DHCP server. mode must be "full" or "proxy".
 func NewServer(mode, iface string, serverIP net.IP, spec subnet.SubnetSpec, boot BootConfig, store LeaseStore) *Server {
 	s := &Server{
-		mode:          mode,
-		iface:         iface,
-		serverIP:      serverIP.To4(),
-		subnet:        spec,
-		boot:          normalizeBootConfig(boot),
-		localBootMACs: map[string]struct{}{},
-		store:         store,
+		mode:           mode,
+		iface:          iface,
+		serverIP:       serverIP.To4(),
+		subnet:         spec,
+		boot:           normalizeBootConfig(boot),
+		registeredMACs: map[string]struct{}{},
+		localBootMACs:  map[string]struct{}{},
+		store:          store,
 	}
 	if mode == "full" && spec.PXEAddressRange != nil {
 		s.leases = newLeasePool(spec.PXEAddressRange.Start, spec.PXEAddressRange.End, store, leaseTTL(spec))
@@ -136,11 +138,24 @@ func (s *Server) UpdateReservations(reservations map[string]net.IP) {
 	}
 }
 
+// UpdateRegisteredMACs updates the MACs that are managed by gomi and may
+// receive PXE boot options. Unknown clients can still receive an address in
+// full DHCP mode, leaving PXE discovery to another proxyDHCP server.
+func (s *Server) UpdateRegisteredMACs(macs map[string]struct{}) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.registeredMACs = normalizeMACSet(macs)
+}
+
 // UpdateLocalBootMACs updates the known MACs that should receive direct local
 // boot assets instead of the installer iPXE binary on their first UEFI PXE hop.
 func (s *Server) UpdateLocalBootMACs(macs map[string]struct{}) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.localBootMACs = normalizeMACSet(macs)
+}
+
+func normalizeMACSet(macs map[string]struct{}) map[string]struct{} {
 	next := make(map[string]struct{}, len(macs))
 	for raw := range macs {
 		mac := strings.ToLower(strings.TrimSpace(raw))
@@ -148,7 +163,7 @@ func (s *Server) UpdateLocalBootMACs(macs map[string]struct{}) {
 			next[mac] = struct{}{}
 		}
 	}
-	s.localBootMACs = next
+	return next
 }
 
 // ListenAndServe starts the DHCP server on UDP 67.
@@ -189,9 +204,11 @@ func (s *Server) handler(conn net.PacketConn, peer net.Addr, req *dhcpv4.DHCPv4)
 	s.mu.RLock()
 	spec := s.subnet
 	boot := s.boot
+	registeredMACs := s.registeredMACs
 	localBootMACs := s.localBootMACs
 	leases := s.leases
 	s.mu.RUnlock()
+	registered := containsMAC(req.ClientHWAddr, registeredMACs)
 	localBoot := isLocalBootMAC(req.ClientHWAddr, localBootMACs)
 
 	var resp *dhcpv4.DHCPv4
@@ -199,9 +216,9 @@ func (s *Server) handler(conn net.PacketConn, peer net.Addr, req *dhcpv4.DHCPv4)
 
 	switch s.mode {
 	case "proxy":
-		resp, err = s.handleProxy(req, boot, localBoot)
+		resp, err = s.handleProxy(req, boot, registered, localBoot)
 	default:
-		resp, err = s.handleFull(req, spec, boot, localBoot, leases)
+		resp, err = s.handleFull(req, spec, boot, registered, localBoot, leases)
 	}
 
 	if err != nil {
@@ -233,7 +250,7 @@ func (s *Server) handler(conn net.PacketConn, peer net.Addr, req *dhcpv4.DHCPv4)
 
 // handleFull processes DISCOVER/REQUEST with full IP allocation and boot info.
 // spec and pool are snapshots taken under RLock by the caller.
-func (s *Server) handleFull(req *dhcpv4.DHCPv4, spec subnet.SubnetSpec, boot BootConfig, localBoot bool, pool *leasePool) (*dhcpv4.DHCPv4, error) {
+func (s *Server) handleFull(req *dhcpv4.DHCPv4, spec subnet.SubnetSpec, boot BootConfig, registered, localBoot bool, pool *leasePool) (*dhcpv4.DHCPv4, error) {
 	var assignedIP net.IP
 	if pool != nil {
 		hostname := req.HostName()
@@ -318,7 +335,7 @@ func (s *Server) handleFull(req *dhcpv4.DHCPv4, spec subnet.SubnetSpec, boot Boo
 	}
 
 	// PXE boot info if the client is a PXE client
-	if isPXEClient(req) {
+	if registered && isPXEClient(req) {
 		arch := clientArch(req)
 		bootFile := selectBootFile(req, arch, boot, localBoot)
 		modifiers = append(modifiers, withBootInfo(s.serverIP, bootFile))
@@ -329,15 +346,15 @@ func (s *Server) handleFull(req *dhcpv4.DHCPv4, spec subnet.SubnetSpec, boot Boo
 		return nil, err
 	}
 
-	log.Printf("dhcp: %s %s -> %s mac=%s pxe=%v ipxe=%v localboot=%v arch=%v boot=%q",
-		s.mode, respType, assignedIP, req.ClientHWAddr, isPXEClient(req), isIPXEClient(req), localBoot, clientArch(req), selectBootFile(req, clientArch(req), boot, localBoot))
+	log.Printf("dhcp: %s %s -> %s mac=%s registered=%v pxe=%v ipxe=%v localboot=%v arch=%v boot=%q",
+		s.mode, respType, assignedIP, req.ClientHWAddr, registered, isPXEClient(req), isIPXEClient(req), localBoot, clientArch(req), selectBootFile(req, clientArch(req), boot, localBoot))
 	return resp, nil
 }
 
 // handleProxy processes DISCOVER/REQUEST returning only PXE boot information.
-// Non-PXE clients are silently ignored.
-func (s *Server) handleProxy(req *dhcpv4.DHCPv4, boot BootConfig, localBoot bool) (*dhcpv4.DHCPv4, error) {
-	if !isPXEClient(req) {
+// Non-PXE and unregistered clients are silently ignored.
+func (s *Server) handleProxy(req *dhcpv4.DHCPv4, boot BootConfig, registered, localBoot bool) (*dhcpv4.DHCPv4, error) {
+	if !registered || !isPXEClient(req) {
 		return nil, nil
 	}
 
@@ -432,10 +449,14 @@ func selectBootFile(req *dhcpv4.DHCPv4, arch iana.Arch, boot BootConfig, localBo
 }
 
 func isLocalBootMAC(mac net.HardwareAddr, localBootMACs map[string]struct{}) bool {
-	if len(localBootMACs) == 0 {
+	return containsMAC(mac, localBootMACs)
+}
+
+func containsMAC(mac net.HardwareAddr, macs map[string]struct{}) bool {
+	if len(macs) == 0 {
 		return false
 	}
-	_, ok := localBootMACs[strings.ToLower(strings.TrimSpace(mac.String()))]
+	_, ok := macs[strings.ToLower(strings.TrimSpace(mac.String()))]
 	return ok
 }
 
