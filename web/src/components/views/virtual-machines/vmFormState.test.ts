@@ -2,6 +2,7 @@ import { beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import {
   QUICK_DEPLOY_STORAGE_KEY,
   initialQuickDeployPreset,
+  invalidVMConfigReason,
   readQuickDeployPreset,
   renderPresetTemplateName,
   writeQuickDeployPreset
@@ -162,6 +163,39 @@ describe('writeQuickDeployPreset', () => {
   })
 })
 
+describe('invalidVMConfigReason', () => {
+  const valid = { ...initialQuickDeployPreset, name: 'devvm', osImageRef: 'ubuntu-24' }
+
+  it('accepts a preset with default resources', () => {
+    expect(invalidVMConfigReason(valid)).toBeUndefined()
+  })
+
+  it.each([
+    ['cpuCores', 'CPU cores'],
+    ['memoryMB', 'Memory (MB)'],
+    ['diskGB', 'Disk (GB)']
+  ] as const)('rejects a blank %s', (field, label) => {
+    expect(invalidVMConfigReason({ ...valid, [field]: '' })).toBe(`${label} must be a positive number`)
+  })
+
+  it.each(['0', '-1', 'abc'] as const)('rejects cpuCores of %s', (value) => {
+    expect(invalidVMConfigReason({ ...valid, cpuCores: value })).toBe('CPU cores must be a positive number')
+  })
+
+  it('rejects cpu pinning that targets a vcpu beyond cpuCores', () => {
+    expect(invalidVMConfigReason({ ...valid, cpuCores: '2', cpuPinning: '2:4' }))
+      .toBe('CPU pinning vcpu 2 is out of range [0, 2)')
+  })
+
+  it('accepts cpu pinning within range', () => {
+    expect(invalidVMConfigReason({ ...valid, cpuCores: '4', cpuPinning: '0:0,1:2,3:6' })).toBeUndefined()
+  })
+
+  it('accepts an empty cpu pinning field', () => {
+    expect(invalidVMConfigReason({ ...valid, cpuPinning: '' })).toBeUndefined()
+  })
+})
+
 describe('renderPresetTemplateName', () => {
   it('substitutes the hostname variable', () => {
     expect(renderPresetTemplateName('ci-{{ hostname }}', 'devvm-3')).toBe('ci-devvm-3')
@@ -181,5 +215,20 @@ describe('renderPresetTemplateName', () => {
 
   it('leaves unknown variables intact so a typo degrades to a literal name', () => {
     expect(renderPresetTemplateName('ci-{{ hostnaem }}', 'devvm-3')).toBe('ci-{{ hostnaem }}')
+  })
+
+  // The create and redeploy dialogs resolve templates without a hostname.
+  // Substituting '' there would collapse the name and, because the template
+  // store upserts on name conflict, silently overwrite an unrelated template.
+  it('leaves the placeholder intact when no hostname is supplied', () => {
+    expect(renderPresetTemplateName('ci-{{ hostname }}', '')).toBe('ci-{{ hostname }}')
+  })
+
+  it('does not collapse a bare placeholder to an empty name', () => {
+    expect(renderPresetTemplateName('{{ hostname }}', '')).toBe('{{ hostname }}')
+  })
+
+  it('still passes through a literal name when no hostname is supplied', () => {
+    expect(renderPresetTemplateName('static-template', '')).toBe('static-template')
   })
 })

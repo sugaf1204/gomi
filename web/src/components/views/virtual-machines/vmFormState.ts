@@ -219,8 +219,43 @@ export function writeQuickDeployPreset(preset: QuickDeployPreset) {
 // The inline Cloud-Init template name is a GOMI resource identifier, so GOMI
 // resolves it at deploy time. The user-data body itself is left untouched:
 // cloud-init renders its own Jinja on the target from instance-data.
+//
+// Callers with no concrete hostname (the create and redeploy dialogs, which
+// name each VM per iteration) leave the placeholder intact. Substituting an
+// empty string would collapse "ci-{{ hostname }}" to "ci-", and the template
+// store upserts on name conflict, so that would silently overwrite a shared
+// template instead of creating the intended one.
 export function renderPresetTemplateName(rawName: string, hostname: string): string {
+  if (!hostname) return rawName
   return rawName.replace(/\{\{\s*hostname\s*\}\}/g, hostname)
+}
+
+// The Create dialog is a real <form>, so the browser enforces required/min on
+// these inputs before submit. Quick Deploy's button sits outside a form, so
+// constraint validation never runs and these must be checked explicitly.
+// Mirrors the numeric rules in internal/vm/validate.go; the dropdown-backed
+// advanced fields cannot express an invalid value from the UI.
+export function invalidVMConfigReason(formState: VMConfigForm): string | undefined {
+  const positiveFields = [
+    { label: 'CPU cores', value: formState.cpuCores },
+    { label: 'Memory (MB)', value: formState.memoryMB },
+    { label: 'Disk (GB)', value: formState.diskGB }
+  ]
+  for (const field of positiveFields) {
+    const parsed = Number(field.value)
+    if (!field.value.trim() || !Number.isFinite(parsed) || parsed <= 0) {
+      return `${field.label} must be a positive number`
+    }
+  }
+
+  const cpuCores = Number(formState.cpuCores)
+  const pinning = parseCPUPinning(formState.cpuPinning)
+  for (const vcpu of Object.keys(pinning ?? {}).map(Number)) {
+    if (vcpu < 0 || vcpu >= cpuCores) {
+      return `CPU pinning vcpu ${vcpu} is out of range [0, ${cpuCores})`
+    }
+  }
+  return undefined
 }
 
 export function formatCPUPinning(cpuPinning?: Record<number, string>) {

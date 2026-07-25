@@ -10,6 +10,7 @@ import {
   initialForm,
   initialMigrateConfirm,
   initialPowerConfirm,
+  invalidVMConfigReason,
   mergeSelectedCloudInitRef,
   renderPresetTemplateName,
   toReinstallForm
@@ -78,6 +79,7 @@ export function useVirtualMachineOperations(args: VMOperationsArgs) {
     if (!preset.osImageRef.trim()) return false
     if (preset.ipAssignment === 'static' && !preset.staticIP.trim()) return false
     if (preset.cloudInitMode === 'create' && !(preset.cloudInitTemplateName.trim() && preset.cloudInitUserData.trim())) return false
+    if (invalidVMConfigReason(preset)) return false
     return args.vmOSImages.some((img) => img.name === preset.osImageRef)
   }
 
@@ -134,6 +136,10 @@ export function useVirtualMachineOperations(args: VMOperationsArgs) {
   async function handleQuickDeploy() {
     const preset = args.quickDeployPreset
     if (!quickDeployPresetReady(preset)) {
+      // Reopen the dialog so the preset can be corrected, and name the reason
+      // when there is a specific one rather than just a missing required field.
+      const reason = invalidVMConfigReason(preset)
+      if (reason) notifyError(reason)
       args.setQuickDeploySettingsOpen(true)
       return
     }
