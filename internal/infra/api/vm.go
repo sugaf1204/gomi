@@ -102,8 +102,12 @@ func (s *Server) CreateVirtualMachine(c echo.Context) error {
 	// the new record cannot survive with a dangling hypervisorRef.
 	deployHV, err := s.hypervisors.Get(ctx, created.HypervisorRef)
 	if err != nil {
+		// Roll back on every failure, not just ErrNotFound. The record is now
+		// written with an exclusive insert, so a row left behind by a transient
+		// error would make every retry fail with 409 while the VM sits Pending
+		// with no deploy. The previous upsert let a retry overwrite it.
+		_ = s.vms.Delete(ctx, created.Name)
 		if errors.Is(err, resource.ErrNotFound) {
-			_ = s.vms.Delete(ctx, created.Name)
 			return c.JSON(gohttp.StatusConflict, jsonError("hypervisor was deleted concurrently: "+created.HypervisorRef))
 		}
 		return c.JSON(gohttp.StatusInternalServerError, jsonErrorErr(err))
