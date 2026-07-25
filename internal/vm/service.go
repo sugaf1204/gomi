@@ -17,6 +17,38 @@ func NewService(store Store) *Service {
 }
 
 func (s *Service) Create(ctx context.Context, v VirtualMachine) (VirtualMachine, error) {
+	v, err := prepareForCreate(v)
+	if err != nil {
+		return VirtualMachine{}, err
+	}
+	if err := s.store.Upsert(ctx, v); err != nil {
+		return VirtualMachine{}, err
+	}
+	return v, nil
+}
+
+// CreateExclusive stores the VM only if its name is unused, returning
+// resource.ErrAlreadyExists otherwise. Callers that must not overwrite an
+// existing VM use this instead of Create, whose Upsert silently replaces a
+// same-named record. Backends without vm.Inserter fall back to Create.
+func (s *Service) CreateExclusive(ctx context.Context, v VirtualMachine) (VirtualMachine, error) {
+	inserter, ok := s.store.(Inserter)
+	if !ok {
+		return s.Create(ctx, v)
+	}
+	v, err := prepareForCreate(v)
+	if err != nil {
+		return VirtualMachine{}, err
+	}
+	if err := inserter.Insert(ctx, v); err != nil {
+		return VirtualMachine{}, err
+	}
+	return v, nil
+}
+
+// prepareForCreate applies the defaults and validation both create paths share,
+// so they cannot drift apart.
+func prepareForCreate(v VirtualMachine) (VirtualMachine, error) {
 	now := time.Now().UTC()
 	v.CreatedAt = now
 	v.UpdatedAt = now
@@ -32,9 +64,6 @@ func (s *Service) Create(ctx context.Context, v VirtualMachine) (VirtualMachine,
 	}
 	if len(v.CloudInitRefs) > 0 {
 		v.LastDeployedCloudInitRef = v.CloudInitRefs[0]
-	}
-	if err := s.store.Upsert(ctx, v); err != nil {
-		return VirtualMachine{}, err
 	}
 	return v, nil
 }
@@ -242,6 +271,38 @@ func (s *Service) DeleteOwned(ctx context.Context, name, hypervisorRef string) (
 		return false, err
 	}
 	if v.HypervisorRef != hypervisorRef {
+		return false, nil
+	}
+	if err := s.store.Delete(ctx, name); err != nil {
+		if errors.Is(err, resource.ErrNotFound) {
+			return false, nil
+		}
+		return false, err
+	}
+	return true, nil
+}
+
+// DeleteCreated removes a record only while it still carries the given
+// provisioning completion token, reporting whether it was deleted. A create
+// that fails after inserting its row uses this to roll back: a plain delete by
+// name would remove a replacement VM created under the same name in the
+// meantime, leaving that request deploying host artifacts for a record that no
+// longer exists.
+func (s *Service) DeleteCreated(ctx context.Context, name, completionToken string) (bool, error) {
+	if deleter, ok := s.store.(CreatedDeleter); ok {
+		return deleter.DeleteCreatedToken(ctx, name, completionToken)
+	}
+	// Fallback for backends without a conditional delete. The check and the
+	// delete are separate here, so a delete-and-recreate in between can still
+	// race; backends used in production implement CreatedDeleter.
+	v, err := s.store.Get(ctx, name)
+	if err != nil {
+		if errors.Is(err, resource.ErrNotFound) {
+			return false, nil
+		}
+		return false, err
+	}
+	if v.Provisioning.CompletionToken != completionToken {
 		return false, nil
 	}
 	if err := s.store.Delete(ctx, name); err != nil {

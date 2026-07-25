@@ -88,8 +88,11 @@ func (s *Server) CreateVirtualMachine(c echo.Context) error {
 
 	resolveVMBridgeFromHypervisor(ctx, &v, s.hypervisors)
 
-	created, err := s.vms.Create(ctx, v)
+	created, err := s.vms.CreateExclusive(ctx, v)
 	if err != nil {
+		if errors.Is(err, resource.ErrAlreadyExists) {
+			return c.JSON(gohttp.StatusConflict, jsonError("virtual machine already exists: "+v.Name))
+		}
 		return c.JSON(gohttp.StatusBadRequest, jsonErrorErr(err))
 	}
 
@@ -99,8 +102,8 @@ func (s *Server) CreateVirtualMachine(c echo.Context) error {
 	// the new record cannot survive with a dangling hypervisorRef.
 	deployHV, err := s.hypervisors.Get(ctx, created.HypervisorRef)
 	if err != nil {
+		s.rollbackCreatedVM(created)
 		if errors.Is(err, resource.ErrNotFound) {
-			_ = s.vms.Delete(ctx, created.Name)
 			return c.JSON(gohttp.StatusConflict, jsonError("hypervisor was deleted concurrently: "+created.HypervisorRef))
 		}
 		return c.JSON(gohttp.StatusInternalServerError, jsonErrorErr(err))
@@ -130,6 +133,32 @@ func (s *Server) CreateVirtualMachine(c echo.Context) error {
 	}
 	return c.JSON(gohttp.StatusCreated, virtualMachineResponse(created))
 }
+
+// rollbackCreatedVM removes a record whose create failed after the insert.
+//
+// The record is written with an exclusive insert, so a row left behind by any
+// failure — not just ErrNotFound — makes every retry return 409 while the VM
+// sits Pending with no deploy; the previous upsert let a retry overwrite it.
+//
+// It runs on a fresh context because the request context may be exactly what
+// failed (cancelled client, expired deadline), and the delete is scoped to this
+// create's completion token so it cannot remove a replacement VM created under
+// the same name in the meantime.
+func (s *Server) rollbackCreatedVM(created vm.VirtualMachine) {
+	ctx, cancel := context.WithTimeout(context.Background(), vmCreateRollbackTimeout)
+	defer cancel()
+
+	deleted, err := s.vms.DeleteCreated(ctx, created.Name, created.Provisioning.CompletionToken)
+	if err != nil {
+		log.Printf("create vm %s: roll back record after failed pre-deploy check: %v", created.Name, err)
+		return
+	}
+	if !deleted {
+		log.Printf("create vm %s: rollback skipped, record no longer belongs to this create", created.Name)
+	}
+}
+
+const vmCreateRollbackTimeout = 10 * time.Second
 
 func (s *Server) ListVirtualMachines(c echo.Context) error {
 	ctx := c.Request().Context()

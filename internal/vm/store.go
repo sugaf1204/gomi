@@ -10,12 +10,30 @@ type Store interface {
 	Delete(ctx context.Context, name string) error
 }
 
+// Inserter is optionally implemented by Store backends that can write a VM row
+// only when its name is unused, returning resource.ErrAlreadyExists otherwise.
+// Create uses it so two concurrent requests for the same name cannot both
+// succeed with one silently overwriting the other, which plain Upsert allows.
+type Inserter interface {
+	Insert(ctx context.Context, v VirtualMachine) error
+}
+
 // ExistingUpdater is optionally implemented by Store backends that can write
 // a VM row only if it still exists, reporting whether a row was written. The
 // runtime sync loop uses it so a status write computed from a snapshot cannot
 // resurrect a record deleted concurrently.
 type ExistingUpdater interface {
 	UpdateExisting(ctx context.Context, v VirtualMachine) (bool, error)
+}
+
+// CreatedDeleter is optionally implemented by Store backends that can delete a
+// VM row only while it still carries the given provisioning completion token,
+// reporting whether a row was deleted. A create rolling back after its insert
+// uses it so the ownership check and the delete are one statement: a
+// delete-and-recreate landing in between must not let the rollback remove a
+// replacement that owns the name under a different token.
+type CreatedDeleter interface {
+	DeleteCreatedToken(ctx context.Context, name, completionToken string) (bool, error)
 }
 
 // OwnedDeleter is optionally implemented by Store backends that can delete a

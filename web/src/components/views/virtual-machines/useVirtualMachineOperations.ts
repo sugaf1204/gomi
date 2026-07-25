@@ -138,6 +138,10 @@ export function useVirtualMachineOperations(args: VMOperationsArgs) {
       ? [{ name: 'default', bridge: preset.bridge || undefined, network: preset.subnetRef || undefined }]
       : undefined
 
+    // Reserve the next name before awaiting so a rapid second click cannot
+    // reuse this one. The server rejects duplicates with 409 as a backstop.
+    args.setQuickDeployPreset((current) => ({ ...current, count: String(Math.max(1, Number(current.count) || 1) + 1) }))
+
     args.setQuickDeploying(true)
     try {
       const result = await api.createVirtualMachine({
@@ -155,7 +159,6 @@ export function useVirtualMachineOperations(args: VMOperationsArgs) {
       })
       args.onVirtualMachineUpsert(result)
       args.setVMSelection(vmName)
-      args.setQuickDeployPreset((current) => ({ ...current, count: String(Math.max(1, Number(current.count) || 1) + 1) }))
       args.onRefresh()
       if (result.phase === 'Error') notifyError(`VM created but deploy failed: ${result.lastError || 'deploy failed'}`)
     } catch (err) {

@@ -133,6 +133,35 @@ func (s *VMStore) Upsert(ctx context.Context, v vm.VirtualMachine) error {
 
 // UpdateExisting writes the VM only if its row still exists. It implements
 // vm.ExistingUpdater.
+// Insert writes the VM only if its name is unused, letting the primary key
+// reject a duplicate. It implements vm.Inserter. A handler-side existence
+// check could not do this: two concurrent requests can both find the name free
+// and then both write, which is exactly what Upsert's ON CONFLICT DO UPDATE
+// turns into a silent overwrite.
+func (s *VMStore) Insert(ctx context.Context, v vm.VirtualMachine) error {
+	specJSON, statusJSON, err := marshalVMColumns(v)
+	if err != nil {
+		return err
+	}
+
+	_, err = s.b.exec(ctx, `
+		INSERT INTO virtual_machines (name, hypervisor_ref, spec, status, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?)`,
+		v.Name,
+		v.HypervisorRef,
+		specJSON, statusJSON,
+		v.CreatedAt, v.UpdatedAt,
+	)
+	if err != nil {
+		if isUniqueViolation(err) {
+			return resource.ErrAlreadyExists
+		}
+		return err
+	}
+	s.notify()
+	return nil
+}
+
 func (s *VMStore) UpdateExisting(ctx context.Context, v vm.VirtualMachine) (bool, error) {
 	specJSON, statusJSON, err := marshalVMColumns(v)
 	if err != nil {
@@ -244,6 +273,33 @@ func (s *VMStore) ListByHypervisor(ctx context.Context, hypervisorName string) (
 
 // DeleteOwned deletes the VM row only while it still references the given
 // hypervisor. It implements vm.OwnedDeleter.
+// DeleteCreatedToken removes the row only while it still carries the given
+// provisioning completion token, reporting whether it was deleted. It
+// implements vm.CreatedDeleter. The comparison is part of the DELETE so a
+// delete-and-recreate landing between a separate lookup and the delete cannot
+// make this remove a replacement that owns the name under a different token.
+func (s *VMStore) DeleteCreatedToken(ctx context.Context, name, completionToken string) (bool, error) {
+	query := `DELETE FROM virtual_machines WHERE name = ? AND `
+	if s.b.dialect == DialectPostgres {
+		query += `COALESCE(status::jsonb -> 'provisioning' ->> 'completionToken', '') = ?`
+	} else {
+		query += `COALESCE(json_extract(status, '$.provisioning.completionToken'), '') = ?`
+	}
+
+	res, err := s.b.exec(ctx, query, name, completionToken)
+	if err != nil {
+		return false, err
+	}
+	rows, err := res.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	if rows > 0 {
+		s.notify()
+	}
+	return rows > 0, nil
+}
+
 func (s *VMStore) DeleteOwned(ctx context.Context, name, hypervisorRef string) (bool, error) {
 	res, err := s.b.exec(ctx,
 		`DELETE FROM virtual_machines WHERE name = ? AND hypervisor_ref = ?`,

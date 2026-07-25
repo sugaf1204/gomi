@@ -69,8 +69,10 @@ type machineStatusJSON struct {
 	PowerStateAt             *time.Time                 `json:"powerStateAt,omitempty"`
 }
 
-func (s *MachineStore) Upsert(ctx context.Context, m machine.Machine) error {
-	specJSON, err := marshalJSON(machineSpecJSON{
+// marshalMachineColumns renders the JSON spec and status columns shared by the
+// upsert and insert-only write paths.
+func marshalMachineColumns(m machine.Machine) (specJSON, statusJSON string, err error) {
+	specJSON, err = marshalJSON(machineSpecJSON{
 		Power:         m.Power,
 		Network:       m.Network,
 		OSPreset:      m.OSPreset,
@@ -84,9 +86,9 @@ func (s *MachineStore) Upsert(ctx context.Context, m machine.Machine) error {
 		LoginUser:     m.LoginUser,
 	})
 	if err != nil {
-		return err
+		return "", "", err
 	}
-	statusJSON, err := marshalJSON(machineStatusJSON{
+	statusJSON, err = marshalJSON(machineStatusJSON{
 		Phase:                    m.Phase,
 		Provision:                m.Provision,
 		LastPowerAction:          m.LastPowerAction,
@@ -95,6 +97,14 @@ func (s *MachineStore) Upsert(ctx context.Context, m machine.Machine) error {
 		PowerState:               m.PowerState,
 		PowerStateAt:             m.PowerStateAt,
 	})
+	if err != nil {
+		return "", "", err
+	}
+	return specJSON, statusJSON, nil
+}
+
+func (s *MachineStore) Upsert(ctx context.Context, m machine.Machine) error {
+	specJSON, statusJSON, err := marshalMachineColumns(m)
 	if err != nil {
 		return err
 	}
@@ -121,6 +131,36 @@ func (s *MachineStore) Upsert(ctx context.Context, m machine.Machine) error {
 		s.notify()
 	}
 	return err
+}
+
+// Insert writes the machine only if its name is unused, letting the primary key
+// reject a duplicate. It implements machine.Inserter. A handler-side existence
+// check could not do this: two concurrent requests can both find the name free
+// and then both write, which Upsert's ON CONFLICT DO UPDATE turns into a silent
+// overwrite of the first machine's provisioning state.
+func (s *MachineStore) Insert(ctx context.Context, m machine.Machine) error {
+	specJSON, statusJSON, err := marshalMachineColumns(m)
+	if err != nil {
+		return err
+	}
+
+	_, err = s.b.exec(ctx, `
+		INSERT INTO machines (name, hostname, mac, ip, arch, firmware, spec, status, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		m.Name,
+		m.Hostname, m.MAC, m.IP,
+		string(m.Arch), string(m.Firmware),
+		specJSON, statusJSON,
+		m.CreatedAt, m.UpdatedAt,
+	)
+	if err != nil {
+		if isUniqueViolation(err) {
+			return resource.ErrAlreadyExists
+		}
+		return err
+	}
+	s.notify()
+	return nil
 }
 
 func (s *MachineStore) UpdatePowerActionStatus(ctx context.Context, name string, action power.Action, lastError *string, updatedAt time.Time) error {

@@ -41,6 +41,35 @@ func (s *VMStore) Upsert(_ context.Context, v vm.VirtualMachine) error {
 	return nil
 }
 
+// Insert writes the VM only if its name is unused. It implements vm.Inserter.
+// The whole check-and-write happens under the write lock, so two concurrent
+// inserts for the same name cannot both succeed.
+func (s *VMStore) Insert(_ context.Context, v vm.VirtualMachine) error {
+	s.b.mu.Lock()
+	defer s.b.mu.Unlock()
+	if _, ok := s.b.vms[v.Name]; ok {
+		return resource.ErrAlreadyExists
+	}
+	s.b.vms[v.Name] = v
+	s.notify()
+	return nil
+}
+
+// DeleteCreatedToken removes the VM only while it still carries the given
+// completion token. It implements vm.CreatedDeleter; the comparison and the
+// delete share the write lock so no recreate can slip between them.
+func (s *VMStore) DeleteCreatedToken(_ context.Context, name, completionToken string) (bool, error) {
+	s.b.mu.Lock()
+	defer s.b.mu.Unlock()
+	existing, ok := s.b.vms[name]
+	if !ok || existing.Provisioning.CompletionToken != completionToken {
+		return false, nil
+	}
+	delete(s.b.vms, name)
+	s.notify()
+	return true, nil
+}
+
 // UpdateExisting writes the VM only if its row still exists. It implements
 // vm.ExistingUpdater.
 func (s *VMStore) UpdateExisting(_ context.Context, v vm.VirtualMachine) (bool, error) {

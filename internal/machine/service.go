@@ -34,6 +34,39 @@ func WithProvisionTimeout(d time.Duration) ServiceOption {
 }
 
 func (s *Service) Create(ctx context.Context, m Machine) (Machine, error) {
+	m, err := prepareForCreate(m)
+	if err != nil {
+		return Machine{}, err
+	}
+	if err := s.store.Upsert(ctx, m); err != nil {
+		return Machine{}, err
+	}
+	return m, nil
+}
+
+// CreateExclusive stores the machine only if its name is unused, returning
+// resource.ErrAlreadyExists otherwise. The create handler uses this so two
+// concurrent requests for the same name cannot both succeed with one silently
+// overwriting the other's provisioning state, which Create's upsert allows.
+// Backends without machine.Inserter fall back to Create.
+func (s *Service) CreateExclusive(ctx context.Context, m Machine) (Machine, error) {
+	inserter, ok := s.store.(Inserter)
+	if !ok {
+		return s.Create(ctx, m)
+	}
+	m, err := prepareForCreate(m)
+	if err != nil {
+		return Machine{}, err
+	}
+	if err := inserter.Insert(ctx, m); err != nil {
+		return Machine{}, err
+	}
+	return m, nil
+}
+
+// prepareForCreate applies the defaults and validation both create paths share,
+// so they cannot drift apart.
+func prepareForCreate(m Machine) (Machine, error) {
 	now := time.Now().UTC()
 	m.CreatedAt = now
 	m.UpdatedAt = now
@@ -51,9 +84,6 @@ func (s *Service) Create(ctx context.Context, m Machine) (Machine, error) {
 	m.Arch = CanonicalArch(m.Arch)
 	if len(m.CloudInitRefs) > 0 {
 		m.LastDeployedCloudInitRef = m.CloudInitRefs[0]
-	}
-	if err := s.store.Upsert(ctx, m); err != nil {
-		return Machine{}, err
 	}
 	return m, nil
 }

@@ -47,6 +47,20 @@ func (s *MachineStore) Upsert(_ context.Context, m machine.Machine) error {
 	return nil
 }
 
+// Insert writes the machine only if its name is unused. It implements
+// machine.Inserter. The check and the write share the write lock, so two
+// concurrent inserts for the same name cannot both succeed.
+func (s *MachineStore) Insert(_ context.Context, m machine.Machine) error {
+	s.b.mu.Lock()
+	defer s.b.mu.Unlock()
+	if _, ok := s.b.machines[m.Name]; ok {
+		return resource.ErrAlreadyExists
+	}
+	s.b.machines[m.Name] = m
+	s.notify()
+	return nil
+}
+
 func (s *MachineStore) UpdatePowerActionStatus(_ context.Context, name string, action power.Action, lastError *string, updatedAt time.Time) error {
 	s.b.mu.Lock()
 	defer s.b.mu.Unlock()
