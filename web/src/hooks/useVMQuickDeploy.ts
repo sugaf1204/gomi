@@ -14,6 +14,7 @@ import {
   renderPresetTemplateName,
   writeQuickDeployPreset
 } from '../components/views/virtual-machines/quickDeployPreset'
+import { isStaleDeploySession } from './quickDeploySession'
 import { mergeSelectedCloudInitRef } from '../components/views/virtual-machines/vmFormState'
 import type { QuickDeployPreset } from '../components/views/virtual-machines/vmFormState'
 import type { ToastTone } from '../components/ui/ToastRegion'
@@ -80,13 +81,24 @@ export function useVMQuickDeploy({
     writeQuickDeployPreset(preset)
   }, [preset])
 
+  // Identifies the session a deploy was started in. A deploy that outlives its
+  // session must not touch the next one, so the continuation compares this
+  // after every await instead of trusting that it is still relevant.
+  const sessionRef = useRef(0)
+
   // The password and inline user-data are kept out of localStorage because they
   // are secrets; leaving them in memory would hand them to whoever logs in next
   // in the same tab. The rest of the preset is already persisted and is not
   // session-scoped, so only the secrets and the open dialog are cleared.
   useEffect(() => {
+    sessionRef.current += 1
     setPreset(clearQuickDeploySecrets)
     setSettingsOpen(false)
+    // An in-flight deploy belongs to the session that started it. Its own
+    // finally would clear this eventually, but not before the new session is
+    // left with both header buttons disabled — indefinitely if the request
+    // hangs, since fetch has no timeout here.
+    setDeploying(false)
   }, [token])
 
   useEffect(() => {
@@ -144,16 +156,26 @@ export function useVMQuickDeploy({
     // reuse this one. The server rejects duplicates with 409 as a backstop.
     setPreset((current) => ({ ...current, count: String(Math.max(1, Number(current.count) || 1) + 1) }))
 
+    const session = sessionRef.current
+    // The request cannot be recalled, so the server may still create the VM.
+    // What this guards is the continuation: reporting a previous session's
+    // deploy into the current one, or writing its VM into a list the new user
+    // is not entitled to see.
+    const sessionEnded = () => isStaleDeploySession(session, sessionRef.current)
+
     setDeploying(true)
     try {
       const cloudInitRefs = await resolveCloudInitRefs(preset, vmName)
+      if (sessionEnded()) return
       const vmNetwork = buildVMNetworkPayload(preset)
       const result = await api.createVirtualMachine({
         ...buildCreateVMPayload(preset, cloudInitRefs, vmNetwork),
         name: vmName
       })
+      if (sessionEnded()) return
       onVirtualMachineUpsert(result)
       await refreshAll()
+      if (sessionEnded()) return
       await refreshAuditRef.current()
       // The deploy can be triggered from any view, so a toast is often the only
       // sign that anything happened.
@@ -163,9 +185,13 @@ export function useVMQuickDeploy({
         notify(`Deploying ${vmName}`, 'info')
       }
     } catch (err) {
+      if (sessionEnded()) return
       notify(err instanceof Error ? err.message : `Failed to deploy ${vmName}`, 'error')
     } finally {
-      setDeploying(false)
+      // Only the owning session's deploy may clear the flag: a stale one
+      // finishing here would otherwise re-enable buttons the current session
+      // had legitimately disabled for its own deploy.
+      if (!sessionEnded()) setDeploying(false)
     }
   }
 
