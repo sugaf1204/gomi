@@ -3,8 +3,10 @@ import type { ActivitySummary, ActivityType, MachineStats, MachineTab, Theme } f
 import type { ActivityItem, GuardedAction, SubnetFormState } from '../app-types'
 import type { WorkspaceContentProps } from '../components/layout/WorkspaceContent'
 import type { AuditEvent, CloudInitTemplate, DHCPLease, DNSRecord, Hypervisor, Machine, Me, OSImage, PowerConfig, SSHKey, Subnet, SystemInfo, VirtualMachine } from '../types'
+import type { VMQuickDeploy } from './useVMQuickDeploy'
 
 type Params = {
+  quickDeploy: VMQuickDeploy
   refreshAll: () => Promise<void>
   lastSyncedAt: string
   dataLoading: boolean
@@ -65,6 +67,7 @@ type Params = {
 type Result = Omit<WorkspaceContentProps, 'view'>
 
 export function useWorkspaceContentProps({
+  quickDeploy,
   refreshAll,
   lastSyncedAt,
   dataLoading,
@@ -122,7 +125,11 @@ export function useWorkspaceContentProps({
   selectedSubnetData
 }: Params): Result {
   return {
-    header: {},
+    header: {
+      quickDeploying: quickDeploy.deploying,
+      onNewVM: () => void quickDeploy.deploy(),
+      onOpenVMSettings: quickDeploy.openSettings
+    },
     overview: {
       lastSyncedAt,
       systemInfo,

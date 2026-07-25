@@ -1,4 +1,4 @@
-import type { VirtualMachine } from '../../../types'
+import type { Hypervisor, Subnet, VirtualMachine } from '../../../types'
 
 export type CloudInitInputMode = 'none' | 'existing' | 'create'
 
@@ -247,6 +247,17 @@ export function buildAdvancedOptions(form: Pick<VMConfigForm, 'cpuMode' | 'diskD
     ...(ioThreads > 0 ? { ioThreads } : {}),
     ...(netMultiqueue > 0 ? { netMultiqueue } : {}),
     ...(cpuPinning ? { cpuPinning } : {})
+  }
+}
+
+// Shared by the in-view dialogs and the header Quick Deploy dialog, both of
+// which render VMConfigFields and need the same placeholder.
+export function buildBridgePlaceholder(hypervisors: Hypervisor[], subnets: Subnet[]) {
+  return (formState: VMConfigForm): string => {
+    const hypervisor = hypervisors.find((item) => item.name === formState.hypervisorRef)
+    if (hypervisor?.bridgeName) return hypervisor.bridgeName
+    if (formState.subnetRef) return subnets.find((item) => item.name === formState.subnetRef)?.spec.pxeInterface || 'virbr0'
+    return 'virbr0'
   }
 }
 

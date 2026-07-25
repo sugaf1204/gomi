@@ -63,22 +63,12 @@ export type MachineFormState = {
   loginUserPasswordTouched: boolean
 }
 
-export type MachineQuickDeployPreset = Omit<
-  MachineFormState,
-  'hostname' | 'cloudInitMode' | 'cloudInitTemplateName' | 'cloudInitUserData' | 'loginUserPasswordTouched'
-> & {
-  name: string
-  count: string
-}
-
 export type MachineDialogState = {
   open: boolean
   mode: MachineDialogMode
   machineName: string
   running: boolean
 }
-
-export const MACHINE_QUICK_DEPLOY_STORAGE_KEY = 'gomi.machines.quick-deploy-preset'
 
 export const initialBatchPowerConfirmState: BatchPowerConfirmState = {
   open: false,
@@ -147,39 +137,6 @@ export function createInitialMachineForm(subnets: Subnet[]): MachineFormState {
     loginUserUsername: '',
     loginUserPassword: '',
     loginUserPasswordTouched: false
-  }
-}
-
-export function createInitialMachineQuickDeployPreset(subnets: Subnet[]): MachineQuickDeployPreset {
-  const form = createInitialMachineForm(subnets)
-  return {
-    ...form,
-    name: '',
-    count: '1',
-    cloudInitExistingRef: '',
-    loginUserPassword: ''
-  }
-}
-
-export function readMachineQuickDeployPreset(subnets: Subnet[]): MachineQuickDeployPreset {
-  const initial = createInitialMachineQuickDeployPreset(subnets)
-  if (typeof window === 'undefined') return initial
-  try {
-    const raw = localStorage.getItem(MACHINE_QUICK_DEPLOY_STORAGE_KEY)
-    if (!raw) return initial
-    const parsed = JSON.parse(raw) as Partial<MachineQuickDeployPreset & { count: number }>
-    return {
-      ...initial,
-      ...parsed,
-      name: typeof parsed.name === 'string' ? parsed.name : '',
-      count: String(parsed.count ?? '1'),
-      mac: typeof parsed.mac === 'string' ? parsed.mac : '',
-      ipmiPassword: '',
-      loginUserPassword: '',
-      sshKeyRefs: Array.isArray(parsed.sshKeyRefs) ? parsed.sshKeyRefs.filter((ref): ref is string => typeof ref === 'string') : []
-    }
-  } catch {
-    return initial
   }
 }
 

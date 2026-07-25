@@ -1,6 +1,8 @@
 import { beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import {
   invalidVMConfigReason,
+  quickDeployPresetReady,
+  quickDeployVMName,
   readQuickDeployPreset,
   renderPresetTemplateName,
   writeQuickDeployPreset
@@ -370,5 +372,81 @@ describe('renderPresetTemplateName', () => {
     ['vm$1-1', 'ci-vm$1-1']
   ])('inserts %s literally', (hostname, expected) => {
     expect(renderPresetTemplateName('ci-{{ hostname }}', hostname)).toBe(expected)
+  })
+})
+
+describe('quickDeployVMName', () => {
+  const named = (overrides: Partial<typeof initialQuickDeployPreset>) =>
+    quickDeployVMName({ ...initialQuickDeployPreset, name: 'devvm', ...overrides })
+
+  it('suffixes the name with the current count', () => {
+    expect(named({ count: '3' })).toBe('devvm-3')
+  })
+
+  it('trims surrounding whitespace from the name', () => {
+    expect(named({ name: '  devvm  ', count: '1' })).toBe('devvm-1')
+  })
+
+  it('floors a count below one to one', () => {
+    expect(named({ count: '0' })).toBe('devvm-1')
+    expect(named({ count: '-5' })).toBe('devvm-1')
+  })
+
+  it('falls back to one when the count is not a number', () => {
+    expect(named({ count: '' })).toBe('devvm-1')
+    expect(named({ count: 'abc' })).toBe('devvm-1')
+  })
+})
+
+describe('quickDeployPresetReady', () => {
+  const vmImages = [{ name: 'ubuntu-24' }]
+  const ready = (overrides: Partial<typeof initialQuickDeployPreset> = {}, images = vmImages) =>
+    quickDeployPresetReady(
+      { ...initialQuickDeployPreset, name: 'devvm', count: '1', osImageRef: 'ubuntu-24', ...overrides },
+      images
+    )
+
+  it('accepts a preset with a name, a count and a VM-capable image', () => {
+    expect(ready()).toBe(true)
+  })
+
+  it('rejects a blank or whitespace-only name', () => {
+    expect(ready({ name: '' })).toBe(false)
+    expect(ready({ name: '   ' })).toBe(false)
+  })
+
+  it('rejects a count below one', () => {
+    expect(ready({ count: '0' })).toBe(false)
+    expect(ready({ count: '' })).toBe(false)
+  })
+
+  it('rejects a missing OS image', () => {
+    expect(ready({ osImageRef: '' })).toBe(false)
+  })
+
+  // The header deploys straight from the preset, so an image the dialog does not
+  // offer must not pass. Baremetal-only images are absent from vmOSImages.
+  it('rejects an image that is not VM-capable', () => {
+    expect(ready({ osImageRef: 'baremetal-only' }, vmImages)).toBe(false)
+    expect(ready({}, [])).toBe(false)
+  })
+
+  it('requires a static IP when the assignment is static', () => {
+    expect(ready({ ipAssignment: 'static', staticIP: '' })).toBe(false)
+    expect(ready({ ipAssignment: 'static', staticIP: '10.0.0.5' })).toBe(true)
+  })
+
+  it('requires both a template name and user-data in create mode', () => {
+    expect(ready({ cloudInitMode: 'create', cloudInitTemplateName: 'ci', cloudInitUserData: '' })).toBe(false)
+    expect(ready({ cloudInitMode: 'create', cloudInitTemplateName: '', cloudInitUserData: '#cloud-config' })).toBe(false)
+    expect(ready({ cloudInitMode: 'create', cloudInitTemplateName: 'ci', cloudInitUserData: '#cloud-config' })).toBe(true)
+  })
+
+  // presetReady gates the button; invalidVMConfigReason names the problem. They
+  // must agree, or the button stays enabled on a preset the deploy will reject.
+  it('rejects anything invalidVMConfigReason rejects', () => {
+    const invalid = { cpuCores: '0' }
+    expect(invalidVMConfigReason({ ...initialQuickDeployPreset, ...invalid })).toBeDefined()
+    expect(ready(invalid)).toBe(false)
   })
 })

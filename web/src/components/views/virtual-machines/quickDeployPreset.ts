@@ -80,6 +80,28 @@ export function renderPresetTemplateName(rawName: string, hostname: string): str
   return rawName.replace(/\{\{\s*hostname\s*\}\}/g, () => hostname)
 }
 
+// The name the next deploy will claim. `count` is the suffix rather than a
+// batch size: each deploy takes the current number and increments it.
+export function quickDeployVMName(preset: QuickDeployPreset): string {
+  return `${preset.name.trim()}-${Math.max(1, Number(preset.count) || 1)}`
+}
+
+// Whether the preset can be deployed as-is. The header's New VM button acts on
+// the stored preset without opening a dialog first, so every required field has
+// to be checked here rather than by form validation. Only `name` is read off the
+// image list, so any {name} shape stands in for OSImage[].
+export function quickDeployPresetReady(preset: QuickDeployPreset, vmOSImages: { name: string }[]): boolean {
+  if (!preset.name.trim()) return false
+  if ((Number(preset.count) || 0) < 1) return false
+  if (!preset.osImageRef.trim()) return false
+  if (preset.ipAssignment === 'static' && !preset.staticIP.trim()) return false
+  if (preset.cloudInitMode === 'create' && !(preset.cloudInitTemplateName.trim() && preset.cloudInitUserData.trim())) return false
+  if (invalidVMConfigReason(preset)) return false
+  // Checked against the VM-capable subset the dialog offers, so a preset naming
+  // a baremetal-only image cannot slip through.
+  return vmOSImages.some((img) => img.name === preset.osImageRef)
+}
+
 // The Create dialog is a real <form>, so the browser enforces required/min on
 // these inputs before submit. Quick Deploy's button sits outside a form, so
 // constraint validation never runs and these must be checked explicitly.
