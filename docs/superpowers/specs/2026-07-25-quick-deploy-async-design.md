@@ -75,30 +75,93 @@ The concurrent-hypervisor-delete handling currently at `internal/infra/api/vm.go
 (re-check the record, tear down host mutations if it was swept) moves into the
 goroutine. It cannot stay in the handler, which now returns before the deploy runs.
 
+That recheck currently tests only whether a record with the same name exists. Once the
+deploy is asynchronous and rapid consecutive deploys are the point, a VM can be deleted
+and a new one created under the same name while the old goroutine is still running. An
+existence-only check finds the new record and skips cleanup, orphaning the old
+hypervisor's domain and volume. The recheck must compare deploy identity — the stored
+`CompletionToken` and `HypervisorRef` against the ones this goroutine started with —
+and tear down via the hypervisor it resolved before deploying whenever the record is
+absent or belongs to a different deploy.
+
 ### 2. Resume interrupted deploys after a restart
 
 A goroutine dies with its process. Detaching the context alone gives no restart
-resilience: a crash mid-deploy leaves a `Phase=Pending` record that nothing resumes.
-`Pending` cannot transition to `Missing` under the transition table
-(`internal/vm/phase.go:4`), so the runtime sync loop will not reclaim it either. Such
-a record would stay `Pending` forever.
+resilience: a crash mid-deploy leaves a `Phase=Pending` record with no host state and
+nothing to resume it.
+
+The runtime sync loop does not repair this. While the provisioning window is still
+open, `vmDeployInFlight` (`internal/vm/runtime_sync.go:323`) deliberately leaves the
+record alone, since a missing domain is indistinguishable from a slow but healthy
+deploy. Once the window expires, `markVMMissing` moves it to `Missing` — which records
+that the domain is gone but neither retries the deploy nor removes any partial host
+state the crash left behind. Either way the VM never reaches a usable state on its own.
 
 A resume sweep is added to `runVMRuntimeSyncLoop` (`internal/app/sync.go:33`), which
 already runs once at startup (line 37) and every 5 seconds thereafter. Recovery
 therefore happens within about 5 seconds of a restart.
 
-Decision logic for each VM with `Phase == Pending` and `Provisioning.Active`:
+#### Distinguishing an interrupted deploy from a live one
+
+The state a restart leaves behind — `Pending`, provisioning active, `DomainObservedAt`
+nil — is exactly the state a *healthy* deploy occupies between the `201` response and
+`DefineDomain`. The sweep runs every 5 seconds, so a deploy that is still creating its
+volume matches on the very first tick. Resuming on that evidence alone would tear down
+a live goroutine's host state and start a second concurrent `Deploy` for the same VM.
+
+Persisted phase data cannot distinguish the two cases, because both are identical by
+construction. The missing dimension is *ownership*: which process is currently
+responsible for this deploy.
+
+The design therefore adds a **deploy owner epoch**. The server generates a random
+epoch id at startup. `CreateVirtualMachine` stamps it on the record before returning
+`201`, and the sweep only considers records whose epoch differs from the current one.
+A record stamped by this process is owned by a goroutine that is either still running
+or already dead with the process — and if the process is alive, so is the goroutine.
+Records from a previous epoch are unambiguously orphaned.
+
+This adds one persisted field. `ProvisioningStatus` already carries the deploy's
+identity via `CompletionToken`, so the epoch belongs alongside it rather than in a new
+table.
+
+#### Decision logic
+
+For each VM with `Phase == Pending`, provisioning active and not completed:
 
 ```
-DeadlineAt passed          -> FailDeploy(Phase=Error, "deploy interrupted by restart")
-DomainObservedAt == nil    -> deploy did not reach domain definition -> clean up, then re-run Deploy()
-DomainObservedAt != nil    -> domain is defined; guest-side provisioning pending -> leave to existing sync loop
+DeployEpoch == currentEpoch -> owned by this process -> leave alone
+DomainObservedAt != nil     -> domain defined; runtime sync owns it -> leave alone
+DeadlineAt passed           -> clean up host state, then FailDeploy(Phase=Error)
+otherwise                   -> clean up host state, then re-run Deploy()
 ```
 
-All three inputs are already persisted on `ProvisioningStatus`
-(`internal/vm/types.go:96`). `DomainObservedAt` exists precisely to distinguish the
-define gap from a domain removed from the host (`internal/vm/types.go:104-108`). No
-new database columns or struct fields are required.
+Note that the expired branch also cleans up: a crash after volume creation but before
+domain definition leaves an orphan volume, and marking the record `Error` without
+removing it would make a later redeploy under the same name fail with the same
+"already exists" error this design exists to prevent.
+
+`DomainObservedAt` distinguishes the define gap from a domain removed from the host
+(`internal/vm/types.go:104-108`).
+
+#### Relationship to `vmDeployInFlight`
+
+`internal/vm/runtime_sync.go:323` already implements the same predicate — active,
+not timed out, `DomainObservedAt == nil` — to stop the runtime sync loop from marking
+a mid-deploy VM as `Missing`. Its comment explicitly anticipates a "crashed server,
+killed worker".
+
+The resume logic must not duplicate it. `DecideResumeAction` reuses `vmDeployInFlight`
+for the shared part and adds only the epoch and deadline dimensions on top.
+
+#### Ordering against the runtime sync
+
+`SyncAll` and the resume sweep read the same records, and `SyncAll` mutates the state
+the sweep depends on: for an expired window with no domain, `vmDeployInFlight` returns
+false and `markVMMissing` sets `Phase=Missing` with `Active=false`. A sweep running
+afterwards sees neither `Pending` nor an active window, so the expired deploy would
+never be failed or cleaned up.
+
+The resume sweep therefore runs **before** `SyncAll` on each tick.
 
 ### 3. Clean up before re-running a deploy
 
@@ -127,11 +190,58 @@ from there. `internal/vm` already owns `BuildLibvirtConfig`, `IsIgnorableDestroy
 and `SkipHostStorageCleanup`, which the helper depends on, so this removes an
 api→vm indirection rather than adding a new dependency edge.
 
+The move must preserve `ErrVMTeardownNotAttempted` (`internal/infra/api/vm.go:237`).
+`DeleteVirtualMachine` relies on it: a `Missing` VM whose hypervisor is unreachable
+falls back to a record-only delete precisely because teardown never touched the host
+(`internal/infra/api/vm.go:217`). Dropping the marker would turn that case into a
+`502` that strands the record. The sentinel moves to `internal/vm` with the function.
+
+#### The post-definition crash window
+
+`markDomainDefined` persists at `internal/vm/deploy.go:91`, but `StartDomain`
+(`:102`) and the network-to-`hd` boot device switch (`:108`) run after it. A crash in
+between leaves `DomainObservedAt` set with the guest never started, or started but
+still set to PXE-boot on next reboot.
+
+Such a record is excluded from resume by the rule above, and the runtime sync loop
+only observes domain state — it neither starts an inactive guest nor completes the
+boot-device switch. The VM would sit until its provisioning window times out.
+
+Both remaining operations are idempotent (`StartDomain` on a running domain and
+setting an already-`hd` boot device are both no-ops or trivially repeatable), so
+recovery completes them rather than redeploying: for a `Pending` record with
+`DomainObservedAt` set whose domain exists but is not running, start it and reassert
+the boot device. This is a distinct, cheaper recovery path than a full redeploy.
+
+#### Backing image integrity
+
+`prepareCloudImageBacking` treats `VolumeExists` as proof that a previous upload
+finished (`internal/vm/cloud_image.go:47-52`). A crash during `StorageVolUpload`
+leaves the shared hashed backing volume allocated but partially written, and
+`TeardownHostState` will not remove it because it is keyed by image hash, not VM name.
+A resumed deploy would then build an overlay on corrupt data.
+
+Publication must become atomic: upload to a temporary volume name and rename, or
+record a completion marker that `prepareCloudImageBacking` verifies before reuse.
+This is shared infrastructure — a partially uploaded backing already affects any
+deploy that reuses the image, not only resumed ones.
+
 ### 4. Reject duplicate VM names on the server
 
-`CreateVirtualMachine` checks for an existing record before `Upsert` and returns
-`409 Conflict` when the name is taken. This is the last line of defence for
-concurrent requests that bypass the UI (multiple tabs, direct API calls).
+`CreateVirtualMachine` returns `409 Conflict` when the name is taken. This is the last
+line of defence for concurrent requests that bypass the UI (multiple tabs, direct API
+calls).
+
+A `Get`-then-`Upsert` check in the handler does not achieve this. Two concurrent
+requests can both observe the name as absent and both proceed to upsert, so one
+silently overwrites the other and both return success — the exact failure the guard is
+meant to prevent. The check must be atomic at the store layer.
+
+The VM store exposes only `Upsert`, whose `ON CONFLICT (name) DO UPDATE`
+(`internal/infra/sql/vm_store.go:118`) is what makes the overwrite possible. The
+design adds an insert-only store operation that lets the primary key reject the
+duplicate, and maps that rejection to `409`. Tests must issue the competing requests
+concurrently; sequential requests do not exercise the race.
 
 This is a breaking change: the endpoint previously overwrote the existing record and
 returned success.
@@ -154,23 +264,44 @@ and they remain visible after a reload or restart.
 
 Correctness checks required before this is considered done:
 
+- **Live deploy is not disturbed**: a normal deploy that is still in its pre-definition
+  stage survives one or more sync ticks untouched. This is the primary regression risk
+  of the whole design.
 - **Idempotency**: re-running a deploy after cleanup succeeds for both the curtin
-  overlay path and the non-curtin `CreateVolume` path.
+  overlay path and the non-curtin `CreateVolume` path, with the fake executor
+  implementing the volume-creation methods so the retry actually executes.
 - **Reload**: a deploy started and then interrupted by a page reload still completes.
 - **Restart**: a deploy interrupted by a server restart resumes and reaches a terminal
-  phase; a deploy past its deadline is marked `Error` rather than retried forever.
-- **Duplicate names**: concurrent creates with the same name yield exactly one record,
-  the loser receiving `409`.
+  phase; a deploy past its deadline is cleaned up and marked `Error` rather than
+  retried forever or left with an orphan volume.
+- **Sweep ordering**: the expired-deploy path is exercised through the real
+  `syncVMRuntimeStates` tick, not by calling the resume function directly, so the
+  ordering against `SyncAll` is actually covered.
+- **Post-definition crash windows**: a crash after `DefineDomain` but before
+  `StartDomain`, and after `StartDomain` but before the boot-device switch, both
+  recover to a running VM booting from disk.
+- **Duplicate names**: *concurrent* creates with the same name yield exactly one
+  record, the loser receiving `409`.
+- **Async response**: the create test uses a deployer that blocks, proving the `201`
+  arrives while the deploy is still in flight rather than passing vacuously with a nil
+  deployer.
+- **Teardown marker**: an unreachable hypervisor still allows a `Missing` VM to be
+  deleted record-only rather than returning `502`.
+- **Stale-deploy cleanup**: a VM deleted and recreated under the same name while the
+  original deploy is running leaves no orphan domain or volume on the old hypervisor.
+- **Backing image integrity**: a partially uploaded backing volume is not reused as if
+  complete.
 - **Rapid clicks**: N consecutive Quick Deploy clicks produce N distinct VMs.
 - **OS coverage**: the resume sweep covers non-curtin and non-Ubuntu deploy paths, not
   only the curtin/Ubuntu case (per project OS-deployment policy).
-- **Existing tests**: identify and update tests that assume `POST /virtualmachines`
-  completes the deploy synchronously (for example
-  `internal/infra/api/handler_hypervisor_vm_test.go`).
+- **Existing tests**: identify and update tests that assume `POST /virtual-machines`
+  completes the deploy synchronously.
 - **Cascade delete**: the relocated concurrent-hypervisor-delete handling still tears
   down host state correctly.
-- **Restart storm**: bound the number of deploys resumed concurrently when many
-  `Pending` records exist at startup.
+- **Sync loop responsiveness**: recovery work must not block the runtime sync tick. A
+  slow backing-image transfer for one VM must not delay status updates for every other
+  VM, so resumed deploys run off the loop with a bounded worker count. This also bounds
+  the restart storm when many interrupted records exist at startup.
 
 ## Cross-surface consistency
 

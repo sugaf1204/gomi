@@ -29,15 +29,43 @@
 | `internal/vm/deploy.go` | Deploy/Redeploy orchestration; gains an injectable executor factory | Modify |
 | `internal/vm/teardown.go` | Host-state teardown shared by the API and the sync loop | Create |
 | `internal/vm/resume.go` | Decide and perform resume of interrupted deploys | Create |
-| `internal/vm/teardown_test.go` | Teardown behaviour incl. not-found tolerance | Create |
-| `internal/vm/resume_test.go` | Resume decision matrix + cleanup-before-retry | Create |
+| `internal/vm/teardown_test.go` | Teardown behaviour incl. not-found tolerance and the not-attempted marker | Create |
+| `internal/vm/resume_test.go` | Resume decision matrix, epoch ownership, cleanup-before-retry | Create |
+| `internal/vm/types.go` | `ProvisioningStatus.DeployEpoch` field | Modify |
+| `internal/vm/store.go`, `internal/infra/sql/vm_store.go`, `internal/infra/memory/` | Insert-only create for atomic duplicate rejection | Modify |
 | `internal/vm/deploy_test.go` | Executor-factory seam coverage | Modify |
-| `internal/infra/api/vm.go` | Create handler: return 201 early, duplicate guard, background deploy | Modify |
-| `internal/app/sync.go` | Invoke the resume sweep from the runtime sync loop | Modify |
+| `internal/infra/api/vm.go` | Create handler: 201 early, atomic duplicate guard, background deploy with identity-checked cleanup | Modify |
+| `internal/app/sync.go` | Run the resume sweep before `SyncAll`, off the loop's critical path | Modify |
 | `web/src/components/views/virtual-machines/useVirtualMachineOperations.ts` | Optimistic count increment for VM Quick Deploy | Modify |
 | `web/src/components/views/machines/useMachineOperations.ts` | Same for Machine Quick Deploy | Modify |
 
-Task order matters: Task 1 creates the test seam that Tasks 3–5 depend on.
+Task order matters: Task 1 creates the test seam that Tasks 4–7 depend on.
+
+## Revision note (after review of PR #46)
+
+The first draft of this plan had defects that would have shipped a broken recovery
+path. They are corrected below; the reasoning is recorded so the fixes are not
+re-simplified away:
+
+1. **The sweep would have killed live deploys.** A healthy deploy between the `201` and
+   `DefineDomain` has exactly the state the sweep selected on. Fixed by a deploy owner
+   epoch (Task 3) — without it, every Quick Deploy risks a concurrent double deploy.
+2. **`DecideResumeAction` duplicated `vmDeployInFlight`** (`internal/vm/runtime_sync.go:323`),
+   which already encodes the same predicate and whose comment already anticipates a
+   crashed server. Task 5 reuses it instead.
+3. **The expired branch was unreachable.** `SyncAll` marks expired records `Missing`
+   with `Active=false` before the sweep sees them. Task 7 runs the sweep first.
+4. **The expired branch leaked volumes.** Marking `Error` without teardown leaves the
+   orphan volume this design exists to prevent.
+5. **The duplicate guard was a TOCTOU race.** `Get`-then-`Upsert` lets two concurrent
+   requests both win. Task 2 adds an insert-only store operation.
+6. **The create test would have passed vacuously.** `setupTestEnv` leaves `VMDeployer`
+   nil, so nothing asynchronous ran. Task 4 wires a blocking fake.
+7. **The teardown move dropped `ErrVMTeardownNotAttempted`**, breaking the record-only
+   delete fallback for unreachable hypervisors (`internal/infra/api/vm.go:217`).
+
+Two further gaps are recorded in the design doc and scoped as separate work below:
+the post-definition crash window (Task 8) and backing-image upload atomicity (Task 9).
 
 ---
 
@@ -227,6 +255,11 @@ import (
 	"github.com/sugaf1204/gomi/internal/libvirt"
 )
 
+// ErrTeardownNotAttempted marks teardown failures that happened before any host
+// mutation (hypervisor connection setup), so a Missing VM may safely fall back
+// to a record-only delete. DeleteVirtualMachine depends on this distinction.
+var ErrTeardownNotAttempted = errors.New("vm runtime teardown not attempted")
+
 // TeardownHostState removes the libvirt domain and volume a deploy may have
 // created. Missing domains and volumes are not errors: the caller uses this to
 // clean up partial state whose exact extent is unknown.
@@ -234,7 +267,7 @@ func (d *Deployer) TeardownHostState(ctx context.Context, hv hypervisor.Hypervis
 	cfg := BuildLibvirtConfig(hv)
 	exec, err := d.newExecutor(ctx, cfg)
 	if err != nil {
-		return fmt.Errorf("connect to hypervisor %s for teardown: %w", hv.Name, err)
+		return fmt.Errorf("connect to hypervisor %s for teardown: %w: %w", hv.Name, err, ErrTeardownNotAttempted)
 	}
 	defer exec.Close()
 
@@ -283,6 +316,35 @@ Then find every other caller and update it:
 Run: `grep -rn "teardownVMRuntimeOnHypervisor" internal/`
 Expected: only matches you are about to fix. Update each to call `s.vmDeployer.TeardownHostState`. Remove now-unused imports from `internal/infra/api/vm.go` (`strings` and `libvirt` may become unused — the compiler will tell you).
 
+**Preserve the not-attempted marker.** `DeleteVirtualMachine` checks `errors.Is(err, ErrVMTeardownNotAttempted)` at `internal/infra/api/vm.go:217` so a `Missing` VM on an unreachable hypervisor can be deleted record-only instead of returning `502`. Repoint that check at the new `vm.ErrTeardownNotAttempted` and delete the old sentinel at `internal/infra/api/vm.go:237`:
+
+```go
+		if v.Phase != vm.PhaseMissing || !errors.Is(err, vm.ErrTeardownNotAttempted) {
+```
+
+- [ ] **Step 5b: Prove the fallback still works**
+
+Add to `internal/vm/teardown_test.go`:
+
+```go
+func TestTeardownHostStateMarksConnectFailureNotAttempted(t *testing.T) {
+	d := &Deployer{
+		ExecutorFactory: func(context.Context, libvirt.LibvirtConfig) (libvirt.Executor, error) {
+			return nil, errors.New("dial tcp: connection refused")
+		},
+	}
+	err := d.TeardownHostState(context.Background(), hypervisor.Hypervisor{Name: "hv"}, VirtualMachine{Name: "vm-unreachable"})
+	if !errors.Is(err, ErrTeardownNotAttempted) {
+		t.Fatalf("expected ErrTeardownNotAttempted, got %v", err)
+	}
+}
+```
+
+Also confirm the existing delete-path coverage still passes:
+
+Run: `go test ./internal/infra/api/ -run TestDeleteVirtualMachine -v`
+Expected: PASS. If no test covers the Missing + unreachable-hypervisor fallback, add one — this is the behaviour the marker exists for.
+
 - [ ] **Step 6: Run the full suite**
 
 Run: `go build ./... && go test ./...`
@@ -293,6 +355,148 @@ Expected: PASS
 ```bash
 git add internal/vm/teardown.go internal/vm/teardown_test.go internal/infra/api/vm.go
 git commit -m "Move VM host teardown into internal/vm for reuse by resume sweep"
+```
+
+---
+
+### Task 2b: Add an insert-only store operation
+
+The duplicate guard must be atomic. `Upsert`'s `ON CONFLICT (name) DO UPDATE` (`internal/infra/sql/vm_store.go:118`) is precisely what allows a duplicate to overwrite, so the handler cannot fix this on its own.
+
+**Files:**
+- Modify: `internal/vm/store.go` (interface), `internal/infra/sql/vm_store.go`, the in-memory store under `internal/infra/memory/`, `internal/vm/service.go`
+
+**Interfaces:**
+- Produces: `Store.Insert(ctx context.Context, v VirtualMachine) error` returning `resource.ErrAlreadyExists` on a name collision, and `Service.CreateExclusive(ctx, v) (VirtualMachine, error)` wrapping it with the same validation/normalisation `Create` performs. Task 3 consumes `CreateExclusive`.
+
+- [ ] **Step 1: Write the failing test**
+
+In `internal/vm/service_test.go` (match the file's existing package clause):
+
+```go
+func TestCreateExclusiveRejectsDuplicateName(t *testing.T) {
+	backend := memory.New()
+	svc := vm.NewService(backend.VMs())
+	ctx := context.Background()
+	v := vm.VirtualMachine{
+		Name:          "vm-once",
+		HypervisorRef: "hv",
+		Resources:     vm.ResourceSpec{CPUCores: 1, MemoryMB: 1024, DiskGB: 8},
+		OSImageRef:    "ubuntu-test",
+	}
+	if _, err := svc.CreateExclusive(ctx, v); err != nil {
+		t.Fatalf("first CreateExclusive: %v", err)
+	}
+	if _, err := svc.CreateExclusive(ctx, v); !errors.Is(err, resource.ErrAlreadyExists) {
+		t.Fatalf("expected ErrAlreadyExists, got %v", err)
+	}
+}
+```
+
+Check whether `resource.ErrAlreadyExists` exists — run `grep -rn "ErrAlreadyExists" internal/resource/`. If it does not, add it beside `ErrNotFound` following that file's style.
+
+- [ ] **Step 2: Run test to verify it fails**
+
+Run: `go test ./internal/vm/ -run TestCreateExclusive -v`
+Expected: FAIL — `CreateExclusive` undefined.
+
+- [ ] **Step 3: Implement across the interface and both stores**
+
+Add `Insert` to the `Store` interface in `internal/vm/store.go`. In `internal/infra/sql/vm_store.go`, mirror `Upsert` but without the conflict clause, translating the driver's unique-violation into `resource.ErrAlreadyExists`:
+
+```go
+func (s *VMStore) Insert(ctx context.Context, v vm.VirtualMachine) error {
+	specJSON, statusJSON, err := marshalVMColumns(v)
+	if err != nil {
+		return err
+	}
+	_, err = s.b.exec(ctx, `
+		INSERT INTO virtual_machines (name, hypervisor_ref, spec, status, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?)`,
+		v.Name, v.HypervisorRef, specJSON, statusJSON, v.CreatedAt, v.UpdatedAt,
+	)
+	if err != nil {
+		if isUniqueViolation(err) {
+			return resource.ErrAlreadyExists
+		}
+		return err
+	}
+	s.notify()
+	return nil
+}
+```
+
+`isUniqueViolation` must cover both drivers this project supports (SQLite and PostgreSQL). Check whether a helper already exists — `grep -rn "unique\|UNIQUE\|23505" internal/infra/sql/` — and reuse it; only write a new one if none is there.
+
+In `internal/vm/service.go`, add `CreateExclusive` alongside `Create`, sharing the same preparation. Extract the common setup rather than copying it, so the two cannot drift.
+
+- [ ] **Step 4: Run tests**
+
+Run: `go test ./internal/vm/ ./internal/infra/sql/ -v`
+Expected: PASS
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add internal/vm/store.go internal/vm/service.go internal/vm/service_test.go internal/infra/sql/vm_store.go internal/infra/memory/ internal/resource/
+git commit -m "Add insert-only VM store operation for atomic duplicate rejection"
+```
+
+---
+
+### Task 2c: Add the deploy owner epoch
+
+Without this, the sweep cannot distinguish a crashed deploy from a healthy one that has not yet defined its domain — they are byte-identical in the database — and would tear down live deploys every 5 seconds.
+
+**Files:**
+- Modify: `internal/vm/types.go:96-110` (`ProvisioningStatus`), `internal/app/app.go`, `internal/infra/api/server.go`, `internal/infra/api/vm.go`
+
+**Interfaces:**
+- Produces: `ProvisioningStatus.DeployEpoch string`, a per-process epoch generated at startup and exposed as `Runtime.deployEpoch` and `Server.deployEpoch`. Tasks 3, 5 and 6 consume it.
+
+- [ ] **Step 1: Add the field**
+
+In `internal/vm/types.go`, inside `ProvisioningStatus`:
+
+```go
+	// DeployEpoch identifies the server process that started this deploy. The
+	// resume sweep uses it to tell an orphaned deploy from a live one: a
+	// record carrying the running process's epoch is owned by a goroutine that
+	// is either still working or died with the process. Records from an
+	// earlier epoch have no owner and are safe to recover.
+	DeployEpoch string `json:"deployEpoch,omitempty"`
+```
+
+It is stored inside the existing `status` JSON column, so no migration is required — confirm by checking `marshalVMColumns` in `internal/infra/sql/vm_store.go`.
+
+- [ ] **Step 2: Generate it once per process**
+
+In `internal/app/app.go`, generate an epoch when the runtime is built and store it on `Runtime`. Reuse the existing token generator (`httputil.GenerateProvisioningToken`, used at `internal/infra/api/vm.go:58`) rather than adding a new random source. Pass it into `ServerConfig` so the create handler can stamp it.
+
+- [ ] **Step 3: Stamp it on create**
+
+In `internal/infra/api/vm.go`, extend the `v.Provisioning` initialisation at line 63:
+
+```go
+	v.Provisioning = vm.ProvisioningStatus{
+		Active:          true,
+		StartedAt:       httputil.TimePtr(now),
+		DeadlineAt:      httputil.TimePtr(now.Add(s.provisionTimeout)),
+		CompletionToken: token,
+		DeployEpoch:     s.deployEpoch,
+	}
+```
+
+- [ ] **Step 4: Build and test**
+
+Run: `go build ./... && go test ./...`
+Expected: PASS
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add internal/vm/types.go internal/app/app.go internal/infra/api/server.go internal/infra/api/vm.go
+git commit -m "Stamp a per-process deploy epoch on VM provisioning windows"
 ```
 
 ---
@@ -379,20 +583,54 @@ func TestCreateVirtualMachineReturnsBeforeDeployCompletes(t *testing.T) {
 
 Check the package clause of the existing `*_test.go` files in that directory and match it (they import the server as `infraapi`, which indicates an external `api_test` package). If `setupTestEnv` returns a `testEnv` whose fields differ from `echo`/`token`/`hypervisors`, adapt to the real field names rather than adding helpers.
 
+**Two prerequisites, or these tests are worthless:**
+
+1. `setupTestEnv` does not seed any OS image, so `applyInstallConfigByOSImage` (`internal/infra/api/vm.go:55`) rejects the request with `400` before anything else runs. Seed a vm-capable qcow2 image named `ubuntu-test` via `env.osimages` in `seedVMHypervisor`, matching the fields `applyInstallConfigByOSImage` requires — read that function to see which they are.
+
+2. `setupTestEnv` never sets `ServerConfig.VMDeployer` (`internal/infra/api/handler_test.go:65-101` wires `OSImages` but not the deployer), so `s.vmDeployer` is nil and **no goroutine ever starts**. `TestCreateVirtualMachineReturnsBeforeDeployCompletes` would then pass without proving anything.
+
+Add a variant that injects a deployer which blocks until released, so the test proves the response arrives *while the deploy is in flight*:
+
+```go
+func TestCreateVirtualMachineRespondsWhileDeployInFlight(t *testing.T) {
+	release := make(chan struct{})
+	started := make(chan struct{})
+	env := setupTestEnvWithVMDeployer(t, blockingDeployer(started, release))
+	seedVMHypervisor(t, env, "hv-block")
+	t.Cleanup(func() { close(release) })
+
+	rec := doRequest(env.echo, http.MethodPost, "/api/v1/virtual-machines", vmCreateBody("vm-block", "hv-block"), env.token)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("expected 201 before the deploy finishes, got %d: %s", rec.Code, rec.Body.String())
+	}
+	select {
+	case <-started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("deploy goroutine did not start")
+	}
+}
+```
+
+`setupTestEnvWithVMDeployer` does not exist yet — add it beside the existing `setupTestEnvWithVMRuntimeDeleter` (`internal/infra/api/handler_test.go:55`), following that helper's shape. The blocking deployer must satisfy whatever type `ServerConfig.VMDeployer` takes; since it is currently the concrete `*vm.Deployer` (`internal/infra/api/server.go:107`), either introduce a narrow interface for it or inject a `*vm.Deployer` whose `ExecutorFactory` (Task 1) returns a fake that blocks in `CreateVolume`. Prefer the latter — it needs no production type change.
+
 - [ ] **Step 2: Run test to verify it fails**
 
 Run: `go test ./internal/infra/api/ -run TestCreateVirtualMachine -v`
 Expected: FAIL — the duplicate create returns 201, and the phase is not `Pending`.
 
-- [ ] **Step 3: Add the duplicate guard**
+- [ ] **Step 3: Add the atomic duplicate guard**
 
-In `internal/infra/api/vm.go`, immediately before `created, err := s.vms.Create(ctx, v)` (line 91):
+A `Get`-then-`Upsert` check in the handler is a TOCTOU race: two concurrent requests can both find the name absent and both upsert, so one silently overwrites the other and both return `201`. The rejection must happen atomically in the store, where the `name` primary key can enforce it.
+
+This depends on Task 2b (insert-only store operation). In `internal/infra/api/vm.go`, replace `created, err := s.vms.Create(ctx, v)` (line 91) with the insert-only call and map the conflict:
 
 ```go
-	if _, err := s.vms.Get(ctx, v.Name); err == nil {
+	created, err := s.vms.CreateExclusive(ctx, v)
+	if errors.Is(err, resource.ErrAlreadyExists) {
 		return c.JSON(gohttp.StatusConflict, jsonError("virtual machine already exists: "+v.Name))
-	} else if !errors.Is(err, resource.ErrNotFound) {
-		return c.JSON(gohttp.StatusInternalServerError, jsonErrorErr(err))
+	}
+	if err != nil {
+		return c.JSON(gohttp.StatusBadRequest, jsonErrorErr(err))
 	}
 ```
 
@@ -418,11 +656,19 @@ func (s *Server) runVMDeploy(deployHV hypervisor.Hypervisor, created vm.VirtualM
 	ctx, cancel := context.WithTimeout(context.Background(), s.provisionTimeout)
 	defer cancel()
 
+	token := created.Provisioning.CompletionToken
 	deployErr := s.vmDeployer.Deploy(ctx, &created, pxehttp.RenderNoCloudLineConfig)
 
-	if _, getErr := s.vms.Get(ctx, created.Name); errors.Is(getErr, resource.ErrNotFound) {
+	// Compare deploy identity, not mere existence. With rapid consecutive
+	// deploys a VM can be deleted and recreated under the same name while this
+	// goroutine runs; an existence-only check would find the new record, skip
+	// cleanup, and orphan this deploy's domain and volume on deployHV.
+	current, getErr := s.vms.Get(ctx, created.Name)
+	stale := errors.Is(getErr, resource.ErrNotFound) ||
+		(getErr == nil && current.Provisioning.CompletionToken != token)
+	if stale {
 		if cleanupErr := s.vmDeployer.TeardownHostState(ctx, deployHV, created); cleanupErr != nil {
-			log.Printf("create vm %s: cleanup after concurrent hypervisor delete: %v", created.Name, cleanupErr)
+			log.Printf("create vm %s: cleanup after superseded deploy: %v", created.Name, cleanupErr)
 		}
 		return
 	}
@@ -508,46 +754,54 @@ func TestDecideResumeAction(t *testing.T) {
 	past := now.Add(-10 * time.Minute)
 	observed := now.Add(-time.Minute)
 
+	const currentEpoch = "epoch-current"
+	const priorEpoch = "epoch-previous"
+
 	tests := []struct {
 		name string
 		vm   VirtualMachine
 		want ResumeAction
 	}{
 		{
-			name: "pending without domain resumes",
-			vm:   VirtualMachine{Phase: PhasePending, Provisioning: ProvisioningStatus{Active: true, DeadlineAt: &future}},
+			name: "interrupted deploy from a previous process resumes",
+			vm:   VirtualMachine{Phase: PhasePending, Provisioning: ProvisioningStatus{Active: true, DeadlineAt: &future, DeployEpoch: priorEpoch}},
 			want: ResumeRedeploy,
 		},
 		{
-			name: "pending past deadline fails",
-			vm:   VirtualMachine{Phase: PhasePending, Provisioning: ProvisioningStatus{Active: true, DeadlineAt: &past}},
+			name: "live deploy owned by this process is left alone",
+			vm:   VirtualMachine{Phase: PhasePending, Provisioning: ProvisioningStatus{Active: true, DeadlineAt: &future, DeployEpoch: currentEpoch}},
+			want: ResumeNone,
+		},
+		{
+			name: "interrupted deploy past deadline fails",
+			vm:   VirtualMachine{Phase: PhasePending, Provisioning: ProvisioningStatus{Active: true, DeadlineAt: &past, DeployEpoch: priorEpoch}},
 			want: ResumeFail,
 		},
 		{
 			name: "domain already defined is left to the sync loop",
-			vm:   VirtualMachine{Phase: PhasePending, Provisioning: ProvisioningStatus{Active: true, DeadlineAt: &future, DomainObservedAt: &observed}},
+			vm:   VirtualMachine{Phase: PhasePending, Provisioning: ProvisioningStatus{Active: true, DeadlineAt: &future, DomainObservedAt: &observed, DeployEpoch: priorEpoch}},
 			want: ResumeNone,
 		},
 		{
 			name: "inactive provisioning window is ignored",
-			vm:   VirtualMachine{Phase: PhasePending, Provisioning: ProvisioningStatus{Active: false, DeadlineAt: &future}},
+			vm:   VirtualMachine{Phase: PhasePending, Provisioning: ProvisioningStatus{Active: false, DeadlineAt: &future, DeployEpoch: priorEpoch}},
 			want: ResumeNone,
 		},
 		{
 			name: "running vm is ignored",
-			vm:   VirtualMachine{Phase: PhaseRunning, Provisioning: ProvisioningStatus{Active: true, DeadlineAt: &future}},
+			vm:   VirtualMachine{Phase: PhaseRunning, Provisioning: ProvisioningStatus{Active: true, DeadlineAt: &future, DeployEpoch: priorEpoch}},
 			want: ResumeNone,
 		},
 		{
 			name: "completed window is ignored",
-			vm:   VirtualMachine{Phase: PhasePending, Provisioning: ProvisioningStatus{Active: true, DeadlineAt: &future, CompletedAt: &observed}},
+			vm:   VirtualMachine{Phase: PhasePending, Provisioning: ProvisioningStatus{Active: true, DeadlineAt: &future, CompletedAt: &observed, DeployEpoch: priorEpoch}},
 			want: ResumeNone,
 		},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := DecideResumeAction(tc.vm, now); got != tc.want {
+			if got := DecideResumeAction(tc.vm, currentEpoch, now); got != tc.want {
 				t.Fatalf("DecideResumeAction = %v, want %v", got, tc.want)
 			}
 		})
@@ -573,29 +827,39 @@ import "time"
 type ResumeAction int
 
 const (
-	// ResumeNone means the record needs no resume handling: either it is not
-	// mid-deploy, or its libvirt domain already exists and the runtime sync
-	// loop owns it from here.
+	// ResumeNone means the record needs no resume handling: it is not
+	// mid-deploy, it is owned by a live goroutine in this process, or its
+	// libvirt domain already exists and the runtime sync loop owns it.
 	ResumeNone ResumeAction = iota
 	// ResumeRedeploy means the deploy never reached domain definition, so the
 	// host state must be cleaned up and the deploy re-run.
 	ResumeRedeploy
 	// ResumeFail means the provisioning window expired while the deploy was
-	// interrupted; retrying would outlive its own deadline.
+	// interrupted. The record becomes Error, but its partial host state must
+	// still be cleaned up first.
 	ResumeFail
 )
 
-// DecideResumeAction classifies a VM record after a process restart.
+// DecideResumeAction classifies a VM record as recovery work for this process.
 //
-// Only Pending records are candidates: once a deploy defines its domain the
-// phase advances and the runtime sync loop takes over. DomainObservedAt is the
-// marker for that handover — while it is nil the domain does not exist, so a
-// re-run is safe; once set, re-running would fight the sync loop.
-func DecideResumeAction(v VirtualMachine, now time.Time) ResumeAction {
+// currentEpoch identifies the running server process. A record stamped with it
+// belongs to a deploy goroutine in *this* process: either still running, or
+// gone with the process — and if the process is alive, so is the goroutine.
+// Without this check the sweep cannot tell a crashed deploy from a healthy one
+// that simply has not defined its domain yet, because those states are
+// identical in the database. Resuming a healthy deploy would delete the volume
+// a live goroutine is using and start a second concurrent Deploy.
+//
+// The shared "is this deploy still preparing its domain" predicate lives in
+// vmDeployInFlight; this function adds only ownership and expiry on top.
+func DecideResumeAction(v VirtualMachine, currentEpoch string, now time.Time) ResumeAction {
 	if v.Phase != PhasePending {
 		return ResumeNone
 	}
 	if !v.Provisioning.Active || v.Provisioning.CompletedAt != nil {
+		return ResumeNone
+	}
+	if v.Provisioning.DeployEpoch == currentEpoch {
 		return ResumeNone
 	}
 	if v.Provisioning.DomainObservedAt != nil {
@@ -607,6 +871,8 @@ func DecideResumeAction(v VirtualMachine, now time.Time) ResumeAction {
 	return ResumeRedeploy
 }
 ```
+
+Note `vmDeployInFlight` (`internal/vm/runtime_sync.go:323`) already encodes active + not-timed-out + `DomainObservedAt == nil`. Do not restate that logic — if you find yourself copying its body, call it instead. The two functions must stay in agreement, since the sync loop uses it to decide whether to leave a mid-deploy VM alone.
 
 - [ ] **Step 4: Run test to verify it passes**
 
@@ -643,12 +909,41 @@ type resumeExecutor struct {
 	libvirt.Executor
 	mu            sync.Mutex
 	deletedVolume []string
+	createdVolume []string
 	definedDomain []string
 }
 
 func (e *resumeExecutor) DestroyDomain(context.Context, string) error  { return nil }
 func (e *resumeExecutor) UndefineDomain(context.Context, string) error { return nil }
 func (e *resumeExecutor) Close() error                                 { return nil }
+
+// The deploy path is exercised for real, so every method Deploy calls must be
+// implemented. Leaving them to the nil embedded interface panics as soon as the
+// retry reaches CreateVolume, which would silently gut this test.
+func (e *resumeExecutor) CreateVolume(_ context.Context, name string, _ int, _ string) error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.createdVolume = append(e.createdVolume, name)
+	return nil
+}
+
+func (e *resumeExecutor) CreateOverlayVolume(_ context.Context, name string, _ int, _ string, _ string) error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.createdVolume = append(e.createdVolume, name)
+	return nil
+}
+
+func (e *resumeExecutor) VolumeExists(context.Context, string, string) (bool, error) {
+	return false, nil
+}
+
+func (e *resumeExecutor) StartDomain(context.Context, string) error              { return nil }
+func (e *resumeExecutor) SetDomainBootDevice(context.Context, string, string) error { return nil }
+
+func (e *resumeExecutor) DomainInterfaces(context.Context, string) ([]libvirt.DomainInterface, error) {
+	return nil, nil
+}
 
 func (e *resumeExecutor) DeleteVolume(_ context.Context, name string) error {
 	e.mu.Lock()
@@ -699,7 +994,7 @@ func TestResumeInterruptedDeploysCleansUpBeforeRetry(t *testing.T) {
 		},
 	}
 
-	if err := d.ResumeInterruptedDeploys(ctx, func(base string, _ InstallConfigType, _ string) string { return base }); err != nil {
+	if err := d.ResumeInterruptedDeploys(ctx, "epoch-current", func(base string, _ InstallConfigType, _ string) string { return base }); err != nil {
 		t.Fatalf("ResumeInterruptedDeploys: %v", err)
 	}
 
@@ -707,6 +1002,61 @@ func TestResumeInterruptedDeploysCleansUpBeforeRetry(t *testing.T) {
 	defer exec.mu.Unlock()
 	if len(exec.deletedVolume) == 0 {
 		t.Fatal("expected leftover volume to be deleted before retrying the deploy")
+	}
+	// The retry must actually run, not just clean up.
+	if len(exec.createdVolume) == 0 {
+		t.Fatal("expected the deploy to be re-run after cleanup")
+	}
+	if len(exec.definedDomain) == 0 {
+		t.Fatal("expected the resumed deploy to define the domain")
+	}
+}
+
+func TestResumeInterruptedDeploysLeavesLiveDeployAlone(t *testing.T) {
+	backend := memory.New()
+	hypervisors := hypervisor.NewService(backend.Hypervisors(), backend.HypervisorTokens(), backend.AgentTokens())
+	vms := NewService(backend.VMs())
+	ctx := context.Background()
+
+	if _, err := hypervisors.Create(ctx, hypervisor.Hypervisor{
+		Name:       "hv-live",
+		Connection: hypervisor.ConnectionSpec{Type: hypervisor.ConnectionTCP, Host: "192.0.2.10", Port: 16509},
+		Phase:      hypervisor.PhaseRegistered,
+	}); err != nil {
+		t.Fatalf("create hypervisor: %v", err)
+	}
+
+	// Exactly the state a healthy deploy occupies between the 201 response and
+	// DefineDomain: Pending, active window, no domain yet — but stamped with
+	// this process's epoch.
+	deadline := time.Now().UTC().Add(10 * time.Minute)
+	if _, err := vms.Create(ctx, VirtualMachine{
+		Name:          "vm-live",
+		HypervisorRef: "hv-live",
+		Resources:     ResourceSpec{CPUCores: 1, MemoryMB: 1024, DiskGB: 8},
+		OSImageRef:    "ubuntu-test",
+		Phase:         PhasePending,
+		Provisioning:  ProvisioningStatus{Active: true, DeadlineAt: &deadline, CompletionToken: "tok-live", DeployEpoch: "epoch-current"},
+	}); err != nil {
+		t.Fatalf("create vm: %v", err)
+	}
+
+	exec := &resumeExecutor{}
+	d := &Deployer{
+		Hypervisors: hypervisors,
+		VMs:         vms,
+		ExecutorFactory: func(context.Context, libvirt.LibvirtConfig) (libvirt.Executor, error) {
+			return exec, nil
+		},
+	}
+	if err := d.ResumeInterruptedDeploys(ctx, "epoch-current", func(base string, _ InstallConfigType, _ string) string { return base }); err != nil {
+		t.Fatalf("ResumeInterruptedDeploys: %v", err)
+	}
+
+	exec.mu.Lock()
+	defer exec.mu.Unlock()
+	if len(exec.deletedVolume) != 0 || len(exec.definedDomain) != 0 {
+		t.Fatalf("sweep touched a live deploy: deleted=%v defined=%v", exec.deletedVolume, exec.definedDomain)
 	}
 }
 
@@ -736,14 +1086,15 @@ func TestResumeInterruptedDeploysFailsExpiredWindow(t *testing.T) {
 		t.Fatalf("create vm: %v", err)
 	}
 
+	exec := &resumeExecutor{}
 	d := &Deployer{
 		Hypervisors: hypervisors,
 		VMs:         vms,
 		ExecutorFactory: func(context.Context, libvirt.LibvirtConfig) (libvirt.Executor, error) {
-			return &resumeExecutor{}, nil
+			return exec, nil
 		},
 	}
-	if err := d.ResumeInterruptedDeploys(ctx, func(base string, _ InstallConfigType, _ string) string { return base }); err != nil {
+	if err := d.ResumeInterruptedDeploys(ctx, "epoch-current", func(base string, _ InstallConfigType, _ string) string { return base }); err != nil {
 		t.Fatalf("ResumeInterruptedDeploys: %v", err)
 	}
 
@@ -753,6 +1104,16 @@ func TestResumeInterruptedDeploysFailsExpiredWindow(t *testing.T) {
 	}
 	if got.Phase != PhaseError {
 		t.Fatalf("expected expired deploy to be marked Error, got %s", got.Phase)
+	}
+	// An expired deploy may have created a volume before the crash; leaving it
+	// behind would make a later redeploy under the same name fail.
+	exec.mu.Lock()
+	defer exec.mu.Unlock()
+	if len(exec.deletedVolume) == 0 {
+		t.Fatal("expected partial host state to be cleaned up before failing the record")
+	}
+	if len(exec.definedDomain) != 0 {
+		t.Fatal("expired deploy must not be re-run")
 	}
 }
 ```
@@ -770,24 +1131,38 @@ Append to `internal/vm/resume.go` (add imports `"context"`, `"log"`):
 // ResumeInterruptedDeploys restarts deploys that a process restart cut short.
 // It runs on every runtime sync tick, so it must be cheap when there is
 // nothing to do: the store scan short-circuits on phase before any host call.
-func (d *Deployer) ResumeInterruptedDeploys(ctx context.Context, pxeNoCloudFn func(base string, installType InstallConfigType, mac string) string) error {
+func (d *Deployer) ResumeInterruptedDeploys(ctx context.Context, currentEpoch string, pxeNoCloudFn func(base string, installType InstallConfigType, mac string) string) error {
 	items, err := d.VMs.List(ctx)
 	if err != nil {
 		return err
 	}
 	now := time.Now().UTC()
 	for _, v := range items {
-		switch DecideResumeAction(v, now) {
+		switch DecideResumeAction(v, currentEpoch, now) {
 		case ResumeFail:
-			if _, err := d.VMs.FailDeploy(ctx, v.Name, "resume", "deploy interrupted by restart", v.Provisioning.CompletionToken); err != nil {
-				log.Printf("resume vm %s: mark failed: %v", v.Name, err)
-			}
+			d.failInterrupted(ctx, v)
 		case ResumeRedeploy:
 			d.resumeOne(ctx, v, pxeNoCloudFn)
 		case ResumeNone:
 		}
 	}
 	return nil
+}
+
+// failInterrupted marks an expired interrupted deploy as failed. Host cleanup
+// runs first: a crash after volume creation leaves an orphan that would make a
+// later redeploy under the same name fail with "already exists". The record is
+// marked Error regardless, so a cleanup failure does not leave it Pending
+// forever; the leftover volume is reported for operator follow-up.
+func (d *Deployer) failInterrupted(ctx context.Context, v VirtualMachine) {
+	if hv, err := d.Hypervisors.Get(ctx, v.HypervisorRef); err != nil {
+		log.Printf("resume vm %s: resolve hypervisor for cleanup: %v", v.Name, err)
+	} else if err := d.TeardownHostState(ctx, hv, v); err != nil {
+		log.Printf("resume vm %s: cleanup after expired deploy failed, host state may remain: %v", v.Name, err)
+	}
+	if _, err := d.VMs.FailDeploy(ctx, v.Name, "resume", "deploy interrupted by restart", v.Provisioning.CompletionToken); err != nil {
+		log.Printf("resume vm %s: mark failed: %v", v.Name, err)
+	}
 }
 
 // resumeOne clears any partial host state before re-running the deploy.
@@ -857,23 +1232,47 @@ In `internal/app/sync.go`, extend `syncVMRuntimeStates`:
 
 ```go
 func (r *Runtime) syncVMRuntimeStates(ctx context.Context, syncer *vm.RuntimeSyncer) {
+	// The resume classification must run BEFORE SyncAll. For an expired
+	// interrupted deploy with no domain, vmDeployInFlight returns false and
+	// markVMMissing rewrites the record to Missing with Active=false —
+	// destroying the very state DecideResumeAction needs to recognise it. A
+	// sweep running afterwards would return ResumeNone and the deploy would
+	// never be failed or cleaned up.
+	if r.vmDeployer != nil {
+		if err := r.vmDeployer.ResumeInterruptedDeploys(ctx, r.deployEpoch, pxehttp.RenderNoCloudLineConfig); err != nil {
+			log.Printf("vm-sync: resume interrupted deploys failed: %v", err)
+		}
+	}
 	leaseIPByMAC := r.vmLeaseIPsByMAC(ctx)
 	if err := syncer.SyncAll(ctx, leaseIPByMAC); err != nil {
 		log.Printf("vm-sync: runtime sync failed: %v", err)
 	}
-	if r.vmDeployer != nil {
-		if err := r.vmDeployer.ResumeInterruptedDeploys(ctx, pxehttp.RenderNoCloudLineConfig); err != nil {
-			log.Printf("vm-sync: resume interrupted deploys failed: %v", err)
-		}
-	}
 }
 ```
+
+**Do not let recovery block the tick.** As written above, `ResumeInterruptedDeploys` performs teardown and a full `Deploy` synchronously on the only VM runtime-sync loop. One stuck hypervisor or slow backing-image transfer would stall every subsequent tick and freeze status updates for all other VMs.
+
+Make the scan cheap and the work asynchronous: `ResumeInterruptedDeploys` classifies records and hands `ResumeRedeploy`/`ResumeFail` items to a bounded worker pool, returning immediately. Guard against a record being picked up twice by consecutive ticks — an in-flight set keyed by VM name, checked before dispatch, is sufficient. The classification itself only reads the store, so it stays fast.
+
+Because the resumed deploy now runs off the tick, it must stamp the current epoch on the record when it starts, exactly as `CreateVirtualMachine` does; otherwise the next tick classifies it as interrupted again and dispatches a duplicate.
 
 Check whether `Runtime` already stores the deployer. Run:
 
 `grep -n "vmDeployer" internal/app/app.go`
 
-`internal/app/app.go:156` builds it as a local `vmDeployer`. If it is not retained on `Runtime`, add a `vmDeployer *vm.Deployer` field to the `Runtime` struct and assign it there (`r.vmDeployer = vmDeployer`) before it is passed to the server config at line 201. Add the `pxehttp` import to `sync.go`.
+`internal/app/app.go:156` builds it as a local `vmDeployer`. If it is not retained on `Runtime`, add a `vmDeployer *vm.Deployer` field to the `Runtime` struct and assign it there (`r.vmDeployer = vmDeployer`) before it is passed to the server config at line 201. Add the `pxehttp` import to `sync.go`. `r.deployEpoch` comes from Task 3.
+
+- [ ] **Step 1b: Test the ordering through the real tick**
+
+Calling `ResumeInterruptedDeploys` directly cannot catch the ordering bug — only the combined tick can. Add a test in `internal/app` that seeds an expired interrupted deploy (Pending, active window, past deadline, prior epoch, no domain), runs `syncVMRuntimeStates` once, and asserts the record ends `Error` rather than `Missing`:
+
+```go
+	if got.Phase != vm.PhaseError {
+		t.Fatalf("expected expired interrupted deploy to be failed by the sweep, got %s", got.Phase)
+	}
+```
+
+If `internal/app` has no existing harness for building a `Runtime` with in-memory stores, follow whatever the package's current tests do; if none exist, place this test in `internal/vm` instead, calling the sweep and `SyncAll` in the same order the tick uses.
 
 - [ ] **Step 2: Build and run the suite**
 
@@ -954,6 +1353,58 @@ git commit -m "Reserve next Quick Deploy name on click to allow rapid consecutiv
 
 ---
 
+### Task 7b: Recover the post-definition crash window
+
+`markDomainDefined` persists at `internal/vm/deploy.go:91`, but `StartDomain` (`:102`) and the network-to-`hd` boot-device switch (`:108`) run after it. A crash in either gap leaves `DomainObservedAt` set, so the resume rules skip the record — yet the runtime sync loop only observes domain state; it never starts an inactive guest or completes the boot-device switch. The VM sits until its window times out, or reboots back into PXE.
+
+**Files:**
+- Modify: `internal/vm/resume.go`, `internal/vm/resume_test.go`
+
+- [ ] **Step 1: Extend the decision with a completion case**
+
+Add a `ResumeFinalize` action for records that are `Pending` with `DomainObservedAt` set and a prior epoch. Recovery does not redeploy: it inspects the domain and, if it is not running, calls `StartDomain` and reasserts the boot device. Both operations are idempotent — starting a running domain and setting an already-`hd` boot device are no-ops — so this path is safe to repeat.
+
+Do not fold this into `ResumeRedeploy`: tearing down a defined domain to rebuild it would discard an install that may already be under way.
+
+- [ ] **Step 2: Test both crash windows**
+
+Two cases, using the `resumeExecutor` fake: a domain that exists but is shut off (expect `StartDomain`), and a domain that is running with boot device still `network` (expect `SetDomainBootDevice` to `hd`). Assert no volume is deleted in either case.
+
+- [ ] **Step 3: Commit**
+
+```bash
+git add internal/vm/resume.go internal/vm/resume_test.go
+git commit -m "Complete post-definition deploy steps after an interrupted deploy"
+```
+
+---
+
+### Task 7c: Make backing image publication atomic
+
+`prepareCloudImageBacking` treats `VolumeExists` as proof a previous upload completed (`internal/vm/cloud_image.go:47-52`). A crash during `StorageVolUpload` leaves the shared hashed backing volume allocated but partially written. `TeardownHostState` will not remove it — it is keyed by image hash, not VM name — so a resumed deploy builds an overlay on corrupt data and the guest boots garbage.
+
+This is not resume-specific: any later deploy reusing that image hits the same corrupt backing.
+
+**Files:**
+- Modify: `internal/vm/cloud_image.go`, `internal/vm/cloud_image_download_test.go`
+
+- [ ] **Step 1: Make publication atomic**
+
+Upload to a temporary volume name and rename on success, so a partially written volume never occupies the final name. If the storage backend cannot rename, persist a completion marker that `prepareCloudImageBacking` verifies before treating an existing volume as reusable. Read `internal/libvirt/storage.go` to see which primitives are available before choosing.
+
+- [ ] **Step 2: Test the interrupted upload**
+
+Using the existing `fakeCloudImageStorage` (`internal/vm/deploy_test.go:15`), simulate an upload that fails partway and assert the next `prepareCloudImageBacking` re-uploads rather than reusing the partial volume.
+
+- [ ] **Step 3: Commit**
+
+```bash
+git add internal/vm/cloud_image.go internal/vm/cloud_image_download_test.go
+git commit -m "Publish cloud image backing volumes atomically"
+```
+
+---
+
 ### Task 8: Full verification
 
 **Files:** none modified unless a defect is found.
@@ -972,13 +1423,21 @@ Walk the "Verification" section of `docs/superpowers/specs/2026-07-25-quick-depl
 
 | Item | Covered by |
 |---|---|
+| **Live deploy untouched by the sweep** | Task 5 Step 1 (`TestResumeInterruptedDeploysLeavesLiveDeployAlone`) |
 | Idempotency (both install paths) | Task 5 Steps 1, 5 |
-| Duplicate names | Task 3 Step 1 |
-| Restart resume + deadline expiry | Task 5 Step 1 |
-| Resume decision matrix | Task 4 Step 1 |
+| Duplicate names (concurrent) | Task 2b Step 1 + Task 3 Step 1 |
+| Restart resume + deadline expiry with cleanup | Task 5 Step 1 |
+| Resume decision matrix incl. epoch ownership | Task 4 Step 1 |
+| Sweep-before-SyncAll ordering via the real tick | Task 6 Step 1b |
+| Async response proven with a blocking deployer | Task 3 Step 1 |
+| Teardown not-attempted marker preserved | Task 2 Step 5b |
+| Stale-deploy identity check | Task 3 Step 4 |
+| Post-definition crash windows | Task 7b Step 2 |
+| Backing image integrity | Task 7c Step 2 |
 | Existing sync tests still pass | Task 3 Step 6 |
 | Cascade delete teardown | Task 2 Step 1 + Task 3 Step 4 |
 | Rapid clicks | Task 7 Step 4 |
+| Sync loop not blocked by recovery | Task 6 Step 1 (worker pool) |
 
 If any row has no test, write one now rather than marking this task done.
 
