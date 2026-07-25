@@ -2,30 +2,35 @@ import type { PhaseId } from '../../lib/deploy-phases'
 
 export type PhaseColor = { fill: string; border: string }
 
-// Muted fills with darker borders, following the app's existing status
-// palette family (see phaseClass/powerStateClass in lib/formatters.ts).
-export const PHASE_COLORS: Record<PhaseId, PhaseColor> = {
-  'power-on': { fill: '#c8d0e0', border: '#8090b0' },
-  'installer-boot': { fill: '#d8cce8', border: '#9a86c0' },
-  'inventory-config': { fill: '#f8e6cc', border: '#c09a54' },
-  'image-apply': { fill: '#a0d8c0', border: '#3a9a6e' },
-  'reboot-os': { fill: '#aad4e0', border: '#5a94ac' },
-  untracked: { fill: '#e4e0da', border: '#b0aca4' },
+// Phase fills resolve through CSS custom properties declared in styles.css, so
+// the ramp swaps with the light/dark appearance the same way every other colour
+// does. Band widths are data-derived and cannot be utility classes, which is
+// why these are inline style values rather than Tailwind classes.
+function phaseVar(phaseId: PhaseId, suffix: '' | '-running'): string {
+  return `var(--phase-${phaseId}${suffix})`
 }
 
-export const FAILED_COLOR: PhaseColor = { fill: '#e8a0a0', border: '#c05050' }
+function phaseLine(phaseId: PhaseId): string {
+  return `var(--phase-${phaseId}-line)`
+}
+
+const PHASE_IDS: PhaseId[] = ['power-on', 'installer-boot', 'inventory-config', 'image-apply', 'reboot-os', 'untracked']
+
+function buildRamp(suffix: '' | '-running'): Record<PhaseId, PhaseColor> {
+  return Object.fromEntries(
+    PHASE_IDS.map((id) => [id, { fill: phaseVar(id, suffix), border: phaseLine(id) }])
+  ) as Record<PhaseId, PhaseColor>
+}
+
+/** Finished phases. */
+export const PHASE_COLORS: Record<PhaseId, PhaseColor> = buildRamp('')
 
 // Tone, not motion, distinguishes done / running / pending. A running phase is
-// a paler tint of its own finished fill; a phase not yet reached is the palest
+// a tint of its own finished fill; a phase not yet reached is the palest
 // neutral. Nothing pulses, sweeps or spins.
-export const RUNNING_COLORS: Record<PhaseId, PhaseColor> = {
-  'power-on': { fill: '#e0e5ee', border: '#8090b0' },
-  'installer-boot': { fill: '#ebe4f3', border: '#9a86c0' },
-  'inventory-config': { fill: '#fcf2e2', border: '#c09a54' },
-  'image-apply': { fill: '#c9e8da', border: '#3a9a6e' },
-  'reboot-os': { fill: '#d3e7ee', border: '#5a94ac' },
-  untracked: { fill: '#f0eeea', border: '#b0aca4' },
-}
+export const RUNNING_COLORS: Record<PhaseId, PhaseColor> = buildRamp('-running')
+
+export const FAILED_COLOR: PhaseColor = { fill: 'var(--phase-failed)', border: 'var(--phase-failed-line)' }
 
 /** Phases the attempt has not reached yet. */
 export const NOT_STARTED_COLOR: PhaseColor = { fill: 'var(--color-track)', border: 'var(--color-line-soft)' }
