@@ -288,13 +288,17 @@ export default function App() {
 
   const vmOSImages = useMemo(() => osImages.filter((img) => supportsDeploymentTarget(img, 'vm')), [osImages])
 
-  const refreshQuickDeployAudit = useCallback(async () => {
+  // Rebuilt every render on purpose: useVMQuickDeploy holds this in a ref it
+  // reassigns each render, so the deploy reads the view and filter as they are
+  // when it finishes rather than when it started.
+  const refreshQuickDeployAudit = async () => {
     const target = quickDeployAuditRefreshTarget(view, activityMachineFilter)
     if (!target) return
     await refreshAudit(target.machineName)
-  }, [view, activityMachineFilter, refreshAudit])
+  }
 
   const quickDeploy = useVMQuickDeploy({
+    token,
     virtualMachines,
     vmOSImages,
     onVirtualMachineUpsert: upsertVirtualMachine,

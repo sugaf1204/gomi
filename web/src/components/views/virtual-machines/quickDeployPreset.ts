@@ -48,8 +48,17 @@ export function readQuickDeployPreset(): QuickDeployPreset {
   }
 }
 
-// Cloud-Init user-data routinely carries SSH keys and tokens, so it is dropped
-// alongside the login password rather than written to localStorage.
+// The fields that must never outlive the moment they were typed in. Cloud-Init
+// user-data routinely carries SSH keys and tokens, and the login password is a
+// credential, so neither is written to localStorage — and for the same reason
+// neither may survive a logout in memory. One list drives both, since "not
+// persisted" and "not carried across sessions" are the same property here.
+const QUICK_DEPLOY_SECRET_FIELDS = {
+  loginUserPassword: '',
+  loginUserPasswordTouched: false,
+  cloudInitUserData: ''
+} as const satisfies Partial<QuickDeployPreset>
+
 export function writeQuickDeployPreset(preset: QuickDeployPreset) {
   if (typeof window === 'undefined') return
   try {
@@ -61,6 +70,14 @@ export function writeQuickDeployPreset(preset: QuickDeployPreset) {
   } catch {
     // ignore localStorage access errors
   }
+}
+
+// Clears the secrets while keeping the preset the user configured. Wiping the
+// whole preset would discard the name, count, resources and image that the
+// feature exists to remember, all of which are already in localStorage and are
+// not session-scoped.
+export function clearQuickDeploySecrets(preset: QuickDeployPreset): QuickDeployPreset {
+  return { ...preset, ...QUICK_DEPLOY_SECRET_FIELDS }
 }
 
 // The inline Cloud-Init template name is a GOMI resource identifier, so GOMI

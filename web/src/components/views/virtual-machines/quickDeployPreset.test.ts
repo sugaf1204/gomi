@@ -1,5 +1,6 @@
 import { beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import {
+  clearQuickDeploySecrets,
   invalidVMConfigReason,
   quickDeployPresetReady,
   quickDeployVMName,
@@ -448,5 +449,65 @@ describe('quickDeployPresetReady', () => {
     const invalid = { cpuCores: '0' }
     expect(invalidVMConfigReason({ ...initialQuickDeployPreset, ...invalid })).toBeDefined()
     expect(ready(invalid)).toBe(false)
+  })
+})
+
+describe('clearQuickDeploySecrets', () => {
+  const configured = {
+    ...initialQuickDeployPreset,
+    name: 'devvm',
+    count: '7',
+    osImageRef: 'ubuntu-24',
+    cpuCores: '8',
+    memoryMB: '4096',
+    loginUserUsername: 'ubuntu',
+    loginUserPassword: 'sekrit',
+    loginUserPasswordTouched: true,
+    cloudInitMode: 'create' as const,
+    cloudInitTemplateName: 'ci-{{ hostname }}',
+    cloudInitUserData: '#cloud-config\nssh_authorized_keys:\n  - ssh-ed25519 AAAA'
+  }
+
+  // The hook is mounted above App's unauthenticated early return, so it stays
+  // alive across a logout; without this the next login in the same tab would
+  // inherit the previous user's credentials.
+  it('drops the login password and the inline user-data', () => {
+    const cleared = clearQuickDeploySecrets(configured)
+
+    expect(cleared.loginUserPassword).toBe('')
+    expect(cleared.loginUserPasswordTouched).toBe(false)
+    expect(cleared.cloudInitUserData).toBe('')
+  })
+
+  it('keeps the configuration the preset exists to remember', () => {
+    const cleared = clearQuickDeploySecrets(configured)
+
+    expect(cleared.name).toBe('devvm')
+    expect(cleared.count).toBe('7')
+    expect(cleared.osImageRef).toBe('ubuntu-24')
+    expect(cleared.cpuCores).toBe('8')
+    expect(cleared.memoryMB).toBe('4096')
+    expect(cleared.loginUserUsername).toBe('ubuntu')
+    expect(cleared.cloudInitTemplateName).toBe('ci-{{ hostname }}')
+  })
+
+  it('does not mutate the preset it is given', () => {
+    clearQuickDeploySecrets(configured)
+
+    expect(configured.loginUserPassword).toBe('sekrit')
+  })
+
+  // "Never written to disk" and "never carried across a session" are the same
+  // property, so the two lists must not drift: anything writeQuickDeployPreset
+  // strips has to be cleared here too.
+  it('clears every field that is withheld from localStorage', () => {
+    writeQuickDeployPreset(configured)
+    const persisted = JSON.parse(localStorage.getItem(QUICK_DEPLOY_STORAGE_KEY) ?? '{}')
+    const cleared = clearQuickDeploySecrets(configured) as Record<string, unknown>
+
+    for (const field of ['loginUserPassword', 'cloudInitUserData'] as const) {
+      expect(persisted).not.toHaveProperty(field)
+      expect(cleared[field]).toBe('')
+    }
   })
 })

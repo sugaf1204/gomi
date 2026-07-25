@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { api } from '../api'
 import type { VirtualMachine } from '../types'
 import {
@@ -6,6 +6,7 @@ import {
   buildVMNetworkPayload
 } from '../components/views/virtual-machines/useVirtualMachineOperations'
 import {
+  clearQuickDeploySecrets,
   invalidVMConfigReason,
   quickDeployPresetReady,
   quickDeployVMName,
@@ -18,6 +19,9 @@ import type { QuickDeployPreset } from '../components/views/virtual-machines/vmF
 import type { ToastTone } from '../components/ui/ToastRegion'
 
 type Params = {
+  // The hook is mounted above App's unauthenticated early return, so it stays
+  // alive across a logout. Changing identity clears the session-scoped state.
+  token: string | null
   virtualMachines: VirtualMachine[]
   // VM-capable images only: a preset naming an image the dialog cannot offer
   // must not pass validation. Only `name` is read, so the narrow shape stands
@@ -28,6 +32,9 @@ type Params = {
   // refreshAll does not fetch audit events, and the audit effect is keyed on
   // view/filter changes that a header deploy does not cause. Without this the
   // server's create-vm event stays off an already-open Activity timeline.
+  //
+  // Called after the deploy settles, so it must read the view and filter as
+  // they are at that moment, not as they were when the deploy started.
   refreshAuditIfVisible: () => void | Promise<void>
 }
 
@@ -52,6 +59,7 @@ function notify(message: string, tone: ToastTone) {
 // shared header. Unlike the in-view version this replaced, it deliberately does
 // not select the new VM: that only makes sense while the VM list is on screen.
 export function useVMQuickDeploy({
+  token,
   virtualMachines,
   vmOSImages,
   onVirtualMachineUpsert,
@@ -62,9 +70,24 @@ export function useVMQuickDeploy({
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [deploying, setDeploying] = useState(false)
 
+  // deploy() awaits twice before calling this, so the callback captured at
+  // deploy time can be stale: the user may have changed the Activity filter or
+  // navigated into Activity while the request was in flight.
+  const refreshAuditRef = useRef(refreshAuditIfVisible)
+  refreshAuditRef.current = refreshAuditIfVisible
+
   useEffect(() => {
     writeQuickDeployPreset(preset)
   }, [preset])
+
+  // The password and inline user-data are kept out of localStorage because they
+  // are secrets; leaving them in memory would hand them to whoever logs in next
+  // in the same tab. The rest of the preset is already persisted and is not
+  // session-scoped, so only the secrets and the open dialog are cleared.
+  useEffect(() => {
+    setPreset(clearQuickDeploySecrets)
+    setSettingsOpen(false)
+  }, [token])
 
   useEffect(() => {
     if (!settingsOpen) return
@@ -131,7 +154,7 @@ export function useVMQuickDeploy({
       })
       onVirtualMachineUpsert(result)
       await refreshAll()
-      await refreshAuditIfVisible()
+      await refreshAuditRef.current()
       // The deploy can be triggered from any view, so a toast is often the only
       // sign that anything happened.
       if (result.phase === 'Error') {
