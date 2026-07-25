@@ -36,21 +36,11 @@ export type VMForm = VMConfigForm & {
 
 export type VMReinstallForm = VMConfigForm
 
-export type QuickDeployPreset = {
+// The preset carries exactly the fields a normal VM create carries, so any
+// field added to the create form becomes settable in the preset for free.
+export type QuickDeployPreset = VMConfigForm & {
   name: string
   count: string
-  hypervisorRef: string
-  cpuCores: string
-  memoryMB: string
-  diskGB: string
-  osImageRef: string
-  subnetRef: string
-  bridge: string
-  ipAssignment: 'dhcp'
-  cloudInitRefs: string[]
-  sshKeyRefs: string[]
-  loginUserUsername: string
-  loginUserPassword: string
 }
 
 export type UpdateVMConfigForm = (updater: (current: VMConfigForm) => VMConfigForm) => void
@@ -131,18 +121,7 @@ export const initialReinstallForm: VMReinstallForm = { ...initialVMConfigForm }
 export const initialQuickDeployPreset: QuickDeployPreset = {
   name: '',
   count: '1',
-  hypervisorRef: '',
-  cpuCores: '2',
-  memoryMB: '2048',
-  diskGB: '20',
-  osImageRef: '',
-  subnetRef: '',
-  bridge: '',
-  ipAssignment: 'dhcp',
-  cloudInitRefs: [],
-  sshKeyRefs: [],
-  loginUserUsername: '',
-  loginUserPassword: ''
+  ...initialVMConfigForm
 }
 
 export const initialPowerConfirm: VMPowerConfirmState = {
@@ -175,25 +154,73 @@ export const initialMigrateConfirm: VMMigrateConfirmState = {
   running: false
 }
 
+type StoredQuickDeployPreset = Partial<QuickDeployPreset> & {
+  count?: string | number
+  // Legacy shape: the preset used to select multiple Cloud-Init templates.
+  cloudInitRefs?: unknown
+}
+
+// Legacy presets selected multiple Cloud-Init templates. The unified form models
+// a single template, so the first entry wins and the rest are dropped.
+function migrateCloudInitSelection(parsed: StoredQuickDeployPreset) {
+  if (parsed.cloudInitMode) {
+    return {
+      cloudInitMode: parsed.cloudInitMode,
+      cloudInitExistingRef: parsed.cloudInitExistingRef ?? ''
+    }
+  }
+  const legacyRefs = Array.isArray(parsed.cloudInitRefs)
+    ? parsed.cloudInitRefs.filter((ref): ref is string => typeof ref === 'string' && ref.trim().length > 0)
+    : []
+  if (legacyRefs.length === 0) {
+    return { cloudInitMode: 'none' as const, cloudInitExistingRef: '' }
+  }
+  return { cloudInitMode: 'existing' as const, cloudInitExistingRef: legacyRefs[0] }
+}
+
 export function readQuickDeployPreset(): QuickDeployPreset {
   if (typeof window === 'undefined') return initialQuickDeployPreset
   try {
     const raw = localStorage.getItem(QUICK_DEPLOY_STORAGE_KEY)
     if (!raw) return initialQuickDeployPreset
-    const parsed = JSON.parse(raw) as Partial<QuickDeployPreset & { count: number }>
+    const parsed = JSON.parse(raw) as StoredQuickDeployPreset
     return {
       ...initialQuickDeployPreset,
       ...parsed,
       name: typeof parsed.name === 'string' ? parsed.name : '',
       count: String(parsed.count ?? '1'),
-      ipAssignment: 'dhcp',
+      ...migrateCloudInitSelection(parsed),
+      // Secrets are never persisted; see writeQuickDeployPreset.
       loginUserPassword: '',
-      cloudInitRefs: Array.isArray(parsed.cloudInitRefs) ? parsed.cloudInitRefs.filter((ref): ref is string => typeof ref === 'string') : [],
+      loginUserPasswordTouched: false,
+      cloudInitUserData: '',
       sshKeyRefs: Array.isArray(parsed.sshKeyRefs) ? parsed.sshKeyRefs.filter((ref): ref is string => typeof ref === 'string') : []
     }
   } catch {
     return initialQuickDeployPreset
   }
+}
+
+// Cloud-Init user-data routinely carries SSH keys and tokens, so it is dropped
+// alongside the login password rather than written to localStorage.
+export function writeQuickDeployPreset(preset: QuickDeployPreset) {
+  if (typeof window === 'undefined') return
+  try {
+    const { loginUserPassword: _password, cloudInitUserData: _userData, ...safePreset } = preset
+    localStorage.setItem(QUICK_DEPLOY_STORAGE_KEY, JSON.stringify({
+      ...safePreset,
+      count: Math.max(1, Number(preset.count) || 1)
+    }))
+  } catch {
+    // ignore localStorage access errors
+  }
+}
+
+// The inline Cloud-Init template name is a GOMI resource identifier, so GOMI
+// resolves it at deploy time. The user-data body itself is left untouched:
+// cloud-init renders its own Jinja on the target from instance-data.
+export function renderPresetTemplateName(rawName: string, hostname: string): string {
+  return rawName.replace(/\{\{\s*hostname\s*\}\}/g, hostname)
 }
 
 export function formatCPUPinning(cpuPinning?: Record<number, string>) {

@@ -1,6 +1,5 @@
-import type { Dispatch, SetStateAction } from 'react'
+import type { Dispatch, ReactNode, SetStateAction } from 'react'
 import { ModalOverlay } from '../../ui/ModalOverlay'
-import type { CloudInitTemplate, Hypervisor, OSImage, SSHKey, Subnet } from '../../../types'
 import type { QuickDeployPreset } from './vmFormState'
 
 type VMQuickDeployDialogProps = {
@@ -8,17 +7,11 @@ type VMQuickDeployDialogProps = {
   preset: QuickDeployPreset
   setPreset: Dispatch<SetStateAction<QuickDeployPreset>>
   quickDeploying: boolean
-  hypervisors: Hypervisor[]
-  osImages: OSImage[]
-  cloudInits: CloudInitTemplate[]
-  sshKeys: SSHKey[]
-  subnets: Subnet[]
   nextName: (preset: QuickDeployPreset) => string
   isReady: (preset: QuickDeployPreset) => boolean
   onClose: () => void
   onDeploy: () => void
-  onToggleCloudInitRef: (ref: string) => void
-  onToggleSSHKeyRef: (ref: string) => void
+  children: ReactNode
 }
 
 export function VMQuickDeployDialog({
@@ -26,17 +19,11 @@ export function VMQuickDeployDialog({
   preset,
   setPreset,
   quickDeploying,
-  hypervisors,
-  osImages,
-  cloudInits,
-  sshKeys,
-  subnets,
   nextName,
   isReady,
   onClose,
   onDeploy,
-  onToggleCloudInitRef,
-  onToggleSSHKeyRef
+  children
 }: VMQuickDeployDialogProps) {
   if (!open) return null
 
@@ -68,104 +55,11 @@ export function VMQuickDeployDialog({
             </label>
           </div>
 
-          <label className="text-[0.84rem]">
-            Hypervisor
-            <select value={preset.hypervisorRef} onChange={(e) => {
-              const hvName = e.target.value
-              const hv = hypervisors.find((item) => item.name === hvName)
-              setPreset((current) => ({ ...current, hypervisorRef: hvName, bridge: hv?.bridgeName || current.bridge }))
-            }}>
-              <option value="">Auto (lowest usage)</option>
-              {hypervisors.map((hv) => (
-                <option key={hv.name} value={hv.name}>{hv.name} ({hv.connection.host}){hv.bridgeName ? ` [${hv.bridgeName}]` : ''}</option>
-              ))}
-            </select>
-          </label>
+          {children}
 
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-[0.45rem]">
-            <label className="text-[0.84rem] min-w-0">
-              CPU Cores
-              <input type="number" min="1" value={preset.cpuCores} onChange={(e) => setPreset((current) => ({ ...current, cpuCores: e.target.value }))} />
-            </label>
-            <label className="text-[0.84rem] min-w-0">
-              Memory (MB)
-              <input type="number" min="256" value={preset.memoryMB} onChange={(e) => setPreset((current) => ({ ...current, memoryMB: e.target.value }))} />
-            </label>
-            <label className="text-[0.84rem] min-w-0">
-              Disk (GB)
-              <input type="number" min="1" value={preset.diskGB} onChange={(e) => setPreset((current) => ({ ...current, diskGB: e.target.value }))} />
-            </label>
-          </div>
-
-          <label className="text-[0.84rem]">
-            OS Image
-            <select required value={preset.osImageRef} onChange={(e) => setPreset((current) => ({ ...current, osImageRef: e.target.value }))}>
-              <option value="">Select...</option>
-              {osImages.map((img) => (
-                <option key={img.name} value={img.name}>{img.name} ({img.osFamily} {img.osVersion}{img.variant ? ` ${img.variant}` : ''})</option>
-              ))}
-            </select>
-          </label>
-
-          <fieldset className="border border-line rounded p-0 m-0">
-            <legend className="text-[0.84rem] font-medium px-[0.4rem] ml-[0.3rem]">Network</legend>
-            <div className="grid gap-[0.45rem] p-[0.7rem]">
-              <label className="text-[0.84rem]">
-                Subnet
-                <select value={preset.subnetRef} onChange={(e) => {
-                  const subnetName = e.target.value
-                  const subnet = subnets.find((item) => item.name === subnetName)
-                  setPreset((current) => ({ ...current, subnetRef: subnetName, bridge: subnet?.spec.pxeInterface || '' }))
-                }}>
-                  <option value="">None (use default)</option>
-                  {subnets.map((subnet) => (
-                    <option key={subnet.name} value={subnet.name}>{subnet.name} ({subnet.spec.cidr})</option>
-                  ))}
-                </select>
-              </label>
-              <label className="text-[0.84rem]">
-                Bridge
-                <input value={preset.bridge} onChange={(e) => setPreset((current) => ({ ...current, bridge: e.target.value }))} placeholder="virbr0" />
-              </label>
-              <p className="m-0 text-[0.78rem] text-ink-soft">Quick Deploy always uses DHCP. Use Create for static IPs.</p>
-            </div>
-          </fieldset>
-
-          <fieldset className="border border-line rounded p-0 m-0">
-            <legend className="text-[0.84rem] font-medium px-[0.4rem] ml-[0.3rem]">Cloud-Init</legend>
-            <div className="grid gap-[0.35rem] p-[0.7rem]">
-              {cloudInits.length === 0 && <p className="m-0 text-[0.78rem] text-ink-soft">No Cloud-Init templates available.</p>}
-              {cloudInits.map((ci) => (
-                <label key={ci.name} className="flex items-center gap-[0.45rem] text-[0.84rem] cursor-pointer">
-                  <input type="checkbox" className="w-[0.95rem] h-[0.95rem] m-0 accent-[#2b7a78]" checked={preset.cloudInitRefs.includes(ci.name)} onChange={() => onToggleCloudInitRef(ci.name)} />
-                  {ci.name}
-                </label>
-              ))}
-            </div>
-          </fieldset>
-
-          <fieldset className="border border-line rounded p-0 m-0">
-            <legend className="text-[0.84rem] font-medium px-[0.4rem] ml-[0.3rem]">SSH Access</legend>
-            <div className="grid gap-[0.45rem] p-[0.7rem]">
-              {sshKeys.length === 0 && <p className="m-0 text-[0.78rem] text-ink-soft">No SSH keys available.</p>}
-              {sshKeys.map((key) => (
-                <label key={key.name} className="flex items-center gap-[0.45rem] text-[0.84rem] cursor-pointer">
-                  <input type="checkbox" className="w-[0.95rem] h-[0.95rem] m-0 accent-[#2b7a78]" checked={preset.sshKeyRefs.includes(key.name)} onChange={() => onToggleSSHKeyRef(key.name)} />
-                  {key.name}
-                </label>
-              ))}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-[0.45rem]">
-                <label className="text-[0.84rem] min-w-0">
-                  Login Username
-                  <input value={preset.loginUserUsername} onChange={(e) => setPreset((current) => ({ ...current, loginUserUsername: e.target.value }))} placeholder="e.g. ubuntu" />
-                </label>
-                <label className="text-[0.84rem] min-w-0">
-                  Login Password
-                  <input type="password" value={preset.loginUserPassword} onChange={(e) => setPreset((current) => ({ ...current, loginUserPassword: e.target.value }))} />
-                </label>
-              </div>
-            </div>
-          </fieldset>
+          <p className="m-0 text-[0.78rem] text-ink-soft">
+            Cloud-Init user-data is not saved with the preset because it may contain secrets. Template name and mode are saved.
+          </p>
 
           <div className="flex justify-between gap-[0.45rem] pt-[0.2rem]">
             <button type="button" onClick={() => setPreset((current) => ({ ...current, count: '1' }))} disabled={quickDeploying}>Reset Count</button>

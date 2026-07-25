@@ -121,6 +121,11 @@ export function VMConfigFields({
               placeholder="#cloud-config\nusers:\n  - default"
             />
           </label>
+          <p className="m-0 text-[0.78rem] text-ink-soft">
+            Start user-data with <code>## template: jinja</code> to use Jinja2, rendered by cloud-init on the target
+            (e.g. <code>{'{{ v1.local_hostname }}'}</code>). The template name accepts <code>{'{{ hostname }}'}</code>,
+            substituted with the VM name at deploy time.
+          </p>
         </>
       )}
       <SSHAccessFieldset

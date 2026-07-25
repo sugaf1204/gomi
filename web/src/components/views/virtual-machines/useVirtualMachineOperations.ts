@@ -11,6 +11,7 @@ import {
   initialMigrateConfirm,
   initialPowerConfirm,
   mergeSelectedCloudInitRef,
+  renderPresetTemplateName,
   toReinstallForm
 } from './vmFormState'
 import type {
@@ -56,7 +57,6 @@ type VMOperationsArgs = {
   checkedNames: string[]
   virtualMachines: VirtualMachine[]
   vmOSImages: OSImage[]
-  osImages: OSImage[]
   hypervisors: Hypervisor[]
   subnets: Subnet[]
   onVirtualMachineUpsert: (virtualMachine: VirtualMachine) => void
@@ -76,15 +76,19 @@ export function useVirtualMachineOperations(args: VMOperationsArgs) {
     if (!preset.name.trim()) return false
     if ((Number(preset.count) || 0) < 1) return false
     if (!preset.osImageRef.trim()) return false
-    return args.osImages.some((img) => img.name === preset.osImageRef)
+    if (preset.ipAssignment === 'static' && !preset.staticIP.trim()) return false
+    if (preset.cloudInitMode === 'create' && !(preset.cloudInitTemplateName.trim() && preset.cloudInitUserData.trim())) return false
+    return args.vmOSImages.some((img) => img.name === preset.osImageRef)
   }
 
-  async function resolveCloudInitRefs(formState: VMConfigForm, description: string, currentRefs: string[] = []) {
+  // hostname is substituted into the template name only. The user-data body is
+  // stored verbatim so cloud-init renders its own Jinja on the target.
+  async function resolveCloudInitRefs(formState: VMConfigForm, description: string, currentRefs: string[] = [], hostname = '') {
     if (formState.cloudInitMode === 'none') return [] as string[]
     if (formState.cloudInitMode === 'existing') {
       return mergeSelectedCloudInitRef(formState.cloudInitExistingRef.trim(), currentRefs)
     }
-    const templateName = formState.cloudInitTemplateName.trim()
+    const templateName = renderPresetTemplateName(formState.cloudInitTemplateName.trim(), hostname)
     const userData = formState.cloudInitUserData.trim()
     if (!templateName || !userData) throw new Error('Cloud-Init inline creation requires both template name and user-data')
     const created = await api.createCloudInitTemplate({ name: templateName, description, userData })
@@ -134,24 +138,14 @@ export function useVirtualMachineOperations(args: VMOperationsArgs) {
       return
     }
     const vmName = quickDeployVMName(preset)
-    const vmNetwork = (preset.bridge || preset.subnetRef)
-      ? [{ name: 'default', bridge: preset.bridge || undefined, network: preset.subnetRef || undefined }]
-      : undefined
 
     args.setQuickDeploying(true)
     try {
+      const cloudInitRefs = await resolveCloudInitRefs(preset, 'Auto-generated from Quick Deploy preset', [], vmName)
+      const vmNetwork = buildVMNetworkPayload(preset)
       const result = await api.createVirtualMachine({
-        name: vmName,
-        hypervisorRef: preset.hypervisorRef || '',
-        resources: { cpuCores: Number(preset.cpuCores) || 2, memoryMB: Number(preset.memoryMB) || 2048, diskGB: Number(preset.diskGB) || 20 },
-        osImageRef: preset.osImageRef,
-        cloudInitRefs: preset.cloudInitRefs.length > 0 ? preset.cloudInitRefs : undefined,
-        powerControlMethod: 'libvirt',
-        ...(vmNetwork ? { network: vmNetwork } : {}),
-        ipAssignment: preset.ipAssignment,
-        ...(preset.subnetRef ? { subnetRef: preset.subnetRef } : {}),
-        sshKeyRefs: preset.sshKeyRefs,
-        ...(preset.loginUserUsername.trim() ? { loginUser: { username: preset.loginUserUsername.trim(), ...(preset.loginUserPassword.trim() ? { password: preset.loginUserPassword.trim() } : {}) } } : {})
+        ...buildCreateVMPayload(preset, cloudInitRefs, vmNetwork),
+        name: vmName
       })
       args.onVirtualMachineUpsert(result)
       args.setVMSelection(vmName)
@@ -354,14 +348,6 @@ export function useVirtualMachineOperations(args: VMOperationsArgs) {
     if (action === 'redeploy') args.checkedNames.length > 0 ? openBulkRedeployDialog(targets) : args.selectedVM && openReinstallDialog(args.selectedVM)
   }
 
-  function toggleQuickDeployCloudInitRef(ref: string) {
-    args.setQuickDeployPreset((current) => ({ ...current, cloudInitRefs: toggleRef(current.cloudInitRefs, ref) }))
-  }
-
-  function toggleQuickDeploySSHKeyRef(ref: string) {
-    args.setQuickDeployPreset((current) => ({ ...current, sshKeyRefs: toggleRef(current.sshKeyRefs, ref) }))
-  }
-
   function bridgePlaceholder(formState: VMConfigForm): string {
     const hypervisor = args.hypervisors.find((item) => item.name === formState.hypervisorRef)
     if (hypervisor?.bridgeName) return hypervisor.bridgeName
@@ -390,13 +376,11 @@ export function useVirtualMachineOperations(args: VMOperationsArgs) {
     handleBulkRedeployConfirm,
     handleMigrateConfirm,
     runPrimaryAction,
-    toggleQuickDeployCloudInitRef,
-    toggleQuickDeploySSHKeyRef,
     bridgePlaceholder
   }
 }
 
-function buildVMNetworkPayload(formState: VMConfigForm, currentVM?: VirtualMachine): VirtualMachine['network'] | undefined {
+export function buildVMNetworkPayload(formState: VMConfigForm, currentVM?: VirtualMachine): VirtualMachine['network'] | undefined {
   const primaryNetwork = {
     ...(currentVM?.network?.[0] ?? {}),
     name: currentVM?.network?.[0]?.name || 'default',
@@ -409,7 +393,7 @@ function buildVMNetworkPayload(formState: VMConfigForm, currentVM?: VirtualMachi
   return undefined
 }
 
-function buildCreateVMPayload(form: VMForm, cloudInitRefs: string[], vmNetwork: VirtualMachine['network'] | undefined) {
+export function buildCreateVMPayload(form: VMConfigForm, cloudInitRefs: string[], vmNetwork: VirtualMachine['network'] | undefined) {
   const advancedOptions = buildAdvancedOptions(form)
   return {
     hypervisorRef: form.hypervisorRef || '',
@@ -425,8 +409,4 @@ function buildCreateVMPayload(form: VMForm, cloudInitRefs: string[], vmNetwork: 
     sshKeyRefs: form.sshKeyRefs,
     ...(form.loginUserUsername.trim() ? { loginUser: { username: form.loginUserUsername.trim(), ...(form.loginUserPassword.trim() ? { password: form.loginUserPassword.trim() } : {}) } } : {})
   }
-}
-
-function toggleRef(refs: string[], ref: string) {
-  return refs.includes(ref) ? refs.filter((item) => item !== ref) : [...refs, ref]
 }
