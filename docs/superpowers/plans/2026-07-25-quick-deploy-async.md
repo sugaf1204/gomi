@@ -2,9 +2,13 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Make Quick Deploy return control to the user immediately, while guaranteeing that repeated clicks, page reloads, and server restarts never corrupt or strand a deploy.
+> **SCOPE — read before executing anything.** Only **Tasks 1, 2, 2b, 3 and 7** are approved for implementation. **Tasks 2c, 3b, 4, 5, 6, 7b and 7c are DEFERRED and must not be built**: five review rounds found 32 defects in that recovery design, three of which cannot be fixed inside this feature (see the fifth-round log below). They are retained as a record of the constraints, not as work items. An agent executing this plan task-by-task must skip them, and Task 8 verifies only the approved subset.
 
-**Architecture:** The VM create handler persists the record and returns `201` at once, running `Deploy()` on a detached-context goroutine so a disconnecting client cannot cancel it. A resume sweep inside the existing VM runtime sync loop restarts deploys that a process restart interrupted, using the already-persisted `ProvisioningStatus` fields to decide whether a deploy had reached domain definition. Because volume creation is not idempotent, the sweep tears down leftover host state before re-running.
+**Goal:** Make Quick Deploy return control to the user immediately, so consecutive deploys are possible, without letting repeated clicks or a page reload corrupt a deploy.
+
+**Architecture:** The VM create handler persists the record and returns `201` at once, running `Deploy()` on a detached-context goroutine so a disconnecting client cannot cancel it. Duplicate names are rejected atomically at the store. The UI reserves the next name on click rather than after the response.
+
+**Out of scope:** automatic recovery of deploys interrupted by a *server restart*. Such a record remains `Pending` until its provisioning window expires, after which the existing runtime sync loop marks it `Missing` — the same behaviour as today. Recovery is the operator's existing Redeploy action. See the design doc's status section for why the automatic path was abandoned.
 
 **Tech Stack:** Go 1.25.4, Echo v4, libvirt (go-libvirt RPC), SQLite/PostgreSQL, React 19 + TypeScript + Vite 7.
 
@@ -565,6 +569,8 @@ git commit -m "Add insert-only VM store operation for atomic duplicate rejection
 
 ### Task 2c: Add the deploy owner epoch
 
+> **DEFERRED — do not implement.** Part of the abandoned restart-recovery scope; retained only as a record of the constraints found in review.
+
 Without this, the sweep cannot distinguish a crashed deploy from a healthy one that has not yet defined its domain — they are byte-identical in the database — and would tear down live deploys every 5 seconds.
 
 **Files:**
@@ -724,19 +730,52 @@ func vmCreateBody(name, hypervisorRef string) map[string]any {
 	}
 }
 
-func TestCreateVirtualMachineRejectsDuplicateName(t *testing.T) {
+// Sequential requests cannot prove atomicity: a non-atomic check-then-insert
+// passes this while still letting two simultaneous requests both succeed. Fire
+// both from a barrier so they contend at the store.
+func TestCreateVirtualMachineRejectsDuplicateNameConcurrently(t *testing.T) {
 	env := setupTestEnv(t)
 	seedVMHypervisor(t, env, "hv-dup")
 	body := vmCreateBody("vm-dup", "hv-dup")
 
-	rec1 := doRequest(env.echo, http.MethodPost, "/api/v1/virtual-machines", body, env.token)
-	if rec1.Code != http.StatusCreated {
-		t.Fatalf("first create: expected 201, got %d: %s", rec1.Code, rec1.Body.String())
+	const racers = 2
+	start := make(chan struct{})
+	codes := make(chan int, racers)
+	var wg sync.WaitGroup
+	for i := 0; i < racers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			codes <- doRequest(env.echo, http.MethodPost, "/api/v1/virtual-machines", body, env.token).Code
+		}()
+	}
+	close(start)
+	wg.Wait()
+	close(codes)
+
+	created, conflict := 0, 0
+	for code := range codes {
+		switch code {
+		case http.StatusCreated:
+			created++
+		case http.StatusConflict:
+			conflict++
+		default:
+			t.Fatalf("unexpected status %d", code)
+		}
+	}
+	if created != 1 || conflict != racers-1 {
+		t.Fatalf("expected exactly one 201 and %d 409, got %d created / %d conflict", racers-1, created, conflict)
 	}
 
-	rec2 := doRequest(env.echo, http.MethodPost, "/api/v1/virtual-machines", body, env.token)
-	if rec2.Code != http.StatusConflict {
-		t.Fatalf("second create: expected 409, got %d: %s", rec2.Code, rec2.Body.String())
+	// Exactly one record, and the loser must not have overwritten it.
+	items, err := env.vms.List(context.Background())
+	if err != nil {
+		t.Fatalf("list vms: %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("expected exactly one VM record, got %d", len(items))
 	}
 }
 
@@ -765,23 +804,43 @@ Check the package clause of the existing `*_test.go` files in that directory and
 
 Add a variant that injects a deployer which blocks until released, so the test proves the response arrives *while the deploy is in flight*:
 
+The request must be issued from a goroutine. If the handler is still synchronous — precisely the state this test exists to reject — `doRequest` never returns while the fake blocks, so a straight-line call would hang the package until the global `go test` timeout instead of failing fast.
+
 ```go
 func TestCreateVirtualMachineRespondsWhileDeployInFlight(t *testing.T) {
 	release := make(chan struct{})
 	started := make(chan struct{})
 	env := setupTestEnvWithVMDeployer(t, blockingDeployer(started, release))
 	seedVMHypervisor(t, env, "hv-block")
-	t.Cleanup(func() { close(release) })
 
-	rec := doRequest(env.echo, http.MethodPost, "/api/v1/virtual-machines", vmCreateBody("vm-block", "hv-block"), env.token)
-	if rec.Code != http.StatusCreated {
-		t.Fatalf("expected 201 before the deploy finishes, got %d: %s", rec.Code, rec.Body.String())
+	var once sync.Once
+	releaseDeploy := func() { once.Do(func() { close(release) }) }
+	defer releaseDeploy()
+
+	done := make(chan *httptest.ResponseRecorder, 1)
+	go func() {
+		done <- doRequest(env.echo, http.MethodPost, "/api/v1/virtual-machines", vmCreateBody("vm-block", "hv-block"), env.token)
+	}()
+
+	// The response must arrive while the deploy is still blocked.
+	select {
+	case rec := <-done:
+		if rec.Code != http.StatusCreated {
+			t.Fatalf("expected 201 before the deploy finishes, got %d: %s", rec.Code, rec.Body.String())
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("handler did not respond while the deploy was in flight (still synchronous?)")
 	}
+
 	select {
 	case <-started:
 	case <-time.After(2 * time.Second):
 		t.Fatal("deploy goroutine did not start")
 	}
+
+	// Let the worker finish before the test returns, so it cannot leak into
+	// later tests in this package.
+	releaseDeploy()
 }
 ```
 
@@ -826,7 +885,23 @@ Replace the whole `if s.vmDeployer != nil { ... }` block (lines 109-130) with:
 // disconnecting client cannot cancel it. The concurrent-hypervisor-delete
 // recheck moves here with it: the handler has already responded, so a record
 // swept mid-deploy must be cleaned up here rather than reported to the caller.
-func (s *Server) runVMDeploy(deployHV hypervisor.Hypervisor, created vm.VirtualMachine) {
+func (s *Server) runVMDeploy(actor httputil.Actor, deployHV hypervisor.Hypervisor, created vm.VirtualMachine) {
+	// Echo's middleware.Recover() (internal/infra/api/server.go:121) only wraps
+	// the request goroutine. Once the deploy runs here, a panic from the deploy
+	// orchestration, the executor, or the libvirt boundary would take down the
+	// whole server — a regression from the synchronous handler, which was
+	// covered. Recover, and record the failure rather than dying silently.
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("create vm %s: deploy panicked: %v", created.Name, r)
+			failCtx, failCancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer failCancel()
+			if _, err := s.vms.FailDeploy(failCtx, created.Name, "deploy", fmt.Sprintf("deploy panicked: %v", r), created.Provisioning.CompletionToken); err != nil {
+				log.Printf("create vm %s: record panic failure: %v", created.Name, err)
+			}
+		}
+	}()
+
 	ctx, cancel := context.WithTimeout(context.Background(), s.provisionTimeout)
 	defer cancel()
 
@@ -868,11 +943,36 @@ func (s *Server) runVMDeploy(deployHV hypervisor.Hypervisor, created vm.VirtualM
 		}
 		return
 	}
+	// Deploy persists its own outcome on every path EXCEPT the one where its
+	// context expired: FailDeploy then runs on the cancelled ctx and the write
+	// is lost, leaving a Pending record with a possibly-allocated volume. With
+	// the recovery sweep deferred out of scope there is no later pass to repair
+	// it, so persist the failure here on the fresh context.
 	if deployErr != nil {
 		log.Printf("create vm %s: deploy failed: %v", created.Name, deployErr)
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			if _, err := s.vms.FailDeploy(checkCtx, created.Name, "deploy", deployErr.Error(), token); err != nil {
+				log.Printf("create vm %s: persist timeout failure: %v", created.Name, err)
+			}
+			if cleanupErr := s.vmDeployer.TeardownHostState(checkCtx, deployHV, created); cleanupErr != nil {
+				log.Printf("create vm %s: cleanup after timeout: %v", created.Name, cleanupErr)
+			}
+		}
 	}
+
+	// The handler could only record "accepted"; the Activity UI derives its
+	// success/failure totals from persisted audit results, so without this the
+	// outcome of every asynchronous create would stay "accepted" forever. The
+	// actor is captured in the handler, since the request context is gone.
+	outcome, detail := "success", "virtual machine created"
+	if deployErr != nil {
+		outcome, detail = "partial", "vm created but deploy failed: "+deployErr.Error()
+	}
+	httputil.CreateAuditFor(checkCtx, s.authStore, actor, created.Name, "create-vm", outcome, detail, nil)
 }
 ```
+
+`httputil.CreateAudit` takes an `echo.Context` and cannot be used here. Read `internal/infra/httputil` for how the actor is extracted and add a background-safe variant that takes the already-resolved actor plus a plain context; capture the actor in the handler before it returns and pass it into `runVMDeploy`. Keep the handler's `accepted` event — it records that the request was received — and let this one record the result.
 
 `Deploy()` already persists the outcome on every path — `FailDeploy` on error (`internal/vm/deploy.go:254`) and `UpdateDeployStatus` on success (`internal/vm/deploy.go:119`) — so the goroutine needs no extra status writes. Add `"context"` and `"github.com/sugaf1204/gomi/internal/hypervisor"` to the imports if not already present.
 
@@ -918,6 +1018,8 @@ git commit -m "Return 201 before VM deploy and reject duplicate VM names"
 ---
 
 ### Task 3b: Lease the redeploy path
+
+> **DEFERRED — do not implement.** Part of the abandoned restart-recovery scope; retained only as a record of the constraints found in review.
 
 **This task is not optional and must land before Task 6 enables the sweep.** The reinstall handler persists an active `Provisioning` window (`internal/infra/api/vm_reinstall.go:98-104`) and then runs `Redeploy` *synchronously*, which takes as long as recreating the volume and redefining the domain. With no epoch on that record, the sweep sees an active window, no owner, no `HostSetupDoneAt` and no domain yet — a textbook `ResumeRedeploy` candidate — and tears down host state underneath a live redeploy. That is the same "kill a live deploy" defect the epoch exists to prevent, reappearing on a path this design does not otherwise change.
 
@@ -996,6 +1098,8 @@ git commit -m "Take the deploy ownership lease on the redeploy path"
 ---
 
 ### Task 4: Decide which interrupted deploys to resume
+
+> **DEFERRED — do not implement.** Part of the abandoned restart-recovery scope; retained only as a record of the constraints found in review.
 
 Pure decision logic, separated from execution so the matrix is testable without libvirt.
 
@@ -1208,6 +1312,8 @@ git commit -m "Add resume decision logic for restart-interrupted VM deploys"
 ---
 
 ### Task 5: Execute the resume sweep
+
+> **DEFERRED — do not implement.** Part of the abandoned restart-recovery scope; retained only as a record of the constraints found in review.
 
 Cleanup-then-retry, because `CreateVolume`/`CreateOverlayVolume` fail on an existing volume (`internal/libvirt/storage.go:32,62`) while `DefineDomain` is idempotent (`internal/libvirt/domain.go:16`). Without the teardown, every restart-interrupted VM would fail with "already exists".
 
@@ -1565,6 +1671,8 @@ git commit -m "Resume restart-interrupted VM deploys after clearing partial host
 
 ### Task 6: Run the resume sweep from the runtime sync loop
 
+> **DEFERRED — do not implement.** Part of the abandoned restart-recovery scope; retained only as a record of the constraints found in review.
+
 `runVMRuntimeSyncLoop` already runs once at startup (`internal/app/sync.go:37`) and every 5s after, which gives recovery within ~5 seconds of a restart.
 
 **Files:**
@@ -1692,7 +1800,13 @@ Per the project UI policy, both surfaces must behave the same. `handleQuickDeplo
 
 Delete the old increment at line 169.
 
-Note: the server-side duplicate guard from Task 3 covers `POST /virtual-machines` only. Whether `POST /machines` needs the same 409 guard depends on how the machine store handles a duplicate name — check `internal/machine/service.go` for an existing existence check. If it already rejects duplicates, no server change is needed here; if it upserts like the VM store did, add the equivalent guard and note it in the PR.
+- [ ] **Step 3b: Give Machines the same atomic duplicate guard (required)**
+
+This is settled, not conditional: `machine.Service.Create` calls `store.Upsert` (`internal/machine/service.go:55`), and the machine store uses `ON CONFLICT (name) DO UPDATE` (`internal/infra/sql/machine_store.go:102-113`) — the identical silent-overwrite the VM side had. Moving the UI counter does not protect against multiple tabs or direct API clients.
+
+Mirror Task 2b and Task 3 on the machine surface: add an insert-only store operation returning `resource.ErrAlreadyExists`, a `CreateExclusive` service method, and a `409` mapping in the machine create handler. Add the same concurrent test as `TestCreateVirtualMachineRejectsDuplicateNameConcurrently`, asserting exactly one `201`, one `409`, and one record.
+
+The project UI policy requires the two surfaces to behave alike; leaving Machines on a silently-overwriting create would make the guarantee VM-only.
 
 - [ ] **Step 4: Typecheck and test**
 
@@ -1712,6 +1826,8 @@ git commit -m "Reserve next Quick Deploy name on click to allow rapid consecutiv
 ---
 
 ### Task 7b: Recover the post-definition crash window
+
+> **DEFERRED — do not implement.** Part of the abandoned restart-recovery scope; retained only as a record of the constraints found in review.
 
 `markDomainDefined` persists at `internal/vm/deploy.go:91`, but `StartDomain` (`:102`) and the network-to-`hd` boot-device switch (`:108`) run after it. A crash in either gap leaves `DomainObservedAt` set, so the resume rules skip the record — yet the runtime sync loop only observes domain state; it never starts an inactive guest or completes the boot-device switch. The VM sits until its window times out, or reboots back into PXE.
 
@@ -1758,6 +1874,8 @@ git commit -m "Complete post-definition deploy steps after an interrupted deploy
 
 ### Task 7c: Make backing image publication atomic
 
+> **DEFERRED — do not implement.** Part of the abandoned restart-recovery scope; retained only as a record of the constraints found in review.
+
 `prepareCloudImageBacking` treats `VolumeExists` as proof a previous upload completed (`internal/vm/cloud_image.go:47-52`). A crash during `StorageVolUpload` leaves the shared hashed backing volume allocated but partially written. `TeardownHostState` will not remove it — it is keyed by image hash, not VM name — so a resumed deploy builds an overlay on corrupt data and the guest boots garbage.
 
 This is not resume-specific: any later deploy reusing that image hits the same corrupt backing.
@@ -1800,40 +1918,26 @@ Walk the "Verification" section of `docs/superpowers/specs/2026-07-25-quick-depl
 
 | Item | Covered by |
 |---|---|
-| **Live deploy untouched by the sweep** | Task 5 Step 1 (`TestResumeInterruptedDeploysLeavesLiveDeployAlone`) |
-| Idempotency (both install paths) | Task 5 Steps 1, 5 |
-| Duplicate names (concurrent) | Task 2b Step 1 + Task 3 Step 1 |
-| Restart resume + deadline expiry with cleanup | Task 5 Step 1 |
-| Resume decision matrix incl. epoch ownership | Task 4 Step 1 |
-| Sweep-before-SyncAll ordering via the real tick | Task 6 Step 1b |
+| Duplicate names, concurrent, exactly one 201 | Task 2b Step 1 + Task 3 Step 1 |
+| Machine duplicate names, concurrent | Task 7 Step 3b |
 | Async response proven with a blocking deployer | Task 3 Step 1 |
+| Timeout failure persisted on a fresh context | Task 3 Step 4 |
+| Panic in the deploy goroutine does not kill the server | Task 3 Step 4 |
+| Deploy outcome recorded in the audit log | Task 3 Step 4 |
+| Stale-deploy identity check + cleanup | Task 3 Step 4 |
 | Teardown not-attempted marker preserved | Task 2 Step 5b |
-| Stale-deploy identity check | Task 3 Step 4 |
-| Post-definition crash windows | Task 7b Step 2 |
-| **Healthy VMs never re-finalized** | Task 4 Step 1 (`HostSetupDoneAt` case) |
-| Lease released on goroutine timeout | Task 2c Step 3b + Task 4 Step 1 |
-| Lease released by resumed workers too | Task 6 Step 1 |
-| Lease release is atomic vs. recreate | Task 2c Step 3b |
-| Stale cleanup survives an expired deploy context | Task 3 Step 4 |
-| Finalize renews the deadline before SyncAll | Task 7b Step 2 |
-| Dispatch race (recreated during recovery) | Task 5 Step 3 (`resumeOne` re-read) |
-| Lost checkpoint: defined domain, nil marker | Task 5 Step 3 + Task 7b Step 2 |
-| Re-armed Missing finalized | Task 4 Step 1 + Task 7b Step 2 |
-| Backing image integrity | Task 7c Step 2 |
-| Existing sync tests still pass | Task 3 Step 6 |
 | Cascade delete teardown | Task 2 Step 1 + Task 3 Step 4 |
-| Rapid clicks | Task 7 Step 4 |
-| **Live redeploy untouched by the sweep** | Task 3b Step 1 |
-| OS coverage: curtin install path | Task 5 Step 5a |
-| OS coverage: real non-Ubuntu family | Task 5 Step 5b |
-| Recovery job timeout frees slot and lease | Task 6 Step 1 |
-| Sync loop not blocked by recovery | Task 6 Step 1 (worker pool) |
+| Existing tests updated for async completion | Task 3 Step 6 |
+| Rapid clicks produce distinct VMs | Task 7 Step 4 |
+
+Rows for the deferred recovery scope are intentionally absent — those tasks are not
+being built. Do not reinstate them without revisiting the design doc's status section.
 
 If any row has no test, write one now rather than marking this task done.
 
 - [ ] **Step 3: Manual check against a real deploy**
 
-This is the part automated tests cannot prove. On the GOMI server, click Quick Deploy several times in quick succession and confirm: distinct VM names, buttons usable throughout, all VMs reaching a terminal phase. Then start a deploy, restart the GOMI service mid-deploy, and confirm the VM resumes and reaches a terminal phase rather than sitting at `Pending`.
+This is the part automated tests cannot prove. On the GOMI server, click Quick Deploy several times in quick succession and confirm: distinct VM names, buttons usable throughout, all VMs reaching a terminal phase. Restart-mid-deploy is **not** part of this verification: automatic recovery is out of scope, and such a VM is expected to stay `Pending` until its window expires and the sync loop marks it `Missing`. Confirm that outcome rather than a resume, and confirm the operator's Redeploy action recovers it.
 
 Per the project's production-debugging policy, record in the PR notes what was verified live and what remains unverified.
 
