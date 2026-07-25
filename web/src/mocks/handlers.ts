@@ -1,5 +1,5 @@
 import { http, HttpResponse } from 'msw'
-import { auditEvents, dnsRecords, machines, subnets } from './fixtures'
+import { auditEvents, dnsRecords, hypervisors, machines, subnets, virtualMachines } from './fixtures'
 
 const API_BASE = 'http://localhost:5392/api/v1'
 
@@ -154,11 +154,11 @@ export const handlers = [
   }),
 
   http.get(`${API_BASE}/hypervisors`, () => {
-    return HttpResponse.json({ hypervisors: [], totalSize: 0 })
+    return HttpResponse.json({ hypervisors, totalSize: hypervisors.length })
   }),
 
   http.get(`${API_BASE}/virtual-machines`, () => {
-    return HttpResponse.json({ virtualMachines: [], totalSize: 0 })
+    return HttpResponse.json({ virtualMachines, totalSize: virtualMachines.length })
   }),
 
   http.get(`${API_BASE}/cloud-init-templates`, () => {

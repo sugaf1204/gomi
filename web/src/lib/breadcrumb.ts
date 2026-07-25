@@ -18,7 +18,6 @@ const VIEW_PATHS: Record<View, string[]> = {
   'os-images': ['catalog', 'os images'],
   'cloud-init': ['catalog', 'cloud-init'],
   network: ['network', 'subnets'],
-  'dhcp-leases': ['network', 'dhcp leases'],
   'dns-records': ['network', 'dns records'],
   activity: ['system', 'activity'],
   users: ['system', 'users'],

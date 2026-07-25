@@ -3,7 +3,7 @@ import type { ActivityType, Appearance, GroupBy, AuthFormState, ConfirmDialogSta
 import type { PowerConfig } from '../types'
 import { usePersistentStringState } from './usePersistentStringState'
 
-const views: Set<string> = new Set(['overview', 'machines', 'hypervisors', 'virtual-machines', 'activity', 'network', 'dhcp-leases', 'dns-records', 'cloud-init', 'os-images', 'users', 'settings'])
+const views: Set<string> = new Set(['overview', 'machines', 'hypervisors', 'virtual-machines', 'activity', 'network', 'dns-records', 'cloud-init', 'os-images', 'users', 'settings'])
 const themes: Set<string> = new Set(['default', 'rounded'])
 const appearances: Set<string> = new Set(['light', 'dark'])
 const MACHINE_SELECTION_STORAGE_KEY = 'gomi.machines.selected'

@@ -1,20 +1,23 @@
 import type { Dispatch, ReactNode, RefObject, SetStateAction } from 'react'
 import clsx from 'clsx'
 import { formatDate, phaseClass } from '../../../lib/formatters'
-import type { VirtualMachine } from '../../../types'
+import type { Hypervisor, VirtualMachine } from '../../../types'
 import { VMConsolePanel } from '../VMConsolePanel'
-import { initialForm } from './vmFormState'
-import type { VMForm, VMPrimaryAction } from './vmFormState'
+import { VMListColumn } from './VMListColumn'
+import { VMResourceShareCard } from './VMResourceShareCard'
+import type { VMPrimaryAction } from './vmFormState'
 
 type VMWorkspaceProps = {
   virtualMachines: VirtualMachine[]
+  filteredVMs: VirtualMachine[]
+  vmFilter: string
+  onVMFilterChange: (value: string) => void
+  hypervisors: Hypervisor[]
   dataLoading: boolean
   quickDeploying: boolean
   onQuickDeploy: () => void
   onOpenQuickDeploySettings: () => void
-  setForm: Dispatch<SetStateAction<VMForm>>
-  setAdvancedOpen: Dispatch<SetStateAction<boolean>>
-  setFormOpen: Dispatch<SetStateAction<boolean>>
+  onOpenCreateDialog: () => void
   checkedVMs: Set<string>
   checkedNames: string[]
   selected: string
@@ -32,187 +35,115 @@ type VMWorkspaceProps = {
   formatCloudInitReferences: (vm: VirtualMachine) => string
 }
 
-export function VMWorkspace({
-  virtualMachines,
-  dataLoading,
-  quickDeploying,
-  onQuickDeploy,
-  onOpenQuickDeploySettings,
-  setForm,
-  setAdvancedOpen,
-  setFormOpen,
-  checkedVMs,
-  checkedNames,
-  selected,
-  selectedVM,
-  toggleChecked,
-  toggleAllChecked,
-  setVMSelection,
-  actionsMenuRef,
-  actionsMenuOpen,
-  setActionsMenuOpen,
-  runPrimaryAction,
-  consoleVM,
-  setConsoleVM,
-  formatOSImageReference,
-  formatCloudInitReferences
-}: VMWorkspaceProps) {
+export function VMWorkspace(props: VMWorkspaceProps) {
   return (
-    <section className="min-h-0 grid grid-cols-1 md:grid-cols-[310px_minmax(0,1fr)] gap-[0.9rem]">
-      <div className="min-h-0 grid grid-rows-[auto_minmax(0,1fr)] gap-[0.6rem]">
-        <div className="grid gap-[0.45rem]">
-          <div className="flex justify-between items-center gap-2">
-            <h2 className="text-[1.4rem]">Virtual Machines</h2>
-            <div className="flex items-center justify-end flex-wrap gap-[0.35rem]">
-              <button className="bg-brand border-brand-strong text-white py-[0.35rem] px-[0.55rem] text-[0.82rem]" disabled={quickDeploying} onClick={onQuickDeploy}>
-                {quickDeploying ? 'Deploying...' : 'Quick Deploy'}
-              </button>
-              <button className="py-[0.35rem] px-[0.55rem] text-[0.82rem]" disabled={quickDeploying} onClick={onOpenQuickDeploySettings}>Preset</button>
-              <button
-                className="py-[0.35rem] px-[0.55rem] text-[0.82rem]"
-                onClick={() => {
-                  setForm({ ...initialForm })
-                  setAdvancedOpen(false)
-                  setFormOpen(true)
-                }}
-              >
-                Create
-              </button>
-            </div>
-          </div>
-        </div>
-
-        <VMList
-          virtualMachines={virtualMachines}
-          dataLoading={dataLoading}
-          checkedVMs={checkedVMs}
-          selected={selected}
-          toggleChecked={toggleChecked}
-          toggleAllChecked={toggleAllChecked}
-          setVMSelection={setVMSelection}
-        />
-      </div>
-
-      <div className="min-h-0 grid content-start gap-[0.85rem]">
-        {!selectedVM && checkedNames.length === 0 && (
-          <section className="bg-transparent border-0 border-t border-line shadow-none pt-[0.85rem] grid gap-[0.45rem]">
-            <h2>Select a virtual machine</h2>
-            <p>Choose a VM from the list to view details and actions.</p>
-          </section>
-        )}
-
-        {(selectedVM || checkedNames.length > 0) && (
-          <VMHeader
-            selectedVM={selectedVM}
-            checkedNames={checkedNames}
-            actionsMenuRef={actionsMenuRef}
-            actionsMenuOpen={actionsMenuOpen}
-            setActionsMenuOpen={setActionsMenuOpen}
-            runPrimaryAction={runPrimaryAction}
-          />
-        )}
-
-        {consoleVM && (() => {
-          const cvmObj = virtualMachines.find((v) => v.name === consoleVM)
-          return cvmObj ? <VMConsolePanel vm={cvmObj} onClose={() => setConsoleVM(null)} /> : null
-        })()}
-
-        {selectedVM && (
-          <VMDetails
-            selectedVM={selectedVM}
-            formatOSImageReference={formatOSImageReference}
-            formatCloudInitReferences={formatCloudInitReferences}
-          />
-        )}
-      </div>
+    <section className="h-full min-h-0 grid grid-cols-1 md:grid-cols-[352px_minmax(0,1fr)]">
+      <VMListColumn {...props} />
+      <VMDetailPane {...props} />
     </section>
   )
 }
 
-function VMList({
-  virtualMachines,
-  dataLoading,
-  checkedVMs,
-  selected,
-  toggleChecked,
-  toggleAllChecked,
-  setVMSelection
-}: Pick<VMWorkspaceProps, 'virtualMachines' | 'dataLoading' | 'checkedVMs' | 'selected' | 'toggleChecked' | 'toggleAllChecked' | 'setVMSelection'>) {
+/** The hypervisor this VM actually runs on, preferring the requested ref. */
+function hostOf(vm: VirtualMachine, hypervisors: Hypervisor[]): Hypervisor | undefined {
+  const ref = vm.hypervisorRef || vm.hypervisorName || ''
+  if (!ref) return undefined
+  return hypervisors.find((hypervisor) => hypervisor.name === ref)
+}
+
+function VMDetailPane(props: VMWorkspaceProps) {
+  const { selectedVM, checkedNames, virtualMachines, consoleVM, setConsoleVM } = props
+  const consoleTarget = consoleVM ? virtualMachines.find((vm) => vm.name === consoleVM) : undefined
+
   return (
-    <div className="overflow-auto border-t border-line pr-[0.1rem]">
-      {dataLoading && virtualMachines.length === 0 && (
-        <div className="grid place-items-center py-[2.4rem] text-center text-ink-soft gap-[0.55rem]">
-          <div className="loading-spinner" aria-hidden="true" />
-          <p className="m-0 text-[0.84rem]">Loading virtual machines...</p>
-        </div>
+    <div className="min-h-0 overflow-auto grid content-start gap-[18px] p-[20px_22px]">
+      {!selectedVM && checkedNames.length === 0 && (
+        <section className="bg-transparent border-0 border-t border-line shadow-none pt-[0.85rem] grid gap-[0.45rem]">
+          <h2>Select a virtual machine</h2>
+          <p>Choose a VM from the index to view actions, details, and resource usage.</p>
+        </section>
       )}
-      {virtualMachines.length > 0 && (
-        <div className="flex items-center gap-[0.45rem] py-[0.35rem] pl-[0.55rem] border-b border-line bg-panel-2">
-          <input type="checkbox" className="w-[0.95rem] h-[0.95rem] m-0 shrink-0 accent-brand cursor-pointer" checked={checkedVMs.size === virtualMachines.length && virtualMachines.length > 0} onChange={toggleAllChecked} />
-          <span className="text-[0.78rem] text-ink-soft">Select All</span>
-        </div>
-      )}
-      {virtualMachines.map((vm) => (
-        <div key={vm.name} className={clsx('flex items-start border-0 border-b border-line border-l-[3px] border-l-transparent', selected === vm.name && '!border-l-brand bg-brand-wash')}>
-          <div className="flex items-center pl-[0.55rem] pt-[0.72rem] shrink-0">
-            <input type="checkbox" className="w-[0.95rem] h-[0.95rem] m-0 accent-brand cursor-pointer" checked={checkedVMs.has(vm.name)} onChange={() => toggleChecked(vm.name)} />
-          </div>
-          <button className="text-left flex-1 min-w-0 border-0 bg-transparent flex justify-between items-start gap-[0.75rem] py-[0.62rem] pl-[0.45rem] pr-[0.1rem] shadow-none hover:transform-none!" onClick={() => setVMSelection(vm.name)}>
-            <div className="min-w-0">
-              <p className="m-0 font-ui font-medium tracking-normal truncate">{vm.name}</p>
-              <p className="m-0 text-ink-soft text-[0.82rem]">{vm.hypervisorRef || 'Auto-placed'} - {vm.resources.cpuCores}CPU - {vm.resources.memoryMB}MB</p>
-              {(vm.phase === 'Error' || vm.phase === 'Missing') && vm.lastError && <p className="m-0 text-error text-[0.76rem] mt-[0.15rem] leading-tight">{vm.lastError}</p>}
-            </div>
-            <span className={clsx(phaseClass(vm.phase), 'shrink-0')}>{vm.phase}</span>
-          </button>
-        </div>
-      ))}
-      {!dataLoading && virtualMachines.length === 0 && <p className="m-0 text-ink-soft">No virtual machines found</p>}
+
+      {(selectedVM || checkedNames.length > 0) && <VMHeader {...props} />}
+
+      {consoleTarget && <VMConsolePanel vm={consoleTarget} onClose={() => setConsoleVM(null)} />}
+
+      {selectedVM && <VMDetails {...props} selectedVM={selectedVM} />}
     </div>
   )
+}
+
+// "VIRTUAL MACHINE · HV hv-01" — where this VM sits.
+function kicker(vm: VirtualMachine, host?: Hypervisor): string {
+  const name = host?.name || vm.hypervisorRef || vm.hypervisorName
+  return name ? `VIRTUAL MACHINE · HV ${name}` : 'VIRTUAL MACHINE · UNPLACED'
 }
 
 function VMHeader({
   selectedVM,
   checkedNames,
+  hypervisors,
   actionsMenuRef,
   actionsMenuOpen,
   setActionsMenuOpen,
-  runPrimaryAction
-}: Pick<VMWorkspaceProps, 'selectedVM' | 'checkedNames' | 'actionsMenuRef' | 'actionsMenuOpen' | 'setActionsMenuOpen' | 'runPrimaryAction'>) {
-  const actions: Array<{ value: VMPrimaryAction, label: string }> = [
+  runPrimaryAction,
+}: VMWorkspaceProps) {
+  const actions: Array<{ value: VMPrimaryAction; label: string }> = [
     { value: 'console', label: 'Console' },
     { value: 'power-on', label: 'Power On' },
     { value: 'power-off', label: 'Power Off' },
     { value: 'redeploy', label: 'Redeploy' },
     { value: 'migrate', label: 'Migrate' },
-    { value: 'delete', label: 'Delete' }
+    { value: 'delete', label: 'Delete' },
   ]
+  const multiSelectActive = checkedNames.length > 0
 
   return (
-    <section className="bg-transparent border-0 border-t border-line shadow-none pt-[0.85rem] flex justify-between items-start gap-4">
-      <div>
-        <p className="m-0 font-ui font-medium text-[0.72rem] uppercase tracking-[0.08em] text-ink-soft">Virtual Machine</p>
-        {checkedNames.length > 0 ? (
-          <h2 className="mt-[0.22rem] text-[1.8rem]">{checkedNames.length} selected</h2>
-        ) : selectedVM && (
-          <>
-            <h2 className="mt-[0.22rem] text-[1.8rem]">{selectedVM.name}</h2>
-            <p className="m-0 text-ink-soft">{selectedVM.hypervisorRef ? selectedVM.hypervisorRef : selectedVM.hypervisorName ? `Auto-placed on: ${selectedVM.hypervisorName}` : 'Auto-placement (pending)'} - PXE</p>
-          </>
+    <section className="bg-transparent border-0 shadow-none grid grid-cols-[minmax(0,1fr)_auto] items-start gap-[0.85rem] max-sm:grid-cols-1">
+      <div className="min-w-0">
+        <p className="m-0 font-mono text-[10px] uppercase tracking-[0.14em] text-ink-soft">
+          {selectedVM ? kicker(selectedVM, hostOf(selectedVM, hypervisors)) : 'VIRTUAL MACHINE'}
+        </p>
+        {multiSelectActive ? (
+          <h2 className="mt-2 font-mono font-medium text-[30px] tracking-[-0.02em] break-anywhere">
+            {checkedNames.length} selected
+          </h2>
+        ) : (
+          selectedVM && <SelectedVMSummary vm={selectedVM} />
         )}
       </div>
-      <div className="flex flex-col items-end gap-[0.55rem]">
-        {checkedNames.length === 0 && selectedVM && <span className={phaseClass(selectedVM.phase)}>{selectedVM.phase}</span>}
-        <div className="flex justify-end items-center flex-wrap gap-[0.35rem]" ref={actionsMenuRef}>
+      <div className="flex min-w-0 flex-col items-end gap-[0.55rem] max-sm:items-start">
+        {!multiSelectActive && selectedVM && <span className={phaseClass(selectedVM.phase)}>{selectedVM.phase}</span>}
+        <div className="flex justify-end items-center flex-wrap gap-[6px]" ref={actionsMenuRef}>
+          {!multiSelectActive && selectedVM && (
+            <>
+              <button className="py-[7px] px-[11px] text-[12px] font-medium" onClick={() => runPrimaryAction('console')}>
+                Console
+              </button>
+              <button className="py-[7px] px-[11px] text-[12px] font-medium" onClick={() => runPrimaryAction('redeploy')}>
+                Redeploy
+              </button>
+            </>
+          )}
           <div className="relative">
-            <button className="py-[0.45rem] px-[0.72rem]" disabled={checkedNames.length === 0 && !selectedVM} onClick={() => setActionsMenuOpen((current) => !current)}>Actions</button>
+            <button
+              className="bg-brand border-brand-strong text-white py-[7px] px-[11px] text-[12px] font-medium"
+              disabled={!multiSelectActive && !selectedVM}
+              onClick={() => setActionsMenuOpen((current) => !current)}
+            >
+              Actions ▾
+            </button>
             {actionsMenuOpen && (
               <div className="absolute right-0 mt-1 min-w-[180px] bg-panel border border-line shadow-[0_10px_24px_rgba(52,43,34,0.16)] z-10">
                 {actions.map((item) => (
                   <button
                     key={item.value}
-                    className={clsx('w-full text-left border-0 shadow-none rounded-none px-[0.7rem] py-[0.5rem]', item.value === 'power-off' || item.value === 'delete' ? 'text-danger hover:bg-danger-bg' : 'text-ink hover:bg-panel-2')}
+                    className={clsx(
+                      'w-full text-left border-0 shadow-none rounded-none px-[0.7rem] py-[0.5rem]',
+                      item.value === 'power-off' || item.value === 'delete'
+                        ? 'text-danger hover:bg-danger-bg'
+                        : 'text-ink hover:bg-panel-2'
+                    )}
                     onClick={() => {
                       setActionsMenuOpen(false)
                       runPrimaryAction(item.value)
@@ -230,113 +161,127 @@ function VMHeader({
   )
 }
 
-function VMDetails({
-  selectedVM,
-  formatOSImageReference,
-  formatCloudInitReferences
-}: Pick<VMWorkspaceProps, 'selectedVM' | 'formatOSImageReference' | 'formatCloudInitReferences'> & { selectedVM: VirtualMachine }) {
+function SelectedVMSummary({ vm }: { vm: VirtualMachine }) {
+  const placement = vm.hypervisorRef || (vm.hypervisorName ? `auto → ${vm.hypervisorName}` : 'auto (pending)')
+  const address = vm.ipAddresses?.[0] || vm.libvirtDomain || '—'
   return (
     <>
-      <section className="grid grid-cols-1 lg:grid-cols-2 gap-[0.85rem]">
-        <InfoCard title="Resources" rows={[
-          ['CPU Cores', selectedVM.resources.cpuCores],
-          ['Memory (MB)', selectedVM.resources.memoryMB],
-          ['Disk (GB)', selectedVM.resources.diskGB],
-          ['Power Control', selectedVM.powerControlMethod]
-        ]} />
-        <StatusCard selectedVM={selectedVM} />
-      </section>
-
-      <section className="grid grid-cols-1 lg:grid-cols-2 gap-[0.85rem]">
-        <InfoCard title="Provisioning" rows={[
-          ['Active', selectedVM.provisioning?.active ? 'Yes' : 'No'],
-          ['Started', formatDate(selectedVM.provisioning?.startedAt)],
-          ['Deadline', formatDate(selectedVM.provisioning?.deadlineAt)],
-          ['Completed', formatDate(selectedVM.provisioning?.completedAt)],
-          ['Completion Source', selectedVM.provisioning?.completionSource || '-'],
-          ['Last Signal', formatDate(selectedVM.provisioning?.lastSignalAt)]
-        ]} />
-        <InfoCard title="References" rows={[
-          ['Hypervisor', selectedVM.hypervisorRef || 'Auto (scheduled by server)'],
-          ['Subnet', selectedVM.subnetRef || '-'],
-          ['DNS Domain', selectedVM.domain || '-'],
-          ['OS Image', formatOSImageReference(selectedVM.osImageRef)],
-          ['Cloud-Init', formatCloudInitReferences(selectedVM)],
-          ['Install Config', selectedVM.installCfg?.type || '-'],
-          ['Last Deployed Cloud-Init', selectedVM.lastDeployedCloudInitRef || '-'],
-          ['Created', formatDate(selectedVM.createdAt)],
-          ['Updated', formatDate(selectedVM.updatedAt)]
-        ]} />
-      </section>
-
-      {selectedVM.advancedOptions && <AdvancedOptions selectedVM={selectedVM} />}
-      {selectedVM.networkInterfaces && selectedVM.networkInterfaces.length > 0 && <RuntimeNetworkInterfaces selectedVM={selectedVM} />}
+      <h2 className="mt-2 font-mono font-medium text-[30px] tracking-[-0.02em] break-anywhere">{vm.name}</h2>
+      <p className="m-0 mt-1 text-[12px] text-ink-soft flex items-center flex-wrap gap-2 break-anywhere">
+        <span className="font-mono">
+          {placement} · {vm.resources.cpuCores}c · {Math.round(vm.resources.memoryMB / 1024)}g · {address}
+        </span>
+        <span className="shrink-0 font-mono text-[10.5px] border border-ok-line bg-brand-wash text-brand-accent py-[2px] px-[5px]">
+          {vm.ipAssignment === 'static' ? 'STATIC' : 'DHCP'}
+        </span>
+      </p>
     </>
   )
 }
 
-function InfoCard({ title, rows }: { title: string; rows: Array<[string, ReactNode]> }) {
+function VMDetails({
+  selectedVM,
+  hypervisors,
+  formatOSImageReference,
+  formatCloudInitReferences,
+}: VMWorkspaceProps & { selectedVM: VirtualMachine }) {
   return (
-    <article className="bg-transparent border-0 border-t border-line shadow-none pt-[0.85rem]">
-      <h3 className="mb-[0.58rem] text-[1.05rem]">{title}</h3>
-      <dl className="m-0 grid grid-cols-[130px_minmax(0,1fr)] gap-x-[0.65rem] gap-y-[0.34rem]">
-        {rows.map(([label, value]) => (
-          <div key={label} className="contents">
-            <dt className="text-ink-soft text-[0.84rem]">{label}</dt>
-            <dd className="m-0">{value}</dd>
-          </div>
-        ))}
-      </dl>
-    </article>
+    <>
+      <VMResourceShareCard vm={selectedVM} hypervisor={hostOf(selectedVM, hypervisors)} />
+
+      <section className="grid grid-cols-1 lg:grid-cols-2 gap-[18px]">
+        <FactList
+          rows={[
+            ['Phase', <span className={phaseClass(selectedVM.phase)}>{selectedVM.phase}</span>],
+            ['Power', selectedVM.lastPowerAction || '—'],
+            ['Created On', selectedVM.createdOnHost || '—', 'mono'],
+            ['Last Error', selectedVM.lastError || '—'],
+          ]}
+        />
+        <FactList
+          rows={[
+            ['OS Image', formatOSImageReference(selectedVM.osImageRef), 'mono'],
+            ['Cloud-Init', formatCloudInitReferences(selectedVM), 'mono'],
+            ['DNS Domain', selectedVM.domain || '—', 'mono'],
+            ['Updated', formatDate(selectedVM.updatedAt), 'mono'],
+          ]}
+        />
+      </section>
+
+      {selectedVM.advancedOptions && <AdvancedOptions selectedVM={selectedVM} />}
+
+      {selectedVM.networkInterfaces && selectedVM.networkInterfaces.length > 0 && (
+        <RuntimeNetworkInterfaces selectedVM={selectedVM} />
+      )}
+    </>
   )
 }
 
-function StatusCard({ selectedVM }: { selectedVM: VirtualMachine }) {
-  return (
-    <InfoCard title="Status" rows={[
-      ['Phase', <span className={phaseClass(selectedVM.phase)}>{selectedVM.phase}</span>],
-      ['Hypervisor', selectedVM.hypervisorName || '-'],
-      ['Domain', <code className="text-[0.82rem]">{selectedVM.libvirtDomain || '-'}</code>],
-      ['IP Addresses', <><span>{selectedVM.ipAddresses?.join(', ') || '-'}</span> <span className={clsx('text-[0.68rem] font-medium px-[0.35rem] py-[0.05rem] rounded-sm border', selectedVM.ipAssignment === 'static' ? 'bg-brand-wash text-brand-strong border-line' : 'bg-panel-2 text-ink-soft border-line')}>{selectedVM.ipAssignment === 'static' ? 'Static' : 'DHCP'}</span></>],
-      ['MAC Addresses', selectedVM.networkInterfaces?.map((nic) => nic.mac).filter((mac): mac is string => Boolean(mac)).join(', ') || '-'],
-      ['Created On Host', selectedVM.createdOnHost || '-'],
-      ['Last Power Action', selectedVM.lastPowerAction || '-'],
-      ['Last Error', selectedVM.lastError || '-']
-    ]} />
-  )
-}
-
+/** Advanced libvirt tuning is only editable in the dialogs, so the detail pane
+ *  stays the one place it can be read back after creation. */
 function AdvancedOptions({ selectedVM }: { selectedVM: VirtualMachine }) {
   const options = selectedVM.advancedOptions
   if (!options) return null
+  const pinning = options.cpuPinning ?? {}
+  const rows: FactRow[] = []
+  if (options.cpuMode) rows.push(['CPU Mode', options.cpuMode, 'mono'])
+  if (options.diskDriver) rows.push(['Disk Driver', options.diskDriver, 'mono'])
+  if (options.diskFormat) rows.push(['Disk Format', options.diskFormat, 'mono'])
+  if ((options.ioThreads ?? 0) > 0) rows.push(['IO Threads', options.ioThreads, 'mono'])
+  if ((options.netMultiqueue ?? 0) > 0) rows.push(['Multiqueue', options.netMultiqueue, 'mono'])
+  if (Object.keys(pinning).length > 0) {
+    rows.push(['CPU Pinning', Object.entries(pinning).map(([vcpu, cpu]) => `${vcpu}:${cpu}`).join(', '), 'mono'])
+  }
+  if (rows.length === 0) return null
+
   return (
-    <section className="bg-transparent border-0 border-t border-line shadow-none pt-[0.85rem]">
-      <h3 className="mb-[0.58rem] text-[1.05rem]">Advanced Options</h3>
-      <dl className="m-0 grid grid-cols-[150px_minmax(0,1fr)] gap-x-[0.65rem] gap-y-[0.34rem]">
-        {options.cpuMode && <><dt className="text-ink-soft text-[0.84rem]">CPU Mode</dt><dd className="m-0">{options.cpuMode}</dd></>}
-        {options.diskDriver && <><dt className="text-ink-soft text-[0.84rem]">Disk Driver</dt><dd className="m-0">{options.diskDriver}</dd></>}
-        {options.diskFormat && <><dt className="text-ink-soft text-[0.84rem]">Disk Format</dt><dd className="m-0">{options.diskFormat}</dd></>}
-        {(options.ioThreads ?? 0) > 0 && <><dt className="text-ink-soft text-[0.84rem]">IO Threads</dt><dd className="m-0">{options.ioThreads}</dd></>}
-        {(options.netMultiqueue ?? 0) > 0 && <><dt className="text-ink-soft text-[0.84rem]">Net Multiqueue</dt><dd className="m-0">{options.netMultiqueue}</dd></>}
-        {options.cpuPinning && Object.keys(options.cpuPinning).length > 0 && <><dt className="text-ink-soft text-[0.84rem]">CPU Pinning</dt><dd className="m-0"><code className="text-[0.82rem]">{Object.entries(options.cpuPinning).map(([v, c]) => `${v}:${c}`).join(', ')}</code></dd></>}
-      </dl>
+    <section className="border border-line bg-panel p-[14px_16px]">
+      <h3 className="m-0 mb-[10px] font-mono font-semibold text-[10px] uppercase tracking-[0.14em] text-ink-soft">
+        Advanced Options
+      </h3>
+      <FactList rows={rows} />
     </section>
+  )
+}
+
+type FactRow = [label: string, value: ReactNode, mono?: 'mono']
+
+function FactList({ rows }: { rows: FactRow[] }) {
+  return (
+    <dl className="m-0 grid grid-cols-[104px_minmax(0,1fr)] gap-[7px_10px]">
+      {rows.map(([label, value, mono]) => (
+        <div key={label} className="contents">
+          <dt className="font-mono text-[10.5px] uppercase tracking-[0.08em] text-ink-soft self-center">{label}</dt>
+          <dd className={clsx('m-0 text-[12px] min-w-0 break-anywhere', mono && 'font-mono')}>{value}</dd>
+        </div>
+      ))}
+    </dl>
   )
 }
 
 function RuntimeNetworkInterfaces({ selectedVM }: { selectedVM: VirtualMachine }) {
   return (
-    <section className="bg-transparent border-0 border-t border-line shadow-none pt-[0.85rem]">
-      <h3 className="mb-[0.58rem] text-[1.05rem]">Runtime Network Interfaces</h3>
+    <section className="border border-line bg-panel p-[14px_16px]">
+      <h3 className="m-0 mb-[10px] font-mono font-semibold text-[10px] uppercase tracking-[0.14em] text-ink-soft">
+        Runtime Network Interfaces
+      </h3>
       <div className="overflow-auto">
         <table>
-          <thead><tr><th>Name</th><th>MAC</th><th>IP Addresses</th></tr></thead>
+          <thead>
+            <tr>
+              <th>Name</th>
+              <th>MAC</th>
+              <th>IP Addresses</th>
+            </tr>
+          </thead>
           <tbody>
-            {selectedVM.networkInterfaces?.map((nic, i) => (
-              <tr key={`${nic.name || 'nic'}-${i}`}>
-                <td>{nic.name || '-'}</td>
-                <td><code className="text-[0.82rem]">{nic.mac || '-'}</code></td>
-                <td>{nic.ipAddresses && nic.ipAddresses.length > 0 ? nic.ipAddresses.join(', ') : '-'}</td>
+            {selectedVM.networkInterfaces?.map((nic, index) => (
+              <tr key={`${nic.name || 'nic'}-${index}`}>
+                <td className="font-mono text-[11.5px]">{nic.name || '—'}</td>
+                <td className="font-mono text-[11.5px]">{nic.mac || '—'}</td>
+                <td className="font-mono text-[11.5px]">
+                  {nic.ipAddresses && nic.ipAddresses.length > 0 ? nic.ipAddresses.join(', ') : '—'}
+                </td>
               </tr>
             ))}
           </tbody>
