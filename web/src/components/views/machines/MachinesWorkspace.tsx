@@ -3,14 +3,11 @@ import clsx from 'clsx'
 import type { GroupBy, GuardedAction, MachineTab } from '../../../app-types'
 import { phaseClass, powerStateClass, powerStateLabel } from '../../../lib/formatters'
 import type { AuditEvent, Hypervisor, Machine, PowerConfig, Subnet } from '../../../types'
-import { ActivityTab } from '../machine-tabs/ActivityTab'
 import { ConfigurationTab } from '../machine-tabs/ConfigurationTab'
-import { ConsoleTab } from '../machine-tabs/ConsoleTab'
 import { DeployTab } from '../machine-tabs/DeployTab'
-import { DetailTab } from '../machine-tabs/DetailTab'
-import { InfoTab } from '../machine-tabs/InfoTab'
 import { MachineTabBar } from '../machine-tabs/MachineTabBar'
 import { NetworkTab } from '../machine-tabs/NetworkTab'
+import { OverviewTab } from '../machine-tabs/OverviewTab'
 import { MachineListColumn } from './MachineListColumn'
 import type { MachinePrimaryAction } from './machineFormState'
 
@@ -48,6 +45,7 @@ type MachinesWorkspaceProps = {
   groupBy: GroupBy
   onGroupByChange: (groupBy: GroupBy) => void
   hypervisors: Hypervisor[]
+  onOpenConsole: (name: string) => void
 }
 
 export function MachinesWorkspace(props: MachinesWorkspaceProps) {
@@ -88,7 +86,9 @@ function MachineHeader({
   actionsMenuOpen,
   setActionsMenuOpen,
   runPrimaryAction,
-  findHypervisorForMachine
+  findHypervisorForMachine,
+  subnets,
+  onOpenConsole
 }: MachinesWorkspaceProps) {
   const actions: Array<{ value: MachinePrimaryAction, label: string }> = [
     { value: 'power-on', label: 'Power On' },
@@ -98,20 +98,28 @@ function MachineHeader({
   ]
 
   return (
-    <section className="bg-transparent border-0 border-t border-line shadow-none pt-[0.85rem] grid grid-cols-[minmax(0,1fr)_auto] items-start gap-[0.85rem] max-sm:grid-cols-1">
+    <section className="bg-transparent border-0 shadow-none grid grid-cols-[minmax(0,1fr)_auto] items-start gap-[0.85rem] max-sm:grid-cols-1">
       <div className="min-w-0">
-        <p className="m-0 font-ui font-medium text-[0.72rem] uppercase tracking-[0.08em] text-ink-soft">Bare Metal Machine</p>
+        <p className="m-0 font-mono text-[10px] uppercase tracking-[0.14em] text-ink-soft">
+          {selectedMachine ? kicker(selectedMachine, subnets) : 'BARE METAL'}
+        </p>
         {multiSelectActive ? (
-          <h2 className="mt-[0.22rem] text-[1.8rem] break-anywhere">{selectedMachines.size} selected</h2>
+          <h2 className="mt-2 font-mono font-medium text-[30px] tracking-[-0.02em] break-anywhere">{selectedMachines.size} selected</h2>
         ) : selectedMachine && (
           <SelectedMachineSummary machine={selectedMachine} hypervisor={findHypervisorForMachine(selectedMachine)} />
         )}
       </div>
       <div className="flex min-w-0 flex-col items-end gap-[0.55rem] max-sm:items-start">
         {!multiSelectActive && selectedMachine && <span className={phaseClass(selectedMachine.phase)}>{selectedMachine.phase}</span>}
-        <div className="flex justify-end items-center flex-wrap gap-[0.35rem]" ref={actionsMenuRef}>
+        <div className="flex justify-end items-center flex-wrap gap-[6px]" ref={actionsMenuRef}>
+          {!multiSelectActive && selectedMachine && (
+            <>
+              <button className="py-[7px] px-[11px] text-[12px] font-medium" onClick={() => onOpenConsole(selectedMachine.name)}>Console</button>
+              <button className="py-[7px] px-[11px] text-[12px] font-medium" onClick={() => runPrimaryAction('redeploy')}>Redeploy</button>
+            </>
+          )}
           <div className="relative">
-            <button className="py-[0.45rem] px-[0.72rem]" disabled={selectedMachines.size === 0 && !selectedMachine} onClick={() => setActionsMenuOpen((current) => !current)}>Actions</button>
+            <button className="bg-brand border-brand-strong text-white py-[7px] px-[11px] text-[12px] font-medium" disabled={selectedMachines.size === 0 && !selectedMachine} onClick={() => setActionsMenuOpen((current) => !current)}>Actions ▾</button>
             {actionsMenuOpen && (
               <div className="absolute right-0 mt-1 min-w-[180px] bg-panel border border-line shadow-[0_10px_24px_rgba(52,43,34,0.16)] z-10">
                 {actions.map((item) => (
@@ -135,25 +143,29 @@ function MachineHeader({
   )
 }
 
+// "BARE METAL · SUBNET default · 10.0.0.0/24" — where this machine sits.
+function kicker(machine: Machine, subnets: Subnet[]): string {
+  const subnet = subnets.find((candidate) => candidate.name === machine.subnetRef)
+  if (!subnet) return 'BARE METAL'
+  return `BARE METAL · SUBNET ${subnet.name} · ${subnet.spec.cidr}`
+}
+
 function SelectedMachineSummary({ machine, hypervisor }: { machine: Machine; hypervisor?: Hypervisor }) {
   return (
     <>
-      <h2 className="mt-[0.22rem] text-[1.8rem] break-anywhere">{machine.name}</h2>
-      <p className="m-0 text-ink-soft break-anywhere">{machine.hostname} - {machine.arch} - {machine.firmware.toUpperCase()}</p>
-      <p className="m-0 mt-[0.15rem] text-[0.84rem] flex items-center gap-[0.4rem]">
-        <span className="text-ink-soft">IP:</span>
-        <span>{machine.ip || '-'}</span>
-        <span className={clsx('text-[0.68rem] font-medium px-[0.35rem] py-[0.05rem] rounded-sm border', machine.ipAssignment === 'static' ? 'bg-brand-wash text-brand-strong border-line' : 'bg-panel-2 text-ink-soft border-line')}>
-          {machine.ipAssignment === 'static' ? 'Static' : 'DHCP'}
+      <h2 className="mt-2 font-mono font-medium text-[30px] tracking-[-0.02em] break-anywhere">{machine.name}</h2>
+      <p className="m-0 mt-1 text-[12px] text-ink-soft flex items-center flex-wrap gap-2 break-anywhere">
+        <span className="font-mono">{machine.hostname} · {machine.arch} · {machine.firmware.toUpperCase()} · {machine.ip || '—'}</span>
+        <span className="shrink-0 font-mono text-[10.5px] border border-ok-line bg-brand-wash text-brand-accent py-[2px] px-[5px]">
+          {machine.ipAssignment === 'static' ? 'STATIC' : 'DHCP'}
         </span>
+        {machine.powerState && <span className={powerStateClass(machine.powerState)}>{powerStateLabel(machine.powerState)}</span>}
+        {hypervisor && (
+          <span className="shrink-0 font-mono font-semibold text-[10px] tracking-[0.08em] py-[3px] px-1 bg-hv-bg text-hv">
+            HV · {hypervisor.vmCount} VM{hypervisor.vmCount !== 1 ? 's' : ''}
+          </span>
+        )}
       </p>
-      {machine.powerState && <p className="m-0 mt-[0.25rem]"><span className={powerStateClass(machine.powerState)}>{powerStateLabel(machine.powerState)}</span></p>}
-      {hypervisor && (
-        <p className="m-0 mt-[0.25rem] text-[0.82rem]">
-          <span className="inline-flex items-center font-ui rounded-full text-[0.68rem] font-semibold px-2 py-0.5 bg-hv-bg text-hv">Hypervisor</span>
-          <span className="text-ink-soft ml-[0.4rem]">{hypervisor.vmCount} VM{hypervisor.vmCount !== 1 ? 's' : ''} hosted</span>
-        </p>
-      )}
     </>
   )
 }
@@ -163,23 +175,22 @@ function MachineTabs(props: MachinesWorkspaceProps & { selectedMachine: Machine 
   return (
     <>
       <MachineTabBar activeTab={machineTab} onTabChange={props.onMachineTabChange} />
-      {machineTab === 'info' && <InfoTab machine={selectedMachine} />}
-      {machineTab === 'deploy' && <DeployTab machine={selectedMachine} />}
-      {machineTab === 'detail' && <DetailTab machine={selectedMachine} />}
-      {machineTab === 'network' && <NetworkTab machine={selectedMachine} subnets={props.subnets} onRefresh={props.onRefresh} />}
-      {machineTab === 'console' && <ConsoleTab machine={selectedMachine} />}
-      {machineTab === 'activity' && <ActivityTab auditEvents={props.auditEvents} />}
-      {machineTab === 'configuration' && (
-        <ConfigurationTab
-          machine={selectedMachine}
-          onSaveMachineSettings={props.onSaveMachineSettings}
-          machineSettingsDirty={props.machineSettingsDirty}
-          machineSettingsSaving={props.machineSettingsSaving}
-          inlineEditField={props.inlineEditField}
-          onInlineEditFieldChange={props.onInlineEditFieldChange}
-          machineSettingsPower={props.machineSettingsPower}
-          onMachineSettingsPowerChange={props.onMachineSettingsPowerChange}
-        />
+      {machineTab === 'overview' && <OverviewTab machine={selectedMachine} subnets={props.subnets} />}
+      {machineTab === 'deploy' && <DeployTab machine={selectedMachine} auditEvents={props.auditEvents} />}
+      {machineTab === 'config' && (
+        <div className="grid gap-[18px] pt-[14px]">
+          <ConfigurationTab
+            machine={selectedMachine}
+            onSaveMachineSettings={props.onSaveMachineSettings}
+            machineSettingsDirty={props.machineSettingsDirty}
+            machineSettingsSaving={props.machineSettingsSaving}
+            inlineEditField={props.inlineEditField}
+            onInlineEditFieldChange={props.onInlineEditFieldChange}
+            machineSettingsPower={props.machineSettingsPower}
+            onMachineSettingsPowerChange={props.onMachineSettingsPowerChange}
+          />
+          <NetworkTab machine={selectedMachine} subnets={props.subnets} onRefresh={props.onRefresh} />
+        </div>
       )}
     </>
   )

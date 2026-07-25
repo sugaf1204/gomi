@@ -3,7 +3,7 @@ import type { PowerConfig } from './types'
 export type LoadState = 'idle' | 'loading' | 'error'
 export type View = 'overview' | 'machines' | 'hypervisors' | 'virtual-machines' | 'activity' | 'network' | 'dhcp-leases' | 'dns-records' | 'cloud-init' | 'os-images' | 'users' | 'settings'
 export type GuardedAction = 'redeploy' | 'poweron' | 'poweroff' | 'delete'
-export type MachineTab = 'info' | 'deploy' | 'detail' | 'network' | 'console' | 'activity' | 'configuration'
+export type MachineTab = 'overview' | 'deploy' | 'config'
 export type ActivityType = 'all' | 'audit'
 // Theme controls corner radius; Appearance controls light/dark. They are
 // independent axes and are applied as separate root attributes, so adding a
