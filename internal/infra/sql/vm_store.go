@@ -133,6 +133,35 @@ func (s *VMStore) Upsert(ctx context.Context, v vm.VirtualMachine) error {
 
 // UpdateExisting writes the VM only if its row still exists. It implements
 // vm.ExistingUpdater.
+// Insert writes the VM only if its name is unused, letting the primary key
+// reject a duplicate. It implements vm.Inserter. A handler-side existence
+// check could not do this: two concurrent requests can both find the name free
+// and then both write, which is exactly what Upsert's ON CONFLICT DO UPDATE
+// turns into a silent overwrite.
+func (s *VMStore) Insert(ctx context.Context, v vm.VirtualMachine) error {
+	specJSON, statusJSON, err := marshalVMColumns(v)
+	if err != nil {
+		return err
+	}
+
+	_, err = s.b.exec(ctx, `
+		INSERT INTO virtual_machines (name, hypervisor_ref, spec, status, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?)`,
+		v.Name,
+		v.HypervisorRef,
+		specJSON, statusJSON,
+		v.CreatedAt, v.UpdatedAt,
+	)
+	if err != nil {
+		if isUniqueViolation(err) {
+			return resource.ErrAlreadyExists
+		}
+		return err
+	}
+	s.notify()
+	return nil
+}
+
 func (s *VMStore) UpdateExisting(ctx context.Context, v vm.VirtualMachine) (bool, error) {
 	specJSON, statusJSON, err := marshalVMColumns(v)
 	if err != nil {

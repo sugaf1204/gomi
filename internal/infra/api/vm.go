@@ -88,8 +88,11 @@ func (s *Server) CreateVirtualMachine(c echo.Context) error {
 
 	resolveVMBridgeFromHypervisor(ctx, &v, s.hypervisors)
 
-	created, err := s.vms.Create(ctx, v)
+	created, err := s.vms.CreateExclusive(ctx, v)
 	if err != nil {
+		if errors.Is(err, resource.ErrAlreadyExists) {
+			return c.JSON(gohttp.StatusConflict, jsonError("virtual machine already exists: "+v.Name))
+		}
 		return c.JSON(gohttp.StatusBadRequest, jsonErrorErr(err))
 	}
 

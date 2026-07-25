@@ -162,12 +162,14 @@ export function useMachineOperations(args: MachineOperationsArgs) {
       return
     }
     const machineName = quickDeployMachineName(preset)
+    // Reserve the next name before awaiting so a rapid second click cannot
+    // reuse this one. The server rejects duplicates with 409 as a backstop.
+    args.setQuickDeployPreset((current) => ({ ...current, count: String(Math.max(1, Number(current.count) || 1) + 1) }))
     args.setQuickDeploying(true)
     try {
       const created = await api.createMachine({ name: machineName, ...(await buildMachineSpecPayload(quickDeployMachineFormState(preset))) })
       args.onMachineUpsert(created)
       args.onSelectMachine(created.name)
-      args.setQuickDeployPreset((current) => ({ ...current, count: String(Math.max(1, Number(current.count) || 1) + 1) }))
       args.onRefresh()
     } catch (err) {
       notifyError(err instanceof Error ? err.message : 'Failed to quick deploy machine')

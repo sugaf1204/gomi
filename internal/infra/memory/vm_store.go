@@ -41,6 +41,20 @@ func (s *VMStore) Upsert(_ context.Context, v vm.VirtualMachine) error {
 	return nil
 }
 
+// Insert writes the VM only if its name is unused. It implements vm.Inserter.
+// The whole check-and-write happens under the write lock, so two concurrent
+// inserts for the same name cannot both succeed.
+func (s *VMStore) Insert(_ context.Context, v vm.VirtualMachine) error {
+	s.b.mu.Lock()
+	defer s.b.mu.Unlock()
+	if _, ok := s.b.vms[v.Name]; ok {
+		return resource.ErrAlreadyExists
+	}
+	s.b.vms[v.Name] = v
+	s.notify()
+	return nil
+}
+
 // UpdateExisting writes the VM only if its row still exists. It implements
 // vm.ExistingUpdater.
 func (s *VMStore) UpdateExisting(_ context.Context, v vm.VirtualMachine) (bool, error) {

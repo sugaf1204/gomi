@@ -17,6 +17,38 @@ func NewService(store Store) *Service {
 }
 
 func (s *Service) Create(ctx context.Context, v VirtualMachine) (VirtualMachine, error) {
+	v, err := prepareForCreate(v)
+	if err != nil {
+		return VirtualMachine{}, err
+	}
+	if err := s.store.Upsert(ctx, v); err != nil {
+		return VirtualMachine{}, err
+	}
+	return v, nil
+}
+
+// CreateExclusive stores the VM only if its name is unused, returning
+// resource.ErrAlreadyExists otherwise. Callers that must not overwrite an
+// existing VM use this instead of Create, whose Upsert silently replaces a
+// same-named record. Backends without vm.Inserter fall back to Create.
+func (s *Service) CreateExclusive(ctx context.Context, v VirtualMachine) (VirtualMachine, error) {
+	inserter, ok := s.store.(Inserter)
+	if !ok {
+		return s.Create(ctx, v)
+	}
+	v, err := prepareForCreate(v)
+	if err != nil {
+		return VirtualMachine{}, err
+	}
+	if err := inserter.Insert(ctx, v); err != nil {
+		return VirtualMachine{}, err
+	}
+	return v, nil
+}
+
+// prepareForCreate applies the defaults and validation both create paths share,
+// so they cannot drift apart.
+func prepareForCreate(v VirtualMachine) (VirtualMachine, error) {
 	now := time.Now().UTC()
 	v.CreatedAt = now
 	v.UpdatedAt = now
@@ -32,9 +64,6 @@ func (s *Service) Create(ctx context.Context, v VirtualMachine) (VirtualMachine,
 	}
 	if len(v.CloudInitRefs) > 0 {
 		v.LastDeployedCloudInitRef = v.CloudInitRefs[0]
-	}
-	if err := s.store.Upsert(ctx, v); err != nil {
-		return VirtualMachine{}, err
 	}
 	return v, nil
 }

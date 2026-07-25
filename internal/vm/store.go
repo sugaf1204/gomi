@@ -10,6 +10,14 @@ type Store interface {
 	Delete(ctx context.Context, name string) error
 }
 
+// Inserter is optionally implemented by Store backends that can write a VM row
+// only when its name is unused, returning resource.ErrAlreadyExists otherwise.
+// Create uses it so two concurrent requests for the same name cannot both
+// succeed with one silently overwriting the other, which plain Upsert allows.
+type Inserter interface {
+	Insert(ctx context.Context, v VirtualMachine) error
+}
+
 // ExistingUpdater is optionally implemented by Store backends that can write
 // a VM row only if it still exists, reporting whether a row was written. The
 // runtime sync loop uses it so a status write computed from a snapshot cannot
