@@ -3,6 +3,7 @@ import type { GroupBy, GuardedAction, MachineTab } from '../../app-types'
 import type { AuditEvent, CloudInitTemplate, Hypervisor, Machine, PowerConfig, SSHKey, Subnet } from '../../types'
 import { MachineDialogs } from './machines/MachineDialogs'
 import { MachineSpecFields } from './machines/MachineSpecFields'
+import { MachineConsoleDialog } from './machines/MachineConsoleDialog'
 import { MachinesWorkspace } from './machines/MachinesWorkspace'
 import {
   createInitialMachineForm,
@@ -88,6 +89,7 @@ export function MachinesView({
 }: MachinesViewProps) {
   const [machineDialog, setMachineDialog] = useState<MachineDialogState>(initialMachineDialogState)
   const [selectedMachines, setSelectedMachines] = useState<Set<string>>(new Set())
+  const [consoleMachineName, setConsoleMachineName] = useState<string | null>(null)
   const multiSelectActive = selectedMachines.size > 0
   const [batchRunning, setBatchRunning] = useState(false)
   const [batchPowerConfirm, setBatchPowerConfirm] = useState<BatchPowerConfirmState>(initialBatchPowerConfirmState)
@@ -270,6 +272,11 @@ export function MachinesView({
         submitBatchDeleteConfirm={() => void submitBatchDeleteConfirm()}
       />
 
+      <MachineConsoleDialog
+        machine={machines.find((candidate) => candidate.name === consoleMachineName) ?? null}
+        onClose={() => setConsoleMachineName(null)}
+      />
+
       <MachinesWorkspace
         machineFilter={machineFilter}
         onMachineFilterChange={onMachineFilterChange}
@@ -296,6 +303,7 @@ export function MachinesView({
         onRefresh={onRefresh}
         subnets={subnets}
         hypervisors={hypervisors}
+        onOpenConsole={setConsoleMachineName}
         groupBy={groupBy}
         onGroupByChange={onGroupByChange}
         auditEvents={auditEvents}

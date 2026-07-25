@@ -1,30 +1,31 @@
 import { useEffect, useState } from 'react'
 import { api } from '../../../api'
-import type { HardwareInfo, Machine } from '../../../types'
+import type { HardwareInfo } from '../../../types'
 
 type Props = {
-  machine: Machine
+  machineName: string
 }
 
-export function DetailTab({ machine }: Props) {
+/** Inventory reported by the machine itself, folded into the Overview tab. */
+export function HardwareFacts({ machineName }: Props) {
   const [hw, setHw] = useState<HardwareInfo | null>(null)
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
     setLoading(true)
-    api.getHardwareInfo(machine.name)
+    api.getHardwareInfo(machineName)
       .then(setHw)
       .catch(() => {
         setHw(null)
       })
       .finally(() => setLoading(false))
-  }, [machine.name])
+  }, [machineName])
 
-  if (loading) return <div className="pt-[0.65rem]"><p className="m-0 text-ink-soft">Loading hardware info...</p></div>
-  if (!hw) return <div className="pt-[0.65rem]"><p className="m-0 text-ink-soft">No hardware details available yet.</p></div>
+  if (loading) return <p className="m-0 font-mono text-[11px] text-ink-soft">Loading hardware inventory…</p>
+  if (!hw) return null
 
   return (
-    <div className="pt-[0.65rem] grid gap-[0.85rem]">
+    <div className="grid gap-[14px] border-t border-line pt-[14px]">
       <Section title="CPU">
         <dl className="m-0 grid grid-cols-[120px_minmax(0,1fr)] gap-x-[0.65rem] gap-y-[0.25rem]">
           <dt className="text-ink-soft text-[0.84rem]">Model</dt><dd className="m-0">{hw.cpu.model}</dd>
@@ -106,7 +107,7 @@ export function DetailTab({ machine }: Props) {
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <div>
-      <h4 className="text-[0.92rem] font-medium mb-[0.35rem] text-ink-soft">{title}</h4>
+      <h4 className="m-0 mb-[6px] font-mono font-semibold text-[10px] tracking-[0.14em] text-ink-soft uppercase">{title}</h4>
       {children}
     </div>
   )
