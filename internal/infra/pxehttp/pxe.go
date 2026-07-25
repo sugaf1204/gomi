@@ -93,7 +93,10 @@ func (h *Handler) PXENocloudUserData(c echo.Context) error {
 	if isDebianOSFamily(target.osFamily) {
 		completeRetries = 600
 	}
-	result := injectCloudConfigCompletion(body, completeURL, hostname, completeRetries)
+	result, err := injectCloudConfigCompletion(body, completeURL, hostname, completeRetries)
+	if err != nil {
+		return c.JSON(gohttp.StatusInternalServerError, jsonErrorErr(err))
+	}
 
 	// Inject registered SSH keys and any per-target login user. Without a
 	// login user, keys go to the distribution default user; with one, only

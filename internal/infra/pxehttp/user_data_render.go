@@ -19,10 +19,37 @@ const jinjaTemplateHeader = "## template: jinja"
 // splitCloudConfigHeader separates the cloud-config header from the YAML body,
 // returning the header to re-attach after re-marshalling.
 func splitCloudConfigHeader(trimmed string) (header, body string) {
-	if strings.HasPrefix(trimmed, jinjaTemplateHeader) {
+	if strings.HasPrefix(strings.TrimSpace(trimmed), jinjaTemplateHeader) {
+		trimmed = strings.TrimSpace(trimmed)
 		return jinjaTemplateHeader + "\n#cloud-config", strings.TrimSpace(strings.TrimPrefix(trimmed, jinjaTemplateHeader))
 	}
 	return "#cloud-config", trimmed
+}
+
+// renderCloudConfig marshals cfg back to a cloud-config document, carrying over
+// the header style of the source document. Every injector that unmarshals,
+// mutates and re-marshals must go through this: yaml.Unmarshal drops comments,
+// so emitting a hardcoded "#cloud-config" would silently strip a
+// "## template: jinja" marker and leave the expressions literal on the target.
+func renderCloudConfig(source string, cfg any) (string, error) {
+	header, _ := splitCloudConfigHeader(strings.TrimSpace(source))
+	raw, err := yaml.Marshal(cfg)
+	if err != nil {
+		return "", err
+	}
+	return header + "\n" + string(raw), nil
+}
+
+// unparseableUserDataHint points at the most common cause: an unquoted Jinja
+// expression. `{{ x }}` is YAML flow-mapping syntax, so the document only
+// becomes valid once cloud-init renders it on the target - too late for GOMI to
+// inject the install-complete callback. Quoting the expression keeps the
+// document parseable here and still renders on the target.
+func unparseableUserDataHint(body string) string {
+	if !strings.Contains(body, "{{") {
+		return ""
+	}
+	return `; an unquoted Jinja expression such as "key: {{ v1.local_hostname }}" is not valid YAML - quote it as "key: \"{{ v1.local_hostname }}\""`
 }
 
 func withDeployCloudInitDefaults(userData string, disableResizeRootfs bool) string {
@@ -228,7 +255,7 @@ func buildAutoinstallUserData(inlineCloudConfig, hostname, completeURL string) s
 	return "#cloud-config\n" + string(raw)
 }
 
-func injectCloudConfigCompletion(content, completeURL, hostname string, completeRetries int) string {
+func injectCloudConfigCompletion(content, completeURL, hostname string, completeRetries int) (string, error) {
 	trimmed := strings.TrimSpace(content)
 	if trimmed == "" {
 		trimmed = defaultLinuxCurtinUserData
@@ -241,10 +268,10 @@ func injectCloudConfigCompletion(content, completeURL, hostname string, complete
 
 	cfg := map[string]any{}
 	if err := yaml.Unmarshal([]byte(body), &cfg); err != nil {
-		// Jinja expressions are frequently not valid YAML (`{{ x }}` parses as a
-		// flow mapping), so this path is normal for templates. Return the
-		// document untouched, header included.
-		return trimmed + "\n"
+		// Nothing can be injected into a document we cannot parse: the target
+		// would boot without the install-complete callback and sit in
+		// Provisioning forever. Surface it instead of serving broken user-data.
+		return "", fmt.Errorf("cloud-init user-data is not valid YAML: %w%s", err, unparseableUserDataHint(body))
 	}
 
 	if sanitized := sanitizeHostnameForLinux(hostname); sanitized != "" {
@@ -286,7 +313,7 @@ func injectCloudConfigCompletion(content, completeURL, hostname string, complete
 
 	raw, err := yaml.Marshal(cfg)
 	if err != nil {
-		return trimmed + "\n"
+		return "", fmt.Errorf("re-marshalling cloud-init user-data: %w", err)
 	}
-	return header + "\n" + string(raw)
+	return header + "\n" + string(raw), nil
 }

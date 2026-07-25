@@ -14,16 +14,8 @@ func TestInjectCloudConfigCompletion_PreservesJinjaHeader(t *testing.T) {
 		userData string
 	}{
 		{
-			// Quoted expressions are valid YAML, so this reaches the re-marshal
-			// path where the header was previously dropped.
-			name:     "valid yaml with quoted jinja expression",
+			name:     "quoted jinja expression",
 			userData: "## template: jinja\n#cloud-config\nfqdn: \"{{ v1.local_hostname }}.lab\"\n",
-		},
-		{
-			// A bare {{ ... }} is a YAML flow mapping and fails to unmarshal, so
-			// this exercises the passthrough path instead.
-			name:     "unquoted jinja expression",
-			userData: "## template: jinja\n#cloud-config\nhostname: {{ v1.local_hostname }}\n",
 		},
 		{
 			name:     "jinja control block without expressions",
@@ -33,7 +25,10 @@ func TestInjectCloudConfigCompletion_PreservesJinjaHeader(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := injectCloudConfigCompletion(tt.userData, "", "vm1", 0)
+			got, err := injectCloudConfigCompletion(tt.userData, "", "vm1", 0)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
 			if !strings.HasPrefix(strings.TrimSpace(got), jinjaTemplateHeader) {
 				t.Errorf("jinja header was stripped\ninput:\n%s\ngot:\n%s", tt.userData, got)
 			}
@@ -44,12 +39,37 @@ func TestInjectCloudConfigCompletion_PreservesJinjaHeader(t *testing.T) {
 	}
 }
 
-// The header must also survive the full PXE pipeline, where
-// withDeployCloudInitDefaults runs after injectCloudConfigCompletion.
+// A document that only becomes valid YAML after cloud-init renders it cannot
+// receive the install-complete callback, so serving it would strand the target
+// in Provisioning. It must fail loudly instead.
+func TestInjectCloudConfigCompletion_RejectsUnparseableUserData(t *testing.T) {
+	userData := "## template: jinja\n#cloud-config\nhostname: {{ v1.local_hostname }}\n"
+
+	_, err := injectCloudConfigCompletion(userData, "http://gomi/complete?token=t&type=vm", "vm1", 60)
+	if err == nil {
+		t.Fatal("expected an error for user-data that is not valid YAML")
+	}
+	if !strings.Contains(err.Error(), "not valid YAML") {
+		t.Errorf("error should say the user-data is unparseable: %v", err)
+	}
+	if !strings.Contains(err.Error(), "quote it") {
+		t.Errorf("error should hint at quoting the expression: %v", err)
+	}
+}
+
+// The header must survive the whole PXE chain, not just the first renderer:
+// injectSSHKeysAndLoginUser, the hypervisor, WoL and network injectors all
+// unmarshal and re-marshal the document.
 func TestDeployPipeline_PreservesJinjaHeader(t *testing.T) {
 	userData := "## template: jinja\n#cloud-config\nfqdn: \"{{ v1.local_hostname }}.lab\"\n"
 
-	rendered := injectCloudConfigCompletion(userData, "", "vm1", 0)
+	rendered, err := injectCloudConfigCompletion(userData, "", "vm1", 0)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// A representative intermediate re-marshaller from the chain, then the
+	// final defaults pass. Both must carry the header through.
+	rendered = injectHypervisorSetup(rendered, "http://gomi", "hv1", "token", "ubuntu")
 	final := withDeployCloudInitDefaults(rendered, true)
 
 	if !strings.HasPrefix(strings.TrimSpace(final), jinjaTemplateHeader) {
@@ -63,9 +83,14 @@ func TestDeployPipeline_PreservesJinjaHeader(t *testing.T) {
 	}
 }
 
-// A document without the header must not acquire one.
-func TestInjectCloudConfigCompletion_PlainConfigKeepsNoJinjaHeader(t *testing.T) {
-	got := injectCloudConfigCompletion("#cloud-config\npackages:\n  - curl\n", "", "vm1", 0)
+// A document without the header must not acquire one at any stage.
+func TestPipeline_PlainConfigKeepsNoJinjaHeader(t *testing.T) {
+	got, err := injectCloudConfigCompletion("#cloud-config\npackages:\n  - curl\n", "", "vm1", 0)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	got = injectHypervisorSetup(got, "http://gomi", "hv1", "token", "ubuntu")
+	got = withDeployCloudInitDefaults(got, false)
 
 	if strings.Contains(got, jinjaTemplateHeader) {
 		t.Errorf("plain cloud-config gained a jinja header:\n%s", got)

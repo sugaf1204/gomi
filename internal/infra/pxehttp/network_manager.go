@@ -116,11 +116,11 @@ func injectNetworkManagerConnections(cloudConfig string, files []networkManagerC
 	runCmd = append(nmCmds, runCmd...)
 	cfg["runcmd"] = runCmd
 
-	raw, err := yaml.Marshal(cfg)
+	rendered, err := renderCloudConfig(cloudConfig, cfg)
 	if err != nil {
 		return cloudConfig
 	}
-	return "#cloud-config\n" + string(raw)
+	return rendered
 }
 
 func buildNetworkManagerEthernetConnection(mac, ip string, spec *subnet.SubnetSpec) string {

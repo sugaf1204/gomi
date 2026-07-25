@@ -67,11 +67,11 @@ func injectHypervisorSetup(cloudConfig, pxeBaseURL, hypervisorName, registration
 	}
 	cfg["runcmd"] = append(runList, hvRuncmds...)
 
-	raw, err := yaml.Marshal(cfg)
+	rendered, err := renderCloudConfig(cloudConfig, cfg)
 	if err != nil {
 		return cloudConfig
 	}
-	return "#cloud-config\n" + string(raw)
+	return rendered
 }
 
 func hypervisorSetupPackages(osFamily string) []any {

@@ -100,9 +100,9 @@ func (h *Handler) injectSSHKeysAndLoginUser(ctx context.Context, cloudConfig str
 		cfg["users"] = provision.BuildCloudInitUsers(pubKeys, loginUser)
 	}
 
-	raw, err := yaml.Marshal(cfg)
+	rendered, err := renderCloudConfig(cloudConfig, cfg)
 	if err != nil {
 		return cloudConfig
 	}
-	return "#cloud-config\n" + string(raw)
+	return rendered
 }
