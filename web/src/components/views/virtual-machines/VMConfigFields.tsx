@@ -17,6 +17,10 @@ type VMConfigFieldsProps = {
   osImageByName: Map<string, OSImage>
   onRefresh: () => void | Promise<void>
   bridgePlaceholder: (formState: VMConfigForm) => string
+  // Only Quick Deploy resolves a single concrete hostname at deploy time; the
+  // create and redeploy dialogs name each VM per iteration and leave the
+  // placeholder literal, so the hint must not promise substitution there.
+  supportsTemplateNameHostname?: boolean
 }
 
 export function VMConfigFields({
@@ -32,7 +36,8 @@ export function VMConfigFields({
   subnets,
   osImageByName,
   onRefresh,
-  bridgePlaceholder
+  bridgePlaceholder,
+  supportsTemplateNameHostname = false
 }: VMConfigFieldsProps) {
   const selectedOSImage = formState.osImageRef ? osImageByName.get(formState.osImageRef) : undefined
   const hasUnsupportedSelectedOSImage = Boolean(selectedOSImage && !supportsDeploymentTarget(selectedOSImage, 'vm'))
@@ -123,8 +128,8 @@ export function VMConfigFields({
           </label>
           <p className="m-0 text-[0.78rem] text-ink-soft">
             Start user-data with <code>## template: jinja</code> to use Jinja2, rendered by cloud-init on the target
-            (e.g. <code>{'{{ v1.local_hostname }}'}</code>). The template name accepts <code>{'{{ hostname }}'}</code>,
-            substituted with the VM name at deploy time.
+            (e.g. <code>{'{{ v1.local_hostname }}'}</code>).
+            {supportsTemplateNameHostname && <> The template name accepts <code>{'{{ hostname }}'}</code>, substituted with the VM name at deploy time.</>}
           </p>
         </>
       )}

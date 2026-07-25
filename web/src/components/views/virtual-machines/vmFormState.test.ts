@@ -194,6 +194,41 @@ describe('invalidVMConfigReason', () => {
   it('accepts an empty cpu pinning field', () => {
     expect(invalidVMConfigReason({ ...valid, cpuPinning: '' })).toBeUndefined()
   })
+
+  // Negative values are silently dropped by buildAdvancedOptions and fractional
+  // ones reach Go int fields, so both must be rejected before deploy.
+  it.each([
+    ['ioThreads', 'IO threads'],
+    ['netMultiqueue', 'Net multiqueue']
+  ] as const)('rejects a negative %s', (field, label) => {
+    expect(invalidVMConfigReason({ ...valid, [field]: '-1' })).toBe(`${label} must be a whole number between 0 and 16`)
+  })
+
+  it.each(['2.5', '17', '-1'] as const)('rejects ioThreads of %s', (value) => {
+    expect(invalidVMConfigReason({ ...valid, ioThreads: value })).toBe('IO threads must be a whole number between 0 and 16')
+  })
+
+  it.each(['', '0', '4', '16'] as const)('accepts ioThreads of %s', (value) => {
+    expect(invalidVMConfigReason({ ...valid, ioThreads: value })).toBeUndefined()
+  })
+
+  it('rejects an unparsable static IP', () => {
+    expect(invalidVMConfigReason({ ...valid, ipAssignment: 'static', staticIP: '192.168.1.999' }))
+      .toBe('Static IP must be a valid IPv4 or IPv6 address')
+  })
+
+  it.each(['192.168.1.1', '10.0.0.255', '::1', 'fe80::1', '::ffff:192.168.1.1'] as const)('accepts static IP %s', (ip) => {
+    expect(invalidVMConfigReason({ ...valid, ipAssignment: 'static', staticIP: ip })).toBeUndefined()
+  })
+
+  it.each(['192.168.1', '192.168.1.1.1', 'not-an-ip', '1::2::3'] as const)('rejects static IP %s', (ip) => {
+    expect(invalidVMConfigReason({ ...valid, ipAssignment: 'static', staticIP: ip }))
+      .toBe('Static IP must be a valid IPv4 or IPv6 address')
+  })
+
+  it('ignores the static IP when assignment is dhcp', () => {
+    expect(invalidVMConfigReason({ ...valid, ipAssignment: 'dhcp', staticIP: 'nonsense' })).toBeUndefined()
+  })
 })
 
 describe('renderPresetTemplateName', () => {
@@ -230,5 +265,17 @@ describe('renderPresetTemplateName', () => {
 
   it('still passes through a literal name when no hostname is supplied', () => {
     expect(renderPresetTemplateName('static-template', '')).toBe('static-template')
+  })
+
+  // VM names are only checked for non-emptiness, so a name containing a
+  // replacement token must be inserted literally rather than expanded.
+  it.each([
+    ['vm$&-1', 'ci-vm$&-1'],
+    ["vm$'-1", "ci-vm$'-1"],
+    ['vm$`-1', 'ci-vm$`-1'],
+    ['vm$$-1', 'ci-vm$$-1'],
+    ['vm$1-1', 'ci-vm$1-1']
+  ])('inserts %s literally', (hostname, expected) => {
+    expect(renderPresetTemplateName('ci-{{ hostname }}', hostname)).toBe(expected)
   })
 })

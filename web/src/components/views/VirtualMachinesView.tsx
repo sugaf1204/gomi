@@ -263,10 +263,12 @@ export function VirtualMachinesView({
     updateForm: UpdateVMConfigForm,
     advancedExpanded: boolean,
     setAdvancedExpanded: (value: boolean | ((current: boolean) => boolean)) => void,
-    radioNamePrefix: string
+    radioNamePrefix: string,
+    supportsTemplateNameHostname = false
   ) {
     return (
       <VMConfigFields
+        supportsTemplateNameHostname={supportsTemplateNameHostname}
         formState={formState}
         updateForm={updateForm}
         advancedExpanded={advancedExpanded}
@@ -301,7 +303,8 @@ export function VirtualMachinesView({
           updateQuickDeployConfigForm,
           quickDeployAdvancedOpen,
           setQuickDeployAdvancedOpen,
-          'quick-deploy'
+          'quick-deploy',
+          true
         )}
       </VMQuickDeployDialog>
 

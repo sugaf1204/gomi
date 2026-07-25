@@ -227,7 +227,10 @@ export function writeQuickDeployPreset(preset: QuickDeployPreset) {
 // template instead of creating the intended one.
 export function renderPresetTemplateName(rawName: string, hostname: string): string {
   if (!hostname) return rawName
-  return rawName.replace(/\{\{\s*hostname\s*\}\}/g, hostname)
+  // A replacement callback, not a replacement string: VM names are only checked
+  // for non-emptiness, so a name containing $&, $` or $' would otherwise expand
+  // as a replacement token instead of being inserted literally.
+  return rawName.replace(/\{\{\s*hostname\s*\}\}/g, () => hostname)
 }
 
 // The Create dialog is a real <form>, so the browser enforces required/min on
@@ -248,6 +251,21 @@ export function invalidVMConfigReason(formState: VMConfigForm): string | undefin
     }
   }
 
+  // Optional, but when present must be an integer within the input's min/max.
+  // A negative value is silently dropped by buildAdvancedOptions, and a
+  // fractional one reaches a Go int field and fails to decode.
+  const boundedFields = [
+    { label: 'IO threads', value: formState.ioThreads },
+    { label: 'Net multiqueue', value: formState.netMultiqueue }
+  ]
+  for (const field of boundedFields) {
+    if (!field.value.trim()) continue
+    const parsed = Number(field.value)
+    if (!Number.isInteger(parsed) || parsed < 0 || parsed > 16) {
+      return `${field.label} must be a whole number between 0 and 16`
+    }
+  }
+
   const cpuCores = Number(formState.cpuCores)
   const pinning = parseCPUPinning(formState.cpuPinning)
   for (const vcpu of Object.keys(pinning ?? {}).map(Number)) {
@@ -255,7 +273,43 @@ export function invalidVMConfigReason(formState: VMConfigForm): string | undefin
       return `CPU pinning vcpu ${vcpu} is out of range [0, ${cpuCores})`
     }
   }
+
+  // Mirrors resource.ValidateIPAssignment, which rejects an unparsable address.
+  if (formState.ipAssignment === 'static' && !isParsableIP(formState.staticIP.trim())) {
+    return 'Static IP must be a valid IPv4 or IPv6 address'
+  }
   return undefined
+}
+
+// Accepts the same addresses as Go's net.ParseIP: dotted-quad IPv4 with each
+// octet in 0-255, or an IPv6 address (optionally with an embedded IPv4 tail).
+function isParsableIP(raw: string): boolean {
+  if (!raw) return false
+  if (raw.includes(':')) return isParsableIPv6(raw)
+  return isParsableIPv4(raw)
+}
+
+function isParsableIPv4(raw: string): boolean {
+  const octets = raw.split('.')
+  if (octets.length !== 4) return false
+  return octets.every((octet) => /^\d{1,3}$/.test(octet) && Number(octet) <= 255)
+}
+
+function isParsableIPv6(raw: string): boolean {
+  const compressedParts = raw.split('::')
+  if (compressedParts.length > 2) return false
+  const groups = compressedParts.map((part) => (part ? part.split(':') : []))
+  const tail = groups[groups.length - 1]
+  // An embedded IPv4 tail (e.g. ::ffff:192.168.1.1) occupies two groups.
+  let embeddedIPv4 = 0
+  if (tail.length > 0 && tail[tail.length - 1].includes('.')) {
+    if (!isParsableIPv4(tail[tail.length - 1])) return false
+    tail.pop()
+    embeddedIPv4 = 2
+  }
+  const total = groups.reduce((sum, part) => sum + part.length, 0) + embeddedIPv4
+  if (groups.some((part) => part.some((hextet) => !/^[0-9a-fA-F]{1,4}$/.test(hextet)))) return false
+  return compressedParts.length === 2 ? total <= 7 : total === 8
 }
 
 export function formatCPUPinning(cpuPinning?: Record<number, string>) {
