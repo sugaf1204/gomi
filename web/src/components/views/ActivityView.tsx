@@ -3,8 +3,8 @@ import { formatDate, phaseClass } from '../../lib/formatters'
 import type { Machine } from '../../types'
 
 const activityBadgeColor: Record<string, string> = {
-  job: 'bg-[#e0ecf8] text-[#2a5a8a]',
-  audit: 'bg-[#f0e8d8] text-[#7a5c2a]',
+  job: 'bg-brand-wash text-brand-strong',
+  audit: 'bg-warn-bg text-warn',
 }
 
 export type ActivityViewProps = {
@@ -49,14 +49,14 @@ export function ActivityView({
             <article key={item.id} className="border-0 border-b border-line bg-transparent py-[0.58rem] px-[0.2rem]">
               <header className="flex justify-between gap-[0.6rem] items-baseline mb-[0.28rem]">
                 <div className="flex gap-[0.45rem] items-baseline">
-                  <span className={`inline-flex items-center text-[0.66rem] font-semibold uppercase tracking-[0.04em] py-[0.12rem] px-[0.4rem] rounded-full ${activityBadgeColor[item.type] ?? 'bg-[#e8e8e8] text-[#555]'}`}>{item.type}</span>
+                  <span className={`inline-flex items-center text-[0.66rem] font-semibold uppercase tracking-[0.04em] py-[0.12rem] px-[0.4rem] rounded-full ${activityBadgeColor[item.type] ?? 'bg-neutral-bg text-neutral'}`}>{item.type}</span>
                   <strong>{item.action}</strong>
                 </div>
                 <span className={phaseClass(item.result)}>{item.result.toUpperCase()}</span>
               </header>
               <p className="m-0 text-ink-soft text-[0.86rem]">{item.machine || '-'} - {item.actor}</p>
               <p className="m-0 text-ink-soft text-[0.86rem] mt-[0.2rem]">{formatDate(item.timestamp)}</p>
-              {item.message && <code className="block mt-[0.38rem] text-[#7a4c2a] text-[0.8rem]">{item.message}</code>}
+              {item.message && <code className="block mt-[0.38rem] text-warn text-[0.8rem]">{item.message}</code>}
             </article>
           ))}
           {filteredItems.length === 0 && <p className="m-0 text-ink-soft">No activity records found</p>}

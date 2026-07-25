@@ -137,21 +137,21 @@ function VMList({
         </div>
       )}
       {virtualMachines.length > 0 && (
-        <div className="flex items-center gap-[0.45rem] py-[0.35rem] pl-[0.55rem] border-b border-line bg-[#f9f7f4]">
-          <input type="checkbox" className="w-[0.95rem] h-[0.95rem] m-0 shrink-0 accent-[#2b7a78] cursor-pointer" checked={checkedVMs.size === virtualMachines.length && virtualMachines.length > 0} onChange={toggleAllChecked} />
+        <div className="flex items-center gap-[0.45rem] py-[0.35rem] pl-[0.55rem] border-b border-line bg-panel-2">
+          <input type="checkbox" className="w-[0.95rem] h-[0.95rem] m-0 shrink-0 accent-brand cursor-pointer" checked={checkedVMs.size === virtualMachines.length && virtualMachines.length > 0} onChange={toggleAllChecked} />
           <span className="text-[0.78rem] text-ink-soft">Select All</span>
         </div>
       )}
       {virtualMachines.map((vm) => (
-        <div key={vm.name} className={clsx('flex items-start border-0 border-b border-line border-l-[3px] border-l-transparent', selected === vm.name && '!border-l-brand bg-[rgba(43,122,120,0.06)]')}>
+        <div key={vm.name} className={clsx('flex items-start border-0 border-b border-line border-l-[3px] border-l-transparent', selected === vm.name && '!border-l-brand bg-brand-wash')}>
           <div className="flex items-center pl-[0.55rem] pt-[0.72rem] shrink-0">
-            <input type="checkbox" className="w-[0.95rem] h-[0.95rem] m-0 accent-[#2b7a78] cursor-pointer" checked={checkedVMs.has(vm.name)} onChange={() => toggleChecked(vm.name)} />
+            <input type="checkbox" className="w-[0.95rem] h-[0.95rem] m-0 accent-brand cursor-pointer" checked={checkedVMs.has(vm.name)} onChange={() => toggleChecked(vm.name)} />
           </div>
           <button className="text-left flex-1 min-w-0 border-0 bg-transparent flex justify-between items-start gap-[0.75rem] py-[0.62rem] pl-[0.45rem] pr-[0.1rem] shadow-none hover:transform-none!" onClick={() => setVMSelection(vm.name)}>
             <div className="min-w-0">
               <p className="m-0 font-ui font-medium tracking-normal truncate">{vm.name}</p>
               <p className="m-0 text-ink-soft text-[0.82rem]">{vm.hypervisorRef || 'Auto-placed'} - {vm.resources.cpuCores}CPU - {vm.resources.memoryMB}MB</p>
-              {(vm.phase === 'Error' || vm.phase === 'Missing') && vm.lastError && <p className="m-0 text-[#7f2727] text-[0.76rem] mt-[0.15rem] leading-tight">{vm.lastError}</p>}
+              {(vm.phase === 'Error' || vm.phase === 'Missing') && vm.lastError && <p className="m-0 text-error text-[0.76rem] mt-[0.15rem] leading-tight">{vm.lastError}</p>}
             </div>
             <span className={clsx(phaseClass(vm.phase), 'shrink-0')}>{vm.phase}</span>
           </button>
@@ -198,11 +198,11 @@ function VMHeader({
           <div className="relative">
             <button className="py-[0.45rem] px-[0.72rem]" disabled={checkedNames.length === 0 && !selectedVM} onClick={() => setActionsMenuOpen((current) => !current)}>Actions</button>
             {actionsMenuOpen && (
-              <div className="absolute right-0 mt-1 min-w-[180px] bg-white border border-line shadow-[0_10px_24px_rgba(52,43,34,0.16)] z-10">
+              <div className="absolute right-0 mt-1 min-w-[180px] bg-panel border border-line shadow-[0_10px_24px_rgba(52,43,34,0.16)] z-10">
                 {actions.map((item) => (
                   <button
                     key={item.value}
-                    className={clsx('w-full text-left border-0 shadow-none rounded-none px-[0.7rem] py-[0.5rem]', item.value === 'power-off' || item.value === 'delete' ? 'text-[#9b2d2d] hover:bg-[#fff3f2]' : 'text-ink hover:bg-[#f7f3ed]')}
+                    className={clsx('w-full text-left border-0 shadow-none rounded-none px-[0.7rem] py-[0.5rem]', item.value === 'power-off' || item.value === 'delete' ? 'text-danger hover:bg-danger-bg' : 'text-ink hover:bg-panel-2')}
                     onClick={() => {
                       setActionsMenuOpen(false)
                       runPrimaryAction(item.value)
@@ -287,7 +287,7 @@ function StatusCard({ selectedVM }: { selectedVM: VirtualMachine }) {
       ['Phase', <span className={phaseClass(selectedVM.phase)}>{selectedVM.phase}</span>],
       ['Hypervisor', selectedVM.hypervisorName || '-'],
       ['Domain', <code className="text-[0.82rem]">{selectedVM.libvirtDomain || '-'}</code>],
-      ['IP Addresses', <><span>{selectedVM.ipAddresses?.join(', ') || '-'}</span> <span className={clsx('text-[0.68rem] font-medium px-[0.35rem] py-[0.05rem] rounded-sm border', selectedVM.ipAssignment === 'static' ? 'bg-[#e8f4f3] text-[#1a6360] border-[#b8dbd9]' : 'bg-[#f3f0ea] text-ink-soft border-[#e0dbd2]')}>{selectedVM.ipAssignment === 'static' ? 'Static' : 'DHCP'}</span></>],
+      ['IP Addresses', <><span>{selectedVM.ipAddresses?.join(', ') || '-'}</span> <span className={clsx('text-[0.68rem] font-medium px-[0.35rem] py-[0.05rem] rounded-sm border', selectedVM.ipAssignment === 'static' ? 'bg-brand-wash text-brand-strong border-line' : 'bg-panel-2 text-ink-soft border-line')}>{selectedVM.ipAssignment === 'static' ? 'Static' : 'DHCP'}</span></>],
       ['MAC Addresses', selectedVM.networkInterfaces?.map((nic) => nic.mac).filter((mac): mac is string => Boolean(mac)).join(', ') || '-'],
       ['Created On Host', selectedVM.createdOnHost || '-'],
       ['Last Power Action', selectedVM.lastPowerAction || '-'],

@@ -9,7 +9,7 @@ type Props = {
 export function DeployNotices({ notices }: Props) {
   if (notices.length === 0) return null
   return (
-    <div className="border border-[#c09a54] bg-[#f8e6cc] px-[0.65rem] py-[0.5rem]">
+    <div className="border border-warn-line bg-warn-bg px-[0.65rem] py-[0.5rem]">
       {notices.map((notice) => (
         <p key={`${notice.kind}-${notice.text}`} className="m-0 py-[0.1rem] text-[0.78rem] leading-[1.4] text-warn">
           {notice.text}

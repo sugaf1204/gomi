@@ -16,7 +16,7 @@ export function ActivityTab({ auditEvents }: Props) {
               <span>{event.result.toUpperCase()}</span>
             </header>
             <p className="m-0 text-ink-soft text-[0.86rem]">{event.actor} - {formatDate(event.createdAt)}</p>
-            {event.message && <code className="block mt-[0.38rem] text-[#7a4c2a] text-[0.8rem]">{event.message}</code>}
+            {event.message && <code className="block mt-[0.38rem] text-warn text-[0.8rem]">{event.message}</code>}
           </article>
         ))}
         {auditEvents.length === 0 && <p className="m-0 text-ink-soft">No activity for this machine</p>}

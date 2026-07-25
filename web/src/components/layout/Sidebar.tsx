@@ -59,13 +59,13 @@ export function Sidebar({
   const navBtn = (v: View) =>
     clsx(
       'text-left font-ui font-medium tracking-normal bg-transparent border-0 border-l-[3px] border-l-transparent shadow-none',
-      view === v && '!border-l-ink-soft !bg-[rgba(0,0,0,0.05)]'
+      view === v && '!border-l-ink-soft !bg-brand-wash'
     )
 
   const separator = 'border-0 border-t border-line my-[0.15rem]'
 
   return (
-    <aside className="sidebar-shell h-screen overflow-y-auto flex flex-col gap-[0.95rem] p-[1rem_0.85rem] border-r border-line bg-white/55 backdrop-blur-[6px] md:flex-col max-md:h-auto max-md:grid max-md:grid-rows-[auto_auto_auto] max-md:border-r-0 max-md:border-b max-md:border-line">
+    <aside className="sidebar-shell h-screen overflow-y-auto flex flex-col gap-[0.95rem] p-[1rem_0.85rem] border-r border-line bg-panel/55 backdrop-blur-[6px] md:flex-col max-md:h-auto max-md:grid max-md:grid-rows-[auto_auto_auto] max-md:border-r-0 max-md:border-b max-md:border-line">
       <div className="flex items-center gap-[0.62rem] pb-[0.2rem]">
         <img src="/favicon.svg" alt="GoMI" width="28" height="28" className="rounded" />
         <p className="m-0 font-display text-[1.08rem] font-medium tracking-[0.012em]">GoMI</p>

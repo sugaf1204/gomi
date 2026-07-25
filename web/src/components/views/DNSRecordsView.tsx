@@ -104,7 +104,7 @@ export function DNSRecordsView({ dnsRecords, dnsRecordsError, onRefresh }: DNSRe
       </div>
 
       {unavailable && (
-        <div className="border border-[#d8b25f] bg-[#fff8e6] text-[#6f4f12] p-[0.65rem] text-[0.84rem]">
+        <div className="border border-warn-line bg-warn-bg text-warn p-[0.65rem] text-[0.84rem]">
           {dnsRecordsError}
         </div>
       )}
@@ -156,7 +156,7 @@ export function DNSRecordsView({ dnsRecords, dnsRecordsError, onRefresh }: DNSRe
             required
             rows={form.type === 'TXT' ? 3 : 2}
             disabled={unavailable}
-            className="border border-line bg-white p-[0.55rem] font-mono text-[0.84rem] resize-y"
+            className="border border-line bg-panel p-[0.55rem] font-mono text-[0.84rem] resize-y"
             value={form.values}
             onChange={(e) => updateForm('values', e.target.value)}
             placeholder={form.type === 'A' ? '192.168.2.10' : form.type === 'CNAME' ? 'target.lab.local' : 'text value'}
@@ -200,7 +200,7 @@ export function DNSRecordsView({ dnsRecords, dnsRecordsError, onRefresh }: DNSRe
                     <div className="flex gap-[0.35rem] justify-end">
                       <button className="py-[0.28rem] px-[0.55rem] text-[0.78rem]" onClick={() => openEdit(record)}>Edit</button>
                       <button
-                        className="bg-[#d86b6b] border-[#be5252] text-white py-[0.28rem] px-[0.55rem] text-[0.78rem]"
+                        className="bg-danger-line border-danger-line text-white py-[0.28rem] px-[0.55rem] text-[0.78rem]"
                         onClick={() => setDeleteConfirm({ open: true, record })}
                       >
                         Delete
@@ -217,16 +217,16 @@ export function DNSRecordsView({ dnsRecords, dnsRecordsError, onRefresh }: DNSRe
 
       {deleteConfirm.open && deleteConfirm.record && (
         <ModalOverlay onBackdropClick={() => setDeleteConfirm({ open: false, record: null })}>
-          <div className="w-[min(400px,100%)] bg-white border border-line-strong shadow-[0_20px_45px_rgba(52,43,34,0.2)] p-[0.95rem] grid gap-[0.6rem]">
-            <h3 className="text-[1.2rem] text-[#9b2d2d]">Delete DNS Record</h3>
+          <div className="w-[min(400px,100%)] bg-panel border border-line-strong shadow-[0_20px_45px_rgba(52,43,34,0.2)] p-[0.95rem] grid gap-[0.6rem]">
+            <h3 className="text-[1.2rem] text-danger">Delete DNS Record</h3>
             <p className="m-0 text-ink-soft text-[0.84rem]">Are you sure you want to delete this DNS record?</p>
-            <div className="border border-line bg-[#f9f7f4] p-[0.55rem]">
+            <div className="border border-line bg-panel-2 p-[0.55rem]">
               <code>{deleteConfirm.record.name} {deleteConfirm.record.type}</code>
             </div>
             <div className="flex justify-end gap-[0.45rem]">
               <button onClick={() => setDeleteConfirm({ open: false, record: null })}>Cancel</button>
               <button
-                className="bg-[#d86b6b] border-[#be5252] text-white"
+                className="bg-danger-line border-danger-line text-white"
                 onClick={() => {
                   if (deleteConfirm.record) void handleDelete(deleteConfirm.record)
                   setDeleteConfirm({ open: false, record: null })
