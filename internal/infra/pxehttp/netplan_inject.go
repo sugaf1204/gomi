@@ -210,11 +210,11 @@ func injectNetplanConfigFromParams(cloudConfig string, params netplanParams, spe
 	}
 	cfg["runcmd"] = runCmd
 
-	raw, err := yaml.Marshal(cfg)
+	rendered, err := renderCloudConfig(cloudConfig, cfg)
 	if err != nil {
 		return cloudConfig
 	}
-	return "#cloud-config\n" + string(raw)
+	return rendered
 }
 
 // injectBridgedNetplanConfig injects a bridged netplan config into cloud-config
@@ -290,11 +290,11 @@ func injectBridgedNetplanConfig(cloudConfig string, m *machine.Machine, osFamily
 	}
 	cfg["runcmd"] = runCmd
 
-	raw, err := yaml.Marshal(cfg)
+	rendered, err := renderCloudConfig(cloudConfig, cfg)
 	if err != nil {
 		return cloudConfig
 	}
-	return "#cloud-config\n" + string(raw)
+	return rendered
 }
 
 func injectNetplanConfigForHost(cloudConfig string, h node.Node, osFamily, pxeBaseURL string, spec *subnet.SubnetSpec) string {

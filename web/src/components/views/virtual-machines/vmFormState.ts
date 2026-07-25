@@ -36,21 +36,11 @@ export type VMForm = VMConfigForm & {
 
 export type VMReinstallForm = VMConfigForm
 
-export type QuickDeployPreset = {
+// The preset carries exactly the fields a normal VM create carries, so any
+// field added to the create form becomes settable in the preset for free.
+export type QuickDeployPreset = VMConfigForm & {
   name: string
   count: string
-  hypervisorRef: string
-  cpuCores: string
-  memoryMB: string
-  diskGB: string
-  osImageRef: string
-  subnetRef: string
-  bridge: string
-  ipAssignment: 'dhcp'
-  cloudInitRefs: string[]
-  sshKeyRefs: string[]
-  loginUserUsername: string
-  loginUserPassword: string
 }
 
 export type UpdateVMConfigForm = (updater: (current: VMConfigForm) => VMConfigForm) => void
@@ -131,18 +121,7 @@ export const initialReinstallForm: VMReinstallForm = { ...initialVMConfigForm }
 export const initialQuickDeployPreset: QuickDeployPreset = {
   name: '',
   count: '1',
-  hypervisorRef: '',
-  cpuCores: '2',
-  memoryMB: '2048',
-  diskGB: '20',
-  osImageRef: '',
-  subnetRef: '',
-  bridge: '',
-  ipAssignment: 'dhcp',
-  cloudInitRefs: [],
-  sshKeyRefs: [],
-  loginUserUsername: '',
-  loginUserPassword: ''
+  ...initialVMConfigForm
 }
 
 export const initialPowerConfirm: VMPowerConfirmState = {
@@ -173,27 +152,6 @@ export const initialMigrateConfirm: VMMigrateConfirmState = {
   vmName: '',
   targetHypervisor: '',
   running: false
-}
-
-export function readQuickDeployPreset(): QuickDeployPreset {
-  if (typeof window === 'undefined') return initialQuickDeployPreset
-  try {
-    const raw = localStorage.getItem(QUICK_DEPLOY_STORAGE_KEY)
-    if (!raw) return initialQuickDeployPreset
-    const parsed = JSON.parse(raw) as Partial<QuickDeployPreset & { count: number }>
-    return {
-      ...initialQuickDeployPreset,
-      ...parsed,
-      name: typeof parsed.name === 'string' ? parsed.name : '',
-      count: String(parsed.count ?? '1'),
-      ipAssignment: 'dhcp',
-      loginUserPassword: '',
-      cloudInitRefs: Array.isArray(parsed.cloudInitRefs) ? parsed.cloudInitRefs.filter((ref): ref is string => typeof ref === 'string') : [],
-      sshKeyRefs: Array.isArray(parsed.sshKeyRefs) ? parsed.sshKeyRefs.filter((ref): ref is string => typeof ref === 'string') : []
-    }
-  } catch {
-    return initialQuickDeployPreset
-  }
 }
 
 export function formatCPUPinning(cpuPinning?: Record<number, string>) {

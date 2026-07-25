@@ -89,11 +89,11 @@ func injectWoLShutdownAgent(cloudConfig, pxeBaseURL string, m *machine.Machine) 
 	runCmd = append(runCmd, "/usr/local/sbin/gomi-install-wol-daemon")
 	cfg["runcmd"] = runCmd
 
-	raw, err := yaml.Marshal(cfg)
+	rendered, err := renderCloudConfig(cloudConfig, cfg)
 	if err != nil {
 		return cloudConfig
 	}
-	return "#cloud-config\n" + string(raw)
+	return rendered
 }
 
 func buildWoLShutdownInstallerScript(filesBase string) string {

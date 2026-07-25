@@ -15,10 +15,9 @@ import {
   initialMigrateConfirm,
   initialPowerConfirm,
   initialReinstallForm,
-  QUICK_DEPLOY_STORAGE_KEY,
-  readQuickDeployPreset,
   VM_SELECTION_STORAGE_KEY
 } from './virtual-machines/vmFormState'
+import { readQuickDeployPreset, writeQuickDeployPreset } from './virtual-machines/quickDeployPreset'
 import type {
   QuickDeployPreset,
   VMConfigForm,
@@ -77,6 +76,7 @@ export function VirtualMachinesView({
   const [migrateConfirm, setMigrateConfirm] = useState<VMMigrateConfirmState>(initialMigrateConfirm)
   const [advancedOpen, setAdvancedOpen] = useState(false)
   const [reinstallAdvancedOpen, setReinstallAdvancedOpen] = useState(false)
+  const [quickDeployAdvancedOpen, setQuickDeployAdvancedOpen] = useState(false)
 
   const osImageByName = useMemo(() => new Map(osImages.map((img) => [img.name, img])), [osImages])
   const vmOSImages = useMemo(() => osImages.filter((img) => supportsDeploymentTarget(img, 'vm')), [osImages])
@@ -100,8 +100,6 @@ export function VirtualMachinesView({
     handleBulkRedeployConfirm,
     handleMigrateConfirm,
     runPrimaryAction,
-    toggleQuickDeployCloudInitRef,
-    toggleQuickDeploySSHKeyRef,
     bridgePlaceholder
   } = useVirtualMachineOperations({
     form,
@@ -133,7 +131,6 @@ export function VirtualMachinesView({
     checkedNames,
     virtualMachines,
     vmOSImages,
-    osImages,
     hypervisors,
     subnets,
     onVirtualMachineUpsert,
@@ -174,17 +171,7 @@ export function VirtualMachinesView({
   }, [routeSelectedVM, selected, setSelected])
 
   useEffect(() => {
-    if (typeof window === 'undefined') return
-    try {
-      const safePreset: Partial<QuickDeployPreset> = { ...quickDeployPreset }
-      delete safePreset.loginUserPassword
-      localStorage.setItem(QUICK_DEPLOY_STORAGE_KEY, JSON.stringify({
-        ...safePreset,
-        count: Math.max(1, Number(quickDeployPreset.count) || 1)
-      }))
-    } catch {
-      // ignore localStorage access errors
-    }
+    writeQuickDeployPreset(quickDeployPreset)
   }, [quickDeployPreset])
 
   useEffect(() => {
@@ -263,15 +250,24 @@ export function VirtualMachinesView({
     setReinstallForm((current) => updater(current))
   }
 
+  const updateQuickDeployConfigForm: UpdateVMConfigForm = (updater) => {
+    setQuickDeployPreset((current) => ({
+      ...current,
+      ...updater(current)
+    }))
+  }
+
   function renderVMSpecFields(
     formState: VMConfigForm,
     updateForm: UpdateVMConfigForm,
     advancedExpanded: boolean,
     setAdvancedExpanded: (value: boolean | ((current: boolean) => boolean)) => void,
-    radioNamePrefix: string
+    radioNamePrefix: string,
+    supportsTemplateNameHostname = false
   ) {
     return (
       <VMConfigFields
+        supportsTemplateNameHostname={supportsTemplateNameHostname}
         formState={formState}
         updateForm={updateForm}
         advancedExpanded={advancedExpanded}
@@ -296,18 +292,20 @@ export function VirtualMachinesView({
         preset={quickDeployPreset}
         setPreset={setQuickDeployPreset}
         quickDeploying={quickDeploying}
-        hypervisors={hypervisors}
-        osImages={osImages}
-        cloudInits={cloudInits}
-        sshKeys={sshKeys}
-        subnets={subnets}
         nextName={quickDeployVMName}
         isReady={quickDeployPresetReady}
         onClose={() => setQuickDeploySettingsOpen(false)}
         onDeploy={() => void handleQuickDeploy()}
-        onToggleCloudInitRef={toggleQuickDeployCloudInitRef}
-        onToggleSSHKeyRef={toggleQuickDeploySSHKeyRef}
-      />
+      >
+        {renderVMSpecFields(
+          quickDeployPreset,
+          updateQuickDeployConfigForm,
+          quickDeployAdvancedOpen,
+          setQuickDeployAdvancedOpen,
+          'quick-deploy',
+          true
+        )}
+      </VMQuickDeployDialog>
 
       <VMEditDialogs
         formOpen={formOpen}

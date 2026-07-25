@@ -48,11 +48,11 @@ func injectDebianIfupdownConfigForHost(cloudConfig string, h node.Node, spec *su
 	runCmd = append([]any{"/usr/local/sbin/gomi-apply-debian-ifupdown"}, runCmd...)
 	cfg["runcmd"] = runCmd
 
-	raw, err := yaml.Marshal(cfg)
+	rendered, err := renderCloudConfig(cloudConfig, cfg)
 	if err != nil {
 		return cloudConfig
 	}
-	return "#cloud-config\n" + string(raw)
+	return rendered
 }
 
 func debianIfupdownApplyScript(mac, ip string, spec *subnet.SubnetSpec) string {
