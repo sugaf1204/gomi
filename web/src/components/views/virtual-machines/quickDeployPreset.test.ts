@@ -178,15 +178,25 @@ describe('invalidVMConfigReason', () => {
   })
 
   it.each([
-    ['cpuCores', 'CPU cores'],
-    ['memoryMB', 'Memory (MB)'],
-    ['diskGB', 'Disk (GB)']
-  ] as const)('rejects a blank %s', (field, label) => {
-    expect(invalidVMConfigReason({ ...valid, [field]: '' })).toBe(`${label} must be a positive whole number`)
+    ['cpuCores', 'CPU cores', 1],
+    ['memoryMB', 'Memory (MB)', 256],
+    ['diskGB', 'Disk (GB)', 1]
+  ] as const)('rejects a blank %s', (field, label, min) => {
+    expect(invalidVMConfigReason({ ...valid, [field]: '' })).toBe(`${label} must be a whole number of at least ${min}`)
   })
 
   it.each(['0', '-1', 'abc'] as const)('rejects cpuCores of %s', (value) => {
-    expect(invalidVMConfigReason({ ...valid, cpuCores: value })).toBe('CPU cores must be a positive whole number')
+    expect(invalidVMConfigReason({ ...valid, cpuCores: value })).toBe('CPU cores must be a whole number of at least 1')
+  })
+
+  // The Memory input declares min="256"; the browser enforces that for the
+  // Create dialog but not for Quick Deploy, whose button sits outside a form.
+  it.each(['1', '128', '255'] as const)('rejects memory below the input minimum: %s', (value) => {
+    expect(invalidVMConfigReason({ ...valid, memoryMB: value })).toBe('Memory (MB) must be a whole number of at least 256')
+  })
+
+  it.each(['256', '2048', '65536'] as const)('accepts memory of %s', (value) => {
+    expect(invalidVMConfigReason({ ...valid, memoryMB: value })).toBeUndefined()
   })
 
   it('rejects cpu pinning that targets a vcpu beyond cpuCores', () => {
@@ -287,11 +297,11 @@ describe('invalidVMConfigReason', () => {
 
   // Go decodes these into int/int64, so a fractional value fails to decode.
   it.each([
-    ['cpuCores', 'CPU cores'],
-    ['memoryMB', 'Memory (MB)'],
-    ['diskGB', 'Disk (GB)']
-  ] as const)('rejects a fractional %s', (field, label) => {
-    expect(invalidVMConfigReason({ ...valid, [field]: '1.5' })).toBe(`${label} must be a positive whole number`)
+    ['cpuCores', 'CPU cores', 1],
+    ['memoryMB', 'Memory (MB)', 256],
+    ['diskGB', 'Disk (GB)', 1]
+  ] as const)('rejects a fractional %s', (field, label, min) => {
+    expect(invalidVMConfigReason({ ...valid, [field]: '1024.5' })).toBe(`${label} must be a whole number of at least ${min}`)
   })
 
   it('accepts a whole number written with a trailing zero', () => {

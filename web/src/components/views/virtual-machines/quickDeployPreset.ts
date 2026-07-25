@@ -87,15 +87,17 @@ export function renderPresetTemplateName(rawName: string, hostname: string): str
 // fails here rather than after an inline Cloud-Init template has been created.
 export function invalidVMConfigReason(formState: VMConfigForm): string | undefined {
   // Go decodes these into int/int64, so a fractional value fails to decode.
-  const positiveFields = [
-    { label: 'CPU cores', value: formState.cpuCores },
-    { label: 'Memory (MB)', value: formState.memoryMB },
-    { label: 'Disk (GB)', value: formState.diskGB }
+  // The minimums mirror each input's min attribute, which the browser enforces
+  // for the Create dialog but not for Quick Deploy.
+  const resourceFields = [
+    { label: 'CPU cores', value: formState.cpuCores, min: 1 },
+    { label: 'Memory (MB)', value: formState.memoryMB, min: 256 },
+    { label: 'Disk (GB)', value: formState.diskGB, min: 1 }
   ]
-  for (const field of positiveFields) {
+  for (const field of resourceFields) {
     const parsed = Number(field.value)
-    if (!field.value.trim() || !Number.isInteger(parsed) || parsed <= 0) {
-      return `${field.label} must be a positive whole number`
+    if (!field.value.trim() || !Number.isInteger(parsed) || parsed < field.min) {
+      return `${field.label} must be a whole number of at least ${field.min}`
     }
   }
 
