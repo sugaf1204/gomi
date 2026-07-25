@@ -113,27 +113,56 @@ Persisted phase data cannot distinguish the two cases, because both are identica
 construction. The missing dimension is *ownership*: which process is currently
 responsible for this deploy.
 
-The design therefore adds a **deploy owner epoch**. The server generates a random
-epoch id at startup. `CreateVirtualMachine` stamps it on the record before returning
-`201`, and the sweep only considers records whose epoch differs from the current one.
-A record stamped by this process is owned by a goroutine that is either still running
-or already dead with the process — and if the process is alive, so is the goroutine.
-Records from a previous epoch are unambiguously orphaned.
+The design therefore adds a **deploy owner lease**. The server generates a random epoch
+id at startup. `CreateVirtualMachine` stamps it on the record before returning `201`,
+and the sweep skips records carrying the current epoch. Records from a previous epoch
+are unambiguously orphaned.
+
+**The lease must be released, not merely taken.** "Current epoch" means "a live
+goroutine owns this" only if every goroutine clears the stamp before exiting. A deploy
+that hits its context deadline before defining a domain would otherwise leave the
+record stamped forever: `Deploy` attempts `FailDeploy` on the already-cancelled
+context, so even the `Error` write can fail, and the sweep would then treat a dead
+worker's record as live indefinitely — reintroducing the stuck-`Pending` failure this
+design exists to remove.
+
+Every exit path of the deploy goroutine therefore clears `DeployEpoch`, using a fresh
+context rather than the expired one so the release survives its own timeout. Releasing
+the lease is what makes the record eligible for recovery on the next sweep.
 
 This adds one persisted field. `ProvisioningStatus` already carries the deploy's
 identity via `CompletionToken`, so the epoch belongs alongside it rather than in a new
 table.
 
+#### Ownership does not survive dispatch
+
+The sweep classifies a record and then hands it to a worker, so the record it acts on
+is a snapshot. Between classification and execution the VM can be deleted and
+recreated under the same name — the same race the create goroutine guards against.
+A stale worker would then tear down the *replacement's* domain and volume, or leave
+orphans on the old hypervisor.
+
+Token-gated status writes do not help: they protect database rows, not host mutations.
+The worker must therefore re-read the record and confirm the `CompletionToken` still
+matches its snapshot immediately before any host call, and repeat the same stale check
+after deploying that `runVMDeploy` performs.
+
 #### Decision logic
 
-For each VM with `Phase == Pending`, provisioning active and not completed:
+Candidates are records with an active, uncompleted provisioning window whose phase has
+not reached a terminal state — `Pending`, `Missing` or `Provisioning`. Phase alone does
+not select them, for the re-armed `Missing` reason above.
 
 ```
-DeployEpoch == currentEpoch -> owned by this process -> leave alone
-DomainObservedAt != nil     -> domain defined; runtime sync owns it -> leave alone
+DeployEpoch == currentEpoch -> a live goroutine owns it -> leave alone
+DomainObservedAt != nil     -> domain defined -> finalize (start + boot device)
 DeadlineAt passed           -> clean up host state, then FailDeploy(Phase=Error)
-otherwise                   -> clean up host state, then re-run Deploy()
+otherwise                   -> domain not yet defined -> clean up, then re-run Deploy()
 ```
+
+The last two branches are host-verified, not marker-verified: before tearing anything
+down the worker checks whether the domain actually exists, and finalizes instead if it
+does. This covers the case where the marker write failed after a successful define.
 
 Note that the expired branch also cleans up: a crash after volume creation but before
 domain definition leaves an orphan volume, and marking the record `Error` without
@@ -209,9 +238,33 @@ boot-device switch. The VM would sit until its provisioning window times out.
 
 Both remaining operations are idempotent (`StartDomain` on a running domain and
 setting an already-`hd` boot device are both no-ops or trivially repeatable), so
-recovery completes them rather than redeploying: for a `Pending` record with
-`DomainObservedAt` set whose domain exists but is not running, start it and reassert
-the boot device. This is a distinct, cheaper recovery path than a full redeploy.
+recovery completes them rather than redeploying: for a record with `DomainObservedAt`
+set whose domain exists but is not running, start it and reassert the boot device.
+This is a distinct, cheaper recovery path than a full redeploy.
+
+**The marker is not durable on its own.** `markDomainDefined` logs and returns when
+its store write fails (`internal/vm/deploy.go:241`), while `DefineDomain` has already
+succeeded. A restart after that leaves a prior-epoch record with a nil marker and a
+domain that exists — which the rules above classify as `ResumeRedeploy`, destroying a
+defined or running domain instead of finalizing it.
+
+Recovery therefore must not treat a nil marker as proof that no domain exists. Before
+any destructive teardown, the resumed worker inspects the host: if the domain is
+already defined, it takes the finalize path regardless of what the marker says. The
+persisted marker becomes an optimisation, not the sole source of truth.
+
+**Finalization is not limited to `Pending`.** When pre-domain work outlives the
+original deadline, the runtime sync loop marks the record `Missing`, and
+`markDomainDefined` then re-arms the window (`internal/vm/deploy.go:237`) without
+restoring the phase. A crash immediately after leaves a prior-epoch record that is
+`Missing` with an active window and `DomainObservedAt` set. `SyncAll` maps its
+shut-off domain to `Provisioning` (`internal/vm/runtime_sync.go:401-405`) but never
+starts it, and a `Pending`-only rule ignores it — so the VM never boots.
+
+Finalization is therefore selected by the provisioning window and domain marker, not
+by phase: any prior-epoch record with an active, uncompleted window whose domain is
+defined is a finalize candidate, whether its phase reads `Pending`, `Missing` or
+`Provisioning`.
 
 #### Backing image integrity
 
@@ -280,6 +333,16 @@ Correctness checks required before this is considered done:
 - **Post-definition crash windows**: a crash after `DefineDomain` but before
   `StartDomain`, and after `StartDomain` but before the boot-device switch, both
   recover to a running VM booting from disk.
+- **Lease release on timeout**: a deploy goroutine that hits its context deadline
+  releases its epoch, so the next sweep recovers the record instead of treating a dead
+  worker as live forever.
+- **Dispatch race**: a VM deleted and recreated between sweep classification and worker
+  execution is not torn down by the stale worker.
+- **Lost checkpoint**: a successful `DefineDomain` whose marker write failed, followed
+  by a restart, finalizes the existing domain rather than destroying it.
+- **Re-armed Missing**: a deploy whose pre-domain work outlived the deadline, marked
+  `Missing` and then re-armed by `markDomainDefined`, still gets finalized after a
+  crash rather than being ignored.
 - **Duplicate names**: *concurrent* creates with the same name yield exactly one
   record, the loser receiving `409`.
 - **Async response**: the create test uses a deployer that blocks, proving the `201`

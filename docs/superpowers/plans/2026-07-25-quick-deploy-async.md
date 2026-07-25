@@ -65,7 +65,32 @@ re-simplified away:
    delete fallback for unreachable hypervisors (`internal/infra/api/vm.go:217`).
 
 Two further gaps are recorded in the design doc and scoped as separate work below:
-the post-definition crash window (Task 8) and backing-image upload atomicity (Task 9).
+the post-definition crash window (Task 7b) and backing-image upload atomicity (Task 7c).
+
+### Second round
+
+The epoch fix above introduced its own failure modes, corrected in turn:
+
+8. **The lease was taken but never released.** A goroutine killed by its own context
+   deadline left the record stamped with the current epoch permanently — and `Deploy`'s
+   `FailDeploy` runs on that same expired context, so even the `Error` write could fail.
+   The sweep would skip a dead worker's record forever, reproducing the stuck-`Pending`
+   bug. Ownership is now a lease released on every exit path via a fresh context
+   (Task 2c, Task 3).
+9. **Ownership did not survive dispatch.** A record classified by the sweep and then
+   deleted/recreated before its worker ran would have had the *replacement's* host state
+   torn down. Workers now re-read and re-check the completion token before any libvirt
+   call (Task 5).
+10. **The domain-defined marker was treated as proof.** `markDomainDefined` logs and
+    continues when its store write fails (`internal/vm/deploy.go:241`) though
+    `DefineDomain` already succeeded, so a nil marker can coexist with a live domain.
+    Destructive paths now verify host state before tearing down (Task 5, Task 7b).
+11. **Finalization was `Pending`-only.** A deploy whose pre-domain work outlived the
+    deadline is marked `Missing`, then re-armed by `markDomainDefined` without a phase
+    restore. Such records were ignored by recovery while `SyncAll` mapped them to
+    `Provisioning` without ever starting them. Candidates are now selected by
+    provisioning window and domain marker across `Pending`/`Missing`/`Provisioning`
+    (Task 4).
 
 ---
 
@@ -452,7 +477,13 @@ Without this, the sweep cannot distinguish a crashed deploy from a healthy one t
 - Modify: `internal/vm/types.go:96-110` (`ProvisioningStatus`), `internal/app/app.go`, `internal/infra/api/server.go`, `internal/infra/api/vm.go`
 
 **Interfaces:**
-- Produces: `ProvisioningStatus.DeployEpoch string`, a per-process epoch generated at startup and exposed as `Runtime.deployEpoch` and `Server.deployEpoch`. Tasks 3, 5 and 6 consume it.
+- Produces: `ProvisioningStatus.DeployEpoch string`, a per-process epoch generated at startup and exposed as `Runtime.deployEpoch` and `Server.deployEpoch`; and `Service.ReleaseDeployEpoch(ctx context.Context, name, completionToken string) error`, which clears the stamp only when the stored token still matches. Tasks 3, 5 and 6 consume both.
+
+**The lease must be released, or this makes things worse.** A stamp that is never
+cleared means a goroutine killed by its own context deadline leaves the record marked
+"owned" permanently — and `Deploy`'s `FailDeploy` runs on that same expired context, so
+even the `Error` write may not land. The sweep would then skip a dead worker's record
+forever, reproducing the stuck-`Pending` bug in a new form.
 
 - [ ] **Step 1: Add the field**
 
@@ -487,6 +518,34 @@ In `internal/infra/api/vm.go`, extend the `v.Provisioning` initialisation at lin
 	}
 ```
 
+- [ ] **Step 3b: Add the release operation**
+
+In `internal/vm/service.go`, beside `FailDeploy` (which already shows the token-guard pattern at `internal/vm/service.go:193-200`):
+
+```go
+// ReleaseDeployEpoch clears the ownership stamp when the deploy that took it
+// finishes or dies. The token guard stops a stale worker from releasing a lease
+// a newer deploy has since taken.
+func (s *Service) ReleaseDeployEpoch(ctx context.Context, name, completionToken string) error {
+	v, err := s.store.Get(ctx, name)
+	if err != nil {
+		if errors.Is(err, resource.ErrNotFound) {
+			return nil
+		}
+		return err
+	}
+	if v.Provisioning.CompletionToken != completionToken || v.Provisioning.DeployEpoch == "" {
+		return nil
+	}
+	v.Provisioning.DeployEpoch = ""
+	v.UpdatedAt = time.Now().UTC()
+	_, err = writeExisting(ctx, s.store, v)
+	return err
+}
+```
+
+Add a test asserting that a release with a mismatched token is a no-op, and that a matching release clears the stamp so `DecideResumeAction` stops returning `ResumeNone`.
+
 - [ ] **Step 4: Build and test**
 
 Run: `go build ./... && go test ./...`
@@ -495,8 +554,8 @@ Expected: PASS
 - [ ] **Step 5: Commit**
 
 ```bash
-git add internal/vm/types.go internal/app/app.go internal/infra/api/server.go internal/infra/api/vm.go
-git commit -m "Stamp a per-process deploy epoch on VM provisioning windows"
+git add internal/vm/types.go internal/vm/service.go internal/vm/service_test.go internal/app/app.go internal/infra/api/server.go internal/infra/api/vm.go
+git commit -m "Stamp and release a per-process deploy ownership lease"
 ```
 
 ---
@@ -657,6 +716,20 @@ func (s *Server) runVMDeploy(deployHV hypervisor.Hypervisor, created vm.VirtualM
 	defer cancel()
 
 	token := created.Provisioning.CompletionToken
+
+	// Release the ownership lease on every exit path, using a context that is
+	// NOT the (possibly already expired) deploy context. Without this, a
+	// goroutine killed by its own deadline leaves the record stamped with the
+	// current epoch forever, and the sweep treats a dead worker as live —
+	// exactly the stuck-Pending failure this design removes.
+	defer func() {
+		releaseCtx, releaseCancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer releaseCancel()
+		if err := s.vms.ReleaseDeployEpoch(releaseCtx, created.Name, token); err != nil {
+			log.Printf("create vm %s: release deploy lease: %v", created.Name, err)
+		}
+	}()
+
 	deployErr := s.vmDeployer.Deploy(ctx, &created, pxehttp.RenderNoCloudLineConfig)
 
 	// Compare deploy identity, not mere existence. With rapid consecutive
@@ -778,9 +851,24 @@ func TestDecideResumeAction(t *testing.T) {
 			want: ResumeFail,
 		},
 		{
-			name: "domain already defined is left to the sync loop",
+			name: "domain already defined is finalized, not redeployed",
 			vm:   VirtualMachine{Phase: PhasePending, Provisioning: ProvisioningStatus{Active: true, DeadlineAt: &future, DomainObservedAt: &observed, DeployEpoch: priorEpoch}},
-			want: ResumeNone,
+			want: ResumeFinalize,
+		},
+		{
+			name: "re-armed Missing record with a defined domain is finalized",
+			vm:   VirtualMachine{Phase: PhaseMissing, Provisioning: ProvisioningStatus{Active: true, DeadlineAt: &future, DomainObservedAt: &observed, DeployEpoch: priorEpoch}},
+			want: ResumeFinalize,
+		},
+		{
+			name: "provisioning record with a defined domain is finalized",
+			vm:   VirtualMachine{Phase: PhaseProvisioning, Provisioning: ProvisioningStatus{Active: true, DeadlineAt: &future, DomainObservedAt: &observed, DeployEpoch: priorEpoch}},
+			want: ResumeFinalize,
+		},
+		{
+			name: "released lease makes a timed-out worker's record recoverable",
+			vm:   VirtualMachine{Phase: PhasePending, Provisioning: ProvisioningStatus{Active: true, DeadlineAt: &future, DeployEpoch: ""}},
+			want: ResumeRedeploy,
 		},
 		{
 			name: "inactive provisioning window is ignored",
@@ -853,17 +941,26 @@ const (
 // The shared "is this deploy still preparing its domain" predicate lives in
 // vmDeployInFlight; this function adds only ownership and expiry on top.
 func DecideResumeAction(v VirtualMachine, currentEpoch string, now time.Time) ResumeAction {
-	if v.Phase != PhasePending {
+	// Phase alone does not select candidates. When pre-domain work outlives the
+	// deadline the sync loop marks the record Missing, and markDomainDefined
+	// then re-arms the window without restoring the phase
+	// (internal/vm/deploy.go:237), so a crashed deploy can be Missing or
+	// Provisioning rather than Pending.
+	switch v.Phase {
+	case PhasePending, PhaseMissing, PhaseProvisioning:
+	default:
 		return ResumeNone
 	}
 	if !v.Provisioning.Active || v.Provisioning.CompletedAt != nil {
 		return ResumeNone
 	}
+	// A live goroutine in this process owns it. The lease is released on every
+	// exit path, so a stamp that is still present means the owner is alive.
 	if v.Provisioning.DeployEpoch == currentEpoch {
 		return ResumeNone
 	}
 	if v.Provisioning.DomainObservedAt != nil {
-		return ResumeNone
+		return ResumeFinalize
 	}
 	if v.Provisioning.DeadlineAt != nil && now.After(*v.Provisioning.DeadlineAt) {
 		return ResumeFail
@@ -871,6 +968,10 @@ func DecideResumeAction(v VirtualMachine, currentEpoch string, now time.Time) Re
 	return ResumeRedeploy
 }
 ```
+
+`ResumeFinalize` is defined in Task 7b. Add the constant here so the decision function is complete in one place, and let Task 7b supply its execution path.
+
+**The marker is a hint, not proof.** `markDomainDefined` logs and continues when its store write fails (`internal/vm/deploy.go:241`) even though `DefineDomain` already succeeded, so a nil `DomainObservedAt` does not guarantee the absence of a domain. `ResumeFail` and `ResumeRedeploy` are therefore both host-verified at execution time: the worker checks whether the domain exists before any destructive teardown and finalizes instead if it does. Only the executor knows this; the pure decision function cannot.
 
 Note `vmDeployInFlight` (`internal/vm/runtime_sync.go:323`) already encodes active + not-timed-out + `DomainObservedAt == nil`. Do not restate that logic — if you find yourself copying its body, call it instead. The two functions must stay in agreement, since the sync loop uses it to decide whether to leave a mid-deploy VM alone.
 
@@ -1169,6 +1270,17 @@ func (d *Deployer) failInterrupted(ctx context.Context, v VirtualMachine) {
 // Volume creation is not idempotent, so a retry without this teardown fails
 // with "already exists" whenever the restart landed after volume creation.
 func (d *Deployer) resumeOne(ctx context.Context, v VirtualMachine, pxeNoCloudFn func(base string, installType InstallConfigType, mac string) string) {
+	// The record was classified on a snapshot and may have been dispatched to a
+	// worker some time ago. Re-read it: if it was deleted and recreated under
+	// the same name meanwhile, this worker would otherwise tear down the
+	// replacement's host state. Token-gated status writes protect rows, not
+	// host mutations, so this check must happen before any libvirt call.
+	current, err := d.VMs.Get(ctx, v.Name)
+	if err != nil || current.Provisioning.CompletionToken != v.Provisioning.CompletionToken {
+		log.Printf("resume vm %s: superseded before recovery, skipping", v.Name)
+		return
+	}
+
 	hv, err := d.Hypervisors.Get(ctx, v.HypervisorRef)
 	if err != nil {
 		log.Printf("resume vm %s: resolve hypervisor %s: %v", v.Name, v.HypervisorRef, err)
@@ -1184,6 +1296,12 @@ func (d *Deployer) resumeOne(ctx context.Context, v VirtualMachine, pxeNoCloudFn
 	}
 }
 ```
+
+Apply the same re-read guard at the top of `failInterrupted`, for the same reason: it also tears down host state.
+
+**Host verification before destructive work.** Both `resumeOne` and `failInterrupted` must check whether the domain already exists before tearing anything down, because a nil `DomainObservedAt` is not proof that `DefineDomain` never ran — `markDomainDefined` continues after a failed marker write (`internal/vm/deploy.go:241`). Query the domain via the executor; if it exists, hand off to the finalize path (Task 7b) instead of destroying a defined or running domain.
+
+Add a test for this: a record with a nil marker whose fake executor reports an existing domain must not be torn down.
 
 - [ ] **Step 4: Run tests to verify they pass**
 
@@ -1360,15 +1478,24 @@ git commit -m "Reserve next Quick Deploy name on click to allow rapid consecutiv
 **Files:**
 - Modify: `internal/vm/resume.go`, `internal/vm/resume_test.go`
 
-- [ ] **Step 1: Extend the decision with a completion case**
+- [ ] **Step 1: Implement the finalize execution path**
 
-Add a `ResumeFinalize` action for records that are `Pending` with `DomainObservedAt` set and a prior epoch. Recovery does not redeploy: it inspects the domain and, if it is not running, calls `StartDomain` and reasserts the boot device. Both operations are idempotent — starting a running domain and setting an already-`hd` boot device are no-ops — so this path is safe to repeat.
+`DecideResumeAction` already returns `ResumeFinalize` (Task 4) for a prior-epoch record with an active window and `DomainObservedAt` set, in any of the `Pending`/`Missing`/`Provisioning` phases. This task supplies the executor.
+
+Recovery does not redeploy: it inspects the domain and, if it is not running, calls `StartDomain` and reasserts the boot device to `hd`. Both operations are idempotent — starting a running domain and setting an already-`hd` boot device are no-ops — so the path is safe to repeat. Restore the phase to `Provisioning` on success, since a re-armed record may still read `Missing`.
 
 Do not fold this into `ResumeRedeploy`: tearing down a defined domain to rebuild it would discard an install that may already be under way.
 
-- [ ] **Step 2: Test both crash windows**
+- [ ] **Step 2: Test both crash windows and the re-armed Missing case**
 
-Two cases, using the `resumeExecutor` fake: a domain that exists but is shut off (expect `StartDomain`), and a domain that is running with boot device still `network` (expect `SetDomainBootDevice` to `hd`). Assert no volume is deleted in either case.
+Using the `resumeExecutor` fake:
+
+- domain exists but is shut off → expect `StartDomain`
+- domain is running with boot device still `network` → expect `SetDomainBootDevice` to `hd`
+- record is `Missing` with an active re-armed window and a defined domain → expect finalize, not `ResumeNone`. This is the timeout-before-define path: `markDomainDefined` re-arms the window (`internal/vm/deploy.go:237`) without restoring the phase, and `SyncAll` maps the shut-off domain to `Provisioning` (`internal/vm/runtime_sync.go:401-405`) but never starts it.
+- nil `DomainObservedAt` but the domain exists on the host → expect finalize, **not** teardown. This is the lost-checkpoint case from `internal/vm/deploy.go:241`.
+
+Assert no volume is deleted in any of these.
 
 - [ ] **Step 3: Commit**
 
@@ -1433,6 +1560,10 @@ Walk the "Verification" section of `docs/superpowers/specs/2026-07-25-quick-depl
 | Teardown not-attempted marker preserved | Task 2 Step 5b |
 | Stale-deploy identity check | Task 3 Step 4 |
 | Post-definition crash windows | Task 7b Step 2 |
+| Lease released on goroutine timeout | Task 2c Step 3b + Task 4 Step 1 |
+| Dispatch race (recreated during recovery) | Task 5 Step 3 (`resumeOne` re-read) |
+| Lost checkpoint: defined domain, nil marker | Task 5 Step 3 + Task 7b Step 2 |
+| Re-armed Missing finalized | Task 4 Step 1 + Task 7b Step 2 |
 | Backing image integrity | Task 7c Step 2 |
 | Existing sync tests still pass | Task 3 Step 6 |
 | Cascade delete teardown | Task 2 Step 1 + Task 3 Step 4 |
