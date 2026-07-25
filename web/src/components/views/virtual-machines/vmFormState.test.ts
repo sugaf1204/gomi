@@ -187,6 +187,27 @@ describe('invalidVMConfigReason', () => {
       .toBe('CPU pinning vcpu 2 is out of range [0, 2)')
   })
 
+  // parseCPUPinning drops malformed segments silently, so these are checked
+  // against the raw text: a fractional index would otherwise survive as a
+  // non-integer key, and a typo would be discarded without any feedback.
+  it('rejects a fractional vcpu index', () => {
+    expect(invalidVMConfigReason({ ...valid, cpuCores: '4', cpuPinning: '0.5:1' }))
+      .toBe('CPU pinning "0.5:1" is invalid (expected vcpu:cpuset, e.g. 0:0,1:2)')
+  })
+
+  it.each(['garbage', '0', '0:', ':1', '0:1:2', '-1:0', '1e1:2'] as const)('rejects malformed cpu pinning %s', (value) => {
+    expect(invalidVMConfigReason({ ...valid, cpuCores: '8', cpuPinning: value })).toMatch(/^CPU pinning /)
+  })
+
+  it('reports the offending segment when a later one is malformed', () => {
+    expect(invalidVMConfigReason({ ...valid, cpuCores: '4', cpuPinning: '0:0,oops' }))
+      .toBe('CPU pinning "oops" is invalid (expected vcpu:cpuset, e.g. 0:0,1:2)')
+  })
+
+  it('accepts cpu pinning with surrounding whitespace', () => {
+    expect(invalidVMConfigReason({ ...valid, cpuCores: '4', cpuPinning: ' 0 : 0 , 1 : 2 ' })).toBeUndefined()
+  })
+
   it('accepts cpu pinning within range', () => {
     expect(invalidVMConfigReason({ ...valid, cpuCores: '4', cpuPinning: '0:0,1:2,3:6' })).toBeUndefined()
   })
@@ -221,9 +242,19 @@ describe('invalidVMConfigReason', () => {
     expect(invalidVMConfigReason({ ...valid, ipAssignment: 'static', staticIP: ip })).toBeUndefined()
   })
 
-  it.each(['192.168.1', '192.168.1.1.1', 'not-an-ip', '1::2::3'] as const)('rejects static IP %s', (ip) => {
+  it.each(['192.168.1', '192.168.1.1.1', 'not-an-ip', '1::2::3', '256.1.1.1', '1:2:3:4:5:6:7:8:9'] as const)('rejects static IP %s', (ip) => {
     expect(invalidVMConfigReason({ ...valid, ipAssignment: 'static', staticIP: ip }))
       .toBe('Static IP must be a valid IPv4 or IPv6 address')
+  })
+
+  // Go's net.ParseIP rejects leading zeros in dotted-decimal octets.
+  it.each(['192.168.001.10', '192.168.1.010', '010.0.0.1', '1.2.3.04', '192.168.0.01'] as const)('rejects leading-zero octets in %s', (ip) => {
+    expect(invalidVMConfigReason({ ...valid, ipAssignment: 'static', staticIP: ip }))
+      .toBe('Static IP must be a valid IPv4 or IPv6 address')
+  })
+
+  it.each(['0.0.0.0', '255.255.255.255', '::', '1:2:3:4:5:6:7:8'] as const)('accepts boundary address %s', (ip) => {
+    expect(invalidVMConfigReason({ ...valid, ipAssignment: 'static', staticIP: ip })).toBeUndefined()
   })
 
   it('ignores the static IP when assignment is dhcp', () => {

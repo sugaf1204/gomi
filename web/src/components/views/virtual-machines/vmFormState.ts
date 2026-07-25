@@ -266,11 +266,21 @@ export function invalidVMConfigReason(formState: VMConfigForm): string | undefin
     }
   }
 
+  // Validated against the raw text, not parseCPUPinning's output: that parser
+  // silently drops malformed segments, so a typo would otherwise be discarded
+  // without telling anyone, and a fractional index would survive as a
+  // non-integer key that Go's map[int]string cannot decode.
   const cpuCores = Number(formState.cpuCores)
-  const pinning = parseCPUPinning(formState.cpuPinning)
-  for (const vcpu of Object.keys(pinning ?? {}).map(Number)) {
-    if (vcpu < 0 || vcpu >= cpuCores) {
-      return `CPU pinning vcpu ${vcpu} is out of range [0, ${cpuCores})`
+  const pinningText = formState.cpuPinning.trim()
+  if (pinningText) {
+    for (const segment of pinningText.split(',')) {
+      const [vcpu, cpuset] = segment.split(':').map((part) => part.trim())
+      if (segment.split(':').length !== 2 || !/^\d+$/.test(vcpu ?? '') || !cpuset) {
+        return `CPU pinning "${segment.trim()}" is invalid (expected vcpu:cpuset, e.g. 0:0,1:2)`
+      }
+      if (Number(vcpu) >= cpuCores) {
+        return `CPU pinning vcpu ${Number(vcpu)} is out of range [0, ${cpuCores})`
+      }
     }
   }
 
@@ -292,7 +302,9 @@ function isParsableIP(raw: string): boolean {
 function isParsableIPv4(raw: string): boolean {
   const octets = raw.split('.')
   if (octets.length !== 4) return false
-  return octets.every((octet) => /^\d{1,3}$/.test(octet) && Number(octet) <= 255)
+  // Go's net.ParseIP rejects leading zeros in dotted-decimal octets, so "0" is
+  // valid but "01" and "001" are not.
+  return octets.every((octet) => /^(0|[1-9]\d{0,2})$/.test(octet) && Number(octet) <= 255)
 }
 
 function isParsableIPv6(raw: string): boolean {
