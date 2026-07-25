@@ -7,6 +7,7 @@ import { VMQuickDeploySettings } from './components/layout/VMQuickDeploySettings
 import { ToastRegion, type ToastItem } from './components/ui/ToastRegion'
 import { AuthView } from './components/views/AuthView'
 import { useAppDataState } from './hooks/useAppDataState'
+import { quickDeployAuditRefreshTarget } from './hooks/quickDeployAuditRefresh'
 import { useVMQuickDeploy } from './hooks/useVMQuickDeploy'
 import { useAppDerivedData } from './hooks/useAppDerivedData'
 import { useSelectionSyncEffects } from './hooks/useAppEffects'
@@ -287,11 +288,18 @@ export default function App() {
 
   const vmOSImages = useMemo(() => osImages.filter((img) => supportsDeploymentTarget(img, 'vm')), [osImages])
 
+  const refreshQuickDeployAudit = useCallback(async () => {
+    const target = quickDeployAuditRefreshTarget(view, activityMachineFilter)
+    if (!target) return
+    await refreshAudit(target.machineName)
+  }, [view, activityMachineFilter, refreshAudit])
+
   const quickDeploy = useVMQuickDeploy({
     virtualMachines,
     vmOSImages,
     onVirtualMachineUpsert: upsertVirtualMachine,
-    refreshAll
+    refreshAll,
+    refreshAuditIfVisible: refreshQuickDeployAudit
   })
 
   const workspaceContentProps = useWorkspaceContentProps({

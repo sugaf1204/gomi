@@ -25,6 +25,10 @@ type Params = {
   vmOSImages: { name: string }[]
   onVirtualMachineUpsert: (virtualMachine: VirtualMachine) => void
   refreshAll: () => void | Promise<void>
+  // refreshAll does not fetch audit events, and the audit effect is keyed on
+  // view/filter changes that a header deploy does not cause. Without this the
+  // server's create-vm event stays off an already-open Activity timeline.
+  refreshAuditIfVisible: () => void | Promise<void>
 }
 
 export type VMQuickDeploy = {
@@ -51,7 +55,8 @@ export function useVMQuickDeploy({
   virtualMachines,
   vmOSImages,
   onVirtualMachineUpsert,
-  refreshAll
+  refreshAll,
+  refreshAuditIfVisible
 }: Params): VMQuickDeploy {
   const [preset, setPreset] = useState<QuickDeployPreset>(readQuickDeployPreset)
   const [settingsOpen, setSettingsOpen] = useState(false)
@@ -126,6 +131,7 @@ export function useVMQuickDeploy({
       })
       onVirtualMachineUpsert(result)
       await refreshAll()
+      await refreshAuditIfVisible()
       // The deploy can be triggered from any view, so a toast is often the only
       // sign that anything happened.
       if (result.phase === 'Error') {
