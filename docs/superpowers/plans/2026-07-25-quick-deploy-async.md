@@ -32,17 +32,19 @@
 |---|---|---|
 | `internal/vm/deploy.go` | Deploy/Redeploy orchestration; gains an injectable executor factory | Modify |
 | `internal/vm/teardown.go` | Host-state teardown shared by the API and the sync loop | Create |
-| `internal/vm/resume.go` | Decide and perform resume of interrupted deploys | Create |
+| ~~`internal/vm/resume.go`~~ | *(deferred — recovery scope, not built)* | — |
 | `internal/vm/teardown_test.go` | Teardown behaviour incl. not-found tolerance and the not-attempted marker | Create |
-| `internal/vm/resume_test.go` | Resume decision matrix, epoch ownership, cleanup-before-retry | Create |
-| `internal/vm/types.go` | `ProvisioningStatus.DeployEpoch` field | Modify |
+| ~~`internal/vm/resume_test.go`~~ | *(deferred — recovery scope, not built)* | — |
+| ~~`internal/vm/types.go`~~ | *(deferred — `DeployEpoch`/`HostSetupDoneAt` belong to the recovery scope)* | — |
 | `internal/vm/store.go`, `internal/infra/sql/vm_store.go`, `internal/infra/memory/` | Insert-only create for atomic duplicate rejection | Modify |
 | `internal/vm/deploy_test.go` | Executor-factory seam coverage | Modify |
-| `internal/infra/api/vm.go` | Create handler: 201 early, atomic duplicate guard, background deploy with identity-checked cleanup | Modify |
-| `internal/infra/api/vm_reinstall.go` | Take and release the ownership lease around the synchronous redeploy | Modify |
-| `internal/app/sync.go` | Run the resume sweep before `SyncAll`, off the loop's critical path | Modify |
+| `internal/infra/api/vm.go` | Create handler: 201 early, atomic duplicate guard | Modify |
+| `internal/infra/api/vm_deploy_async.go` | Background deploy worker: panic recovery, identity-checked cleanup, timeout persistence, audit | Create |
+| ~~`internal/infra/api/vm_reinstall.go`~~ | *(deferred — no lease without the sweep)* | — |
+| ~~`internal/app/sync.go`~~ | *(deferred — no resume sweep is added)* | — |
 | `web/src/components/views/virtual-machines/useVirtualMachineOperations.ts` | Optimistic count increment for VM Quick Deploy | Modify |
 | `web/src/components/views/machines/useMachineOperations.ts` | Same for Machine Quick Deploy | Modify |
+| `internal/machine/`, `internal/infra/sql/machine_store.go` | Insert-only create + 409 for Machines (mirrors the VM guard) | Modify |
 
 Task order matters: Task 1 creates the test seam that Tasks 4–7 depend on.
 
@@ -265,13 +267,25 @@ Replace the two call sites. At `internal/vm/deploy.go:40`:
 
 And the same substitution at `internal/vm/deploy.go:148` inside `Redeploy`.
 
+- [ ] **Step 3b: Return the hypervisor Deploy actually used**
+
+`Deploy` resolves the hypervisor itself at `internal/vm/deploy.go:24` instead of taking the caller's handle. Task 3's cleanup path needs to know which host the domain and volume really landed on, because the record can be replaced under the same name with a different connection between the handler's lookup and the deploy.
+
+Change the signature to return it:
+
+```go
+func (d *Deployer) Deploy(ctx context.Context, created *VirtualMachine, pxeNoCloudFn func(base string, installType InstallConfigType, mac string) string) (hypervisor.Hypervisor, error) {
+```
+
+Return `hv` on every path after line 24 resolves it, and the zero value on the early failure before that. Update all callers — run `grep -rn "vmDeployer.Deploy(\|\.Deploy(ctx" internal/ | grep -v _test` to find them — plus any tests that call it.
+
 - [ ] **Step 4: Run tests to verify they pass**
 
 Run: `go test ./internal/vm/ -run TestDeployerNewExecutor -v`
 Expected: PASS
 
-Run: `go test ./...`
-Expected: PASS (no behaviour change when `ExecutorFactory` is nil)
+Run: `go build ./... && go test ./...`
+Expected: PASS (no behaviour change when `ExecutorFactory` is nil; the signature change is mechanical)
 
 - [ ] **Step 5: Commit**
 
@@ -427,12 +441,26 @@ In `internal/infra/api/vm.go`, delete `teardownVMRuntimeOnHypervisor` (lines 276
 
 ```go
 func (s *Server) teardownVMRuntimeForCleanup(ctx context.Context, hv hypervisor.Hypervisor, v vm.VirtualMachine) error {
-	if s.vmDeployer == nil {
-		return nil
+	return s.vmTeardowner().TeardownHostState(ctx, hv, v)
+}
+
+// vmTeardowner returns a Deployer usable for host teardown. VMDeployer is
+// optional (ServerConfig leaves it nil in tests and in deployless
+// configurations), but VM deletion must still tear down host state, so fall
+// back to a bare Deployer that builds a production executor. Routing deletion
+// through s.vmDeployer directly would panic on a nil receiver inside
+// newExecutor and turn every delete into a 500.
+func (s *Server) vmTeardowner() *vm.Deployer {
+	if s.vmDeployer != nil {
+		return s.vmDeployer
 	}
-	return s.vmDeployer.TeardownHostState(ctx, hv, v)
+	return &vm.Deployer{}
 }
 ```
+
+`TeardownHostState` only needs `newExecutor`, which falls back to `libvirt.NewExecutor` when `ExecutorFactory` is nil (Task 1), so a zero-value `Deployer` is sufficient here. Do not extend this fallback to `runVMDeploy`: a deploy genuinely requires the configured deployer, and the handler already guards on `s.vmDeployer != nil` before starting one.
+
+Add a regression test that deletes a VM in the default test environment (where `VMDeployer` is nil) and asserts a `204`, not a `500`.
 
 Then find every other caller and update it:
 
@@ -869,7 +897,9 @@ This depends on Task 2b (insert-only store operation). In `internal/infra/api/vm
 
 - [ ] **Step 4: Move the deploy to a background goroutine**
 
-Replace the whole `if s.vmDeployer != nil { ... }` block (lines 109-130) with:
+**Put the worker in a new file, `internal/infra/api/vm_deploy_async.go`.** `vm.go` is already 435 lines against the project's ~300-line guideline, and this worker adds roughly 90 more with several independent reasons to change (panic recovery, identity validation, cleanup, timeout persistence, auditing). Moving the teardown helper out in Task 2 only reclaims ~30 lines. Keep `CreateVirtualMachine` in `vm.go` and put `runVMDeploy` plus its helpers in the new file.
+
+In `vm.go`, replace the whole `if s.vmDeployer != nil { ... }` block (lines 109-130) with the dispatch below; the `runVMDeploy` definition that follows belongs in `vm_deploy_async.go`:
 
 ```go
 	if s.vmDeployer != nil {
@@ -896,9 +926,14 @@ func (s *Server) runVMDeploy(actor httputil.Actor, deployHV hypervisor.Hyperviso
 			log.Printf("create vm %s: deploy panicked: %v", created.Name, r)
 			failCtx, failCancel := context.WithTimeout(context.Background(), 10*time.Second)
 			defer failCancel()
-			if _, err := s.vms.FailDeploy(failCtx, created.Name, "deploy", fmt.Sprintf("deploy panicked: %v", r), created.Provisioning.CompletionToken); err != nil {
+			detail := fmt.Sprintf("deploy panicked: %v", r)
+			if _, err := s.vms.FailDeploy(failCtx, created.Name, "deploy", detail, created.Provisioning.CompletionToken); err != nil {
 				log.Printf("create vm %s: record panic failure: %v", created.Name, err)
 			}
+			// Unwinding skips the normal completion audit below, so write the
+			// terminal event here — otherwise the Activity UI keeps showing
+			// "accepted" for a VM that is actually in Error.
+			httputil.CreateAuditFor(failCtx, s.authStore, actor, created.Name, "create-vm", "failure", detail, nil)
 		}
 	}()
 
@@ -907,20 +942,16 @@ func (s *Server) runVMDeploy(actor httputil.Actor, deployHV hypervisor.Hyperviso
 
 	token := created.Provisioning.CompletionToken
 
-	// Release the ownership lease on every exit path, using a context that is
-	// NOT the (possibly already expired) deploy context. Without this, a
-	// goroutine killed by its own deadline leaves the record stamped with the
-	// current epoch forever, and the sweep treats a dead worker as live —
-	// exactly the stuck-Pending failure this design removes.
-	defer func() {
-		releaseCtx, releaseCancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer releaseCancel()
-		if err := s.vms.ReleaseDeployEpoch(releaseCtx, created.Name, token); err != nil {
-			log.Printf("create vm %s: release deploy lease: %v", created.Name, err)
-		}
-	}()
-
-	deployErr := s.vmDeployer.Deploy(ctx, &created, pxehttp.RenderNoCloudLineConfig)
+	// Deploy returns the hypervisor it resolved and actually used. It re-reads
+	// the reference itself (internal/vm/deploy.go:24) rather than taking the
+	// caller's handle, so if the hypervisor record is replaced under the same
+	// name with a different connection between the handler's lookup and the
+	// deploy, deployHV points at a host the domain and volume were never
+	// created on. Cleaning up through it would leave live artifacts behind.
+	usedHV, deployErr := s.vmDeployer.Deploy(ctx, &created, pxehttp.RenderNoCloudLineConfig)
+	if usedHV.Name == "" {
+		usedHV = deployHV // Deploy failed before resolving; the cached handle is the best available.
+	}
 
 	// Compare deploy identity, not mere existence. With rapid consecutive
 	// deploys a VM can be deleted and recreated under the same name while this
@@ -938,7 +969,10 @@ func (s *Server) runVMDeploy(actor httputil.Actor, deployHV hypervisor.Hyperviso
 	stale := errors.Is(getErr, resource.ErrNotFound) ||
 		(getErr == nil && current.Provisioning.CompletionToken != token)
 	if stale {
-		if cleanupErr := s.vmDeployer.TeardownHostState(checkCtx, deployHV, created); cleanupErr != nil {
+		// Tear down through the hypervisor Deploy actually used (usedHV), not
+		// the one resolved before it ran. See the note below on why they can
+		// differ.
+		if cleanupErr := s.vmDeployer.TeardownHostState(checkCtx, usedHV, created); cleanupErr != nil {
 			log.Printf("create vm %s: cleanup after superseded deploy: %v", created.Name, cleanupErr)
 		}
 		return
@@ -1923,6 +1957,9 @@ Walk the "Verification" section of `docs/superpowers/specs/2026-07-25-quick-depl
 | Async response proven with a blocking deployer | Task 3 Step 1 |
 | Timeout failure persisted on a fresh context | Task 3 Step 4 |
 | Panic in the deploy goroutine does not kill the server | Task 3 Step 4 |
+| Panic path writes a terminal audit event | Task 3 Step 4 |
+| Delete still works with a nil VMDeployer | Task 2 Step 5 |
+| Cleanup targets the hypervisor Deploy actually used | Task 1 Step 3b + Task 3 Step 4 |
 | Deploy outcome recorded in the audit log | Task 3 Step 4 |
 | Stale-deploy identity check + cleanup | Task 3 Step 4 |
 | Teardown not-attempted marker preserved | Task 2 Step 5b |
