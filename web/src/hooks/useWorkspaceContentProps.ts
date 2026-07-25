@@ -1,8 +1,29 @@
 import type { FormEvent } from 'react'
-import type { ActivitySummary, ActivityType, MachineStats, MachineTab, Theme } from '../app-types'
+import type { ActivitySummary, ActivityType, Appearance, MachineStats, MachineTab, Theme, View } from '../app-types'
 import type { ActivityItem, GuardedAction, SubnetFormState } from '../app-types'
 import type { WorkspaceContentProps } from '../components/layout/WorkspaceContent'
+import { useRelativeTime } from './useRelativeTime'
 import type { AuditEvent, CloudInitTemplate, DHCPLease, DNSRecord, Hypervisor, Machine, Me, OSImage, PowerConfig, SSHKey, Subnet, SystemInfo, VirtualMachine } from '../types'
+
+// The breadcrumb's trailing object segment: whichever selection the current
+// view actually shows. Views without a selectable object contribute nothing.
+function headerSelectedObject(
+  view: View,
+  selectedMachine: string,
+  selectedVirtualMachineRoute: string,
+  selectedSubnet: string
+): string | undefined {
+  switch (view) {
+    case 'machines':
+      return selectedMachine || undefined
+    case 'virtual-machines':
+      return selectedVirtualMachineRoute || undefined
+    case 'network':
+      return selectedSubnet || undefined
+    default:
+      return undefined
+  }
+}
 
 type Params = {
   refreshAll: () => Promise<void>
@@ -24,6 +45,9 @@ type Params = {
   me: Me | null
   theme: Theme
   setTheme: (theme: Theme) => void
+  view: View
+  appearance: Appearance
+  setAppearance: (appearance: Appearance) => void
   machineStats: MachineStats
   machineFilter: string
   setMachineFilter: (value: string) => void
@@ -119,10 +143,21 @@ export function useWorkspaceContentProps({
   setSelectedSubnet,
   deleteSubnet,
   updateSubnet,
-  selectedSubnetData
+  selectedSubnetData,
+  view,
+  appearance,
+  setAppearance
 }: Params): Result {
+  const syncedAgo = useRelativeTime(lastSyncedAt)
+
   return {
-    header: {},
+    header: {
+      view,
+      selectedObject: headerSelectedObject(view, selectedMachine, selectedVirtualMachineRoute, selectedSubnet),
+      syncedLabel: syncedAgo ? `synced ${syncedAgo}` : undefined,
+      appearance,
+      onAppearanceChange: setAppearance
+    },
     overview: {
       lastSyncedAt,
       systemInfo,
