@@ -2,25 +2,40 @@ import { useEffect, useRef, useState, useCallback } from 'react'
 import { createPortal } from 'react-dom'
 import clsx from 'clsx'
 import type { View } from '../../app-types'
+import { NAV_GROUPS, PRIMARY_ITEM, SYSTEM_ITEMS, type NavItem } from '../../lib/navigation'
+
+export type NavCounts = Partial<Record<NonNullable<NavItem['count']>, number>>
 
 export type SidebarProps = {
   view: View
   onViewChange: (view: View) => void
+  counts: NavCounts
+  environmentLabel?: string
   username?: string
+  role?: string
   accountExpanded: boolean
   onToggleAccount: () => void
   onCloseAccount: () => void
   onLogout: () => void | Promise<void>
+  systemOpen: boolean
+  onToggleSystem: () => void
+  onOpenPalette: () => void
 }
 
 export function Sidebar({
   view,
   onViewChange,
+  counts,
+  environmentLabel,
   username,
+  role,
   accountExpanded,
   onToggleAccount,
   onCloseAccount,
-  onLogout
+  onLogout,
+  systemOpen,
+  onToggleSystem,
+  onOpenPalette,
 }: SidebarProps) {
   const accountLabel = username || 'account'
   const accountInitial = accountLabel.slice(0, 1).toUpperCase()
@@ -31,10 +46,7 @@ export function Sidebar({
   const updatePos = useCallback(() => {
     if (!triggerRef.current) return
     const rect = triggerRef.current.getBoundingClientRect()
-    setPopoverPos({
-      top: rect.top - 6,
-      left: rect.left
-    })
+    setPopoverPos({ top: rect.top - 6, left: rect.left })
   }, [])
 
   useEffect(() => {
@@ -56,52 +68,91 @@ export function Sidebar({
     return () => document.removeEventListener('mousedown', handleClickOutside)
   }, [accountExpanded, onCloseAccount, updatePos])
 
-  const navBtn = (v: View) =>
-    clsx(
-      'text-left font-ui font-medium tracking-normal bg-transparent border-0 border-l-[3px] border-l-transparent shadow-none',
-      view === v && '!border-l-ink-soft !bg-brand-wash'
+  function renderItem(item: NavItem) {
+    const active = view === item.view
+    const count = item.count ? counts[item.count] : undefined
+    return (
+      <button
+        key={item.view}
+        onClick={() => onViewChange(item.view)}
+        aria-current={active ? 'page' : undefined}
+        className={clsx(
+          'w-full flex items-center gap-2 text-left border-0 border-l-[3px] shadow-none rounded-none',
+          'py-[7px] px-[9px] text-[13px] font-ui',
+          'hover:transform-none! hover:shadow-none!',
+          active
+            ? 'border-l-brand bg-panel font-medium text-ink'
+            : 'border-l-transparent bg-transparent text-ink-mid'
+        )}
+      >
+        <span className="truncate">{item.label}</span>
+        {count !== undefined && (
+          <span className={clsx('ml-auto font-mono font-medium text-[10.5px]', active ? 'text-brand-accent' : 'text-ink-soft')}>
+            {count}
+          </span>
+        )}
+      </button>
     )
-
-  const separator = 'border-0 border-t border-line my-[0.15rem]'
+  }
 
   return (
-    <aside className="sidebar-shell h-screen overflow-y-auto flex flex-col gap-[0.95rem] p-[1rem_0.85rem] border-r border-line bg-panel/55 backdrop-blur-[6px] md:flex-col max-md:h-auto max-md:grid max-md:grid-rows-[auto_auto_auto] max-md:border-r-0 max-md:border-b max-md:border-line">
-      <div className="flex items-center gap-[0.62rem] pb-[0.2rem]">
-        <img src="/favicon.svg" alt="GoMI" width="28" height="28" className="rounded" />
-        <p className="m-0 font-display text-[1.08rem] font-medium tracking-[0.012em]">GoMI</p>
+    <aside className="sidebar-shell h-screen overflow-y-auto flex flex-col gap-[18px] pt-4 px-3 pb-3 border-r border-line bg-panel-2 max-md:h-auto max-md:border-r-0 max-md:border-b">
+      <div className="flex items-center gap-[9px] px-1">
+        <img src="/favicon.svg" alt="" width="24" height="24" className="block" />
+        <span className="font-mono font-semibold text-[15px] tracking-[-0.01em]">gomi</span>
+        {environmentLabel && (
+          <span className="ml-auto font-mono text-[10.5px] text-ink-soft border border-line bg-panel py-[3px] px-[5px]">
+            {environmentLabel}
+          </span>
+        )}
       </div>
 
-      <nav className="grid gap-[0.35rem]">
-        <button className={navBtn('overview')} onClick={() => onViewChange('overview')}>Overview</button>
-        <button className={navBtn('machines')} onClick={() => onViewChange('machines')}>Machines</button>
-        <button className={navBtn('hypervisors')} onClick={() => onViewChange('hypervisors')}>Hypervisors</button>
-        <button className={navBtn('virtual-machines')} onClick={() => onViewChange('virtual-machines')}>Virtual Machines</button>
+      <button
+        onClick={onOpenPalette}
+        className="w-full flex items-center gap-2 text-left border border-line bg-panel shadow-none rounded-none py-[7px] px-[9px] hover:transform-none! hover:shadow-none!"
+      >
+        <span aria-hidden="true" className="font-mono text-[11px] text-ink-soft">/</span>
+        <span className="font-mono text-[11.5px] text-ink-soft">jump to…</span>
+        <span aria-hidden="true" className="ml-auto font-mono font-medium text-[10.5px] text-ink-soft bg-panel-3 border border-line py-[3px] px-1">
+          ⌘K
+        </span>
+      </button>
 
-        <hr className={separator} />
-
-        <button className={navBtn('cloud-init')} onClick={() => onViewChange('cloud-init')}>Cloud-Init</button>
-        <button className={navBtn('os-images')} onClick={() => onViewChange('os-images')}>OS Images</button>
-
-        <hr className={separator} />
-
-        <button className={navBtn('network')} onClick={() => onViewChange('network')}>Network</button>
-        <button className={navBtn('dhcp-leases')} onClick={() => onViewChange('dhcp-leases')}>DHCP Leases</button>
-        <button className={navBtn('dns-records')} onClick={() => onViewChange('dns-records')}>DNS Records</button>
-        <button className={navBtn('users')} onClick={() => onViewChange('users')}>Users</button>
-        <button className={navBtn('activity')} onClick={() => onViewChange('activity')}>Activity</button>
+      <nav className="flex flex-col gap-5 min-h-0">
+        <div className="flex flex-col gap-[2px]">{renderItem(PRIMARY_ITEM)}</div>
+        {NAV_GROUPS.map((group) => (
+          <div key={group.heading} className="flex flex-col gap-[2px]">
+            <p className="m-0 mb-[6px] px-[5px] font-mono font-semibold text-[10.5px] tracking-[0.14em] text-ink-soft">
+              {group.heading}
+            </p>
+            {group.items.map(renderItem)}
+          </div>
+        ))}
       </nav>
 
-      <section className="mt-auto max-md:mt-0 grid gap-[0.35rem]">
-        <hr className={separator} />
-        <button className={navBtn('settings')} onClick={() => onViewChange('settings')}>Settings</button>
+      <section className="mt-auto max-md:mt-0 flex flex-col gap-[2px] pt-2 border-t border-line">
+        <button
+          onClick={onToggleSystem}
+          aria-expanded={systemOpen}
+          className="w-full flex items-center gap-2 text-left border-0 shadow-none rounded-none bg-transparent py-[7px] px-[9px] text-[13px] text-ink-mid hover:transform-none! hover:shadow-none!"
+        >
+          <span aria-hidden="true" className="font-mono text-[10px] text-ink-soft">{systemOpen ? '▾' : '▸'}</span>
+          <span>System</span>
+          {!systemOpen && (
+            <span className="ml-auto font-mono text-[10.5px] text-ink-soft truncate">activity · users · settings</span>
+          )}
+        </button>
+        {systemOpen && SYSTEM_ITEMS.map(renderItem)}
+
         <button
           ref={triggerRef}
-          className="sidebar-account-trigger w-full text-left py-[0.52rem] px-[0.35rem] bg-transparent border-0 shadow-none hover:shadow-none! hover:transform-none!"
+          className="sidebar-account-trigger w-full text-left py-[7px] px-[5px] mt-1 bg-transparent border-0 shadow-none hover:shadow-none! hover:transform-none!"
           onClick={onToggleAccount}
           aria-expanded={accountExpanded}
         >
           <span className="sidebar-account-avatar">{accountInitial}</span>
-          <span className="sidebar-account-name">{accountLabel}</span>
+          <span className="sidebar-account-name truncate">{accountLabel}</span>
+          {role && <span className="ml-auto font-mono text-[10.5px] text-ink-soft">{role}</span>}
         </button>
       </section>
 

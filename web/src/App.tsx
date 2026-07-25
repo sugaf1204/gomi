@@ -4,6 +4,8 @@ import { api } from './api'
 import { supportsDeploymentTarget } from './lib/osImages'
 import { AppWorkspaceShell } from './components/layout/AppWorkspaceShell'
 import { VMQuickDeploySettings } from './components/layout/VMQuickDeploySettings'
+import { CommandPalette } from './components/layout/CommandPalette'
+import { buildPaletteEntries, type PaletteEntry } from './lib/palette'
 import { ToastRegion, type ToastItem } from './components/ui/ToastRegion'
 import { AuthView } from './components/views/AuthView'
 import { useAppDataState } from './hooks/useAppDataState'
@@ -61,6 +63,12 @@ export default function App() {
     setView,
     theme,
     setTheme,
+    appearance,
+    setAppearance,
+    systemDrawerOpen,
+    toggleSystemDrawer,
+    paletteOpen,
+    setPaletteOpen,
     machineFilter,
     setMachineFilter,
     activityTypeFilter,
@@ -306,6 +314,31 @@ export default function App() {
     refreshAuditIfVisible: refreshQuickDeployAudit
   })
 
+  useEffect(() => {
+    function onKeyDown(event: KeyboardEvent) {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
+        event.preventDefault()
+        setPaletteOpen(true)
+      }
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [setPaletteOpen])
+
+  const paletteEntries = buildPaletteEntries({
+    machines: machines.map((machine) => machine.name),
+    virtualMachines: virtualMachines.map((vm) => vm.name),
+    subnets: subnets.map((subnet) => subnet.name)
+  })
+
+  function jumpTo(entry: PaletteEntry) {
+    setView(entry.view)
+    if (!entry.target) return
+    if (entry.view === 'machines') setSelectedMachine(entry.target)
+    if (entry.view === 'virtual-machines') setSelectedVirtualMachineRoute(entry.target)
+    if (entry.view === 'network') setSelectedSubnet(entry.target)
+  }
+
   const workspaceContentProps = useWorkspaceContentProps({
     quickDeploy,
     refreshAll,
@@ -327,6 +360,9 @@ export default function App() {
     me,
     theme,
     setTheme,
+    view,
+    appearance,
+    setAppearance,
     machineStats,
     machineFilter,
     setMachineFilter,
@@ -386,11 +422,25 @@ export default function App() {
         sidebar={{
           view,
           onViewChange: setView,
+          counts: {
+            machines: machines.length,
+            virtualMachines: virtualMachines.length,
+            hypervisors: hypervisors.length,
+            subnets: subnets.length,
+            osImages: osImages.length,
+            cloudInits: cloudInits.length,
+            dnsRecords: dnsRecords.length
+          },
+          environmentLabel: systemInfo?.hostname,
           username: me?.username,
+          role: me?.role,
           accountExpanded,
           onToggleAccount: toggleAccountExpanded,
           onCloseAccount: closeAccount,
-          onLogout: logout
+          onLogout: logout,
+          systemOpen: systemDrawerOpen,
+          onToggleSystem: toggleSystemDrawer,
+          onOpenPalette: () => setPaletteOpen(true)
         }}
         workspace={{
           view,
@@ -423,6 +473,12 @@ export default function App() {
         sshKeys={sshKeys}
         subnets={subnets}
         onRefresh={refreshAll}
+      />
+      <CommandPalette
+        open={paletteOpen}
+        onClose={() => setPaletteOpen(false)}
+        entries={paletteEntries}
+        onSelect={jumpTo}
       />
       <ToastRegion toasts={toasts} onDismiss={dismissToast} />
     </>

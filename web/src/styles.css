@@ -243,27 +243,28 @@
   }
 
   .sidebar-account-trigger {
-    display: grid;
-    grid-template-columns: auto 1fr;
+    display: flex;
     align-items: center;
     gap: 0.55rem;
     color: var(--color-ink);
   }
 
   .sidebar-account-avatar {
-    width: 1.55rem;
-    height: 1.55rem;
+    width: 22px;
+    height: 22px;
+    flex-shrink: 0;
     display: inline-grid;
     place-items: center;
     border-radius: 999px;
-    font-size: 0.72rem;
+    font-family: var(--font-mono);
+    font-size: 10px;
     font-weight: 600;
     background: var(--color-brand-wash);
     color: var(--color-brand-accent);
   }
 
   .sidebar-account-name {
-    font-size: 0.86rem;
+    font-size: 12.5px;
   }
 
   .sidebar-account-popover {

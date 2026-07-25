@@ -5,7 +5,11 @@ export type View = 'overview' | 'machines' | 'hypervisors' | 'virtual-machines' 
 export type GuardedAction = 'redeploy' | 'poweron' | 'poweroff' | 'delete'
 export type MachineTab = 'info' | 'deploy' | 'detail' | 'network' | 'console' | 'activity' | 'configuration'
 export type ActivityType = 'all' | 'audit'
+// Theme controls corner radius; Appearance controls light/dark. They are
+// independent axes and are applied as separate root attributes, so adding a
+// dark mode does not multiply the Theme variants.
 export type Theme = 'default' | 'rounded'
+export type Appearance = 'light' | 'dark'
 
 export type ActivityItem = {
   id: string
