@@ -15,6 +15,14 @@ type Store interface {
 	Delete(ctx context.Context, name string) error
 }
 
+// Inserter is optionally implemented by Store backends that can write a machine
+// row only when its name is unused, returning resource.ErrAlreadyExists
+// otherwise. CreateExclusive uses it so two concurrent requests for the same
+// name cannot both succeed, which plain Upsert allows.
+type Inserter interface {
+	Insert(ctx context.Context, m Machine) error
+}
+
 // PageLister is optionally implemented by Store backends that can return a
 // single page of machines (ordered by name) together with the total count,
 // without materializing the whole collection. Backends that do not implement

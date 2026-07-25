@@ -145,6 +145,10 @@ export function useVirtualMachineOperations(args: VMOperationsArgs) {
     }
     const vmName = quickDeployVMName(preset)
 
+    // Reserve the next name before awaiting so a rapid second click cannot
+    // reuse this one. The server rejects duplicates with 409 as a backstop.
+    args.setQuickDeployPreset((current) => ({ ...current, count: String(Math.max(1, Number(current.count) || 1) + 1) }))
+
     args.setQuickDeploying(true)
     try {
       const cloudInitRefs = await resolveCloudInitRefs(preset, 'Auto-generated from Quick Deploy preset', [], vmName)
@@ -155,7 +159,6 @@ export function useVirtualMachineOperations(args: VMOperationsArgs) {
       })
       args.onVirtualMachineUpsert(result)
       args.setVMSelection(vmName)
-      args.setQuickDeployPreset((current) => ({ ...current, count: String(Math.max(1, Number(current.count) || 1) + 1) }))
       args.onRefresh()
       if (result.phase === 'Error') notifyError(`VM created but deploy failed: ${result.lastError || 'deploy failed'}`)
     } catch (err) {

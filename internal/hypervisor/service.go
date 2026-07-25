@@ -97,6 +97,13 @@ func (s *Service) UpdateStatus(ctx context.Context, name string, phase Phase, ca
 	return h, nil
 }
 
+// MarkTokenUsed burns a registration token without registering a hypervisor.
+// Callers use it to retire a token they minted for an operation that then
+// failed, so the credential cannot be redeemed by anyone else.
+func (s *Service) MarkTokenUsed(ctx context.Context, tokenValue, usedBy string) (RegistrationToken, error) {
+	return s.tokenStore.MarkUsed(ctx, tokenValue, usedBy)
+}
+
 // CreateToken generates a single-use registration token.
 func (s *Service) CreateToken(ctx context.Context) (RegistrationToken, error) {
 	tokenBytes := make([]byte, 32)
