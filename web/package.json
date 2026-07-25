@@ -19,8 +19,12 @@
     "tailwindcss": "^4.2.0"
   },
   "devDependencies": {
+    "@testing-library/jest-dom": "^7.0.0",
+    "@testing-library/react": "^16.3.2",
+    "@testing-library/user-event": "^14.6.1",
     "@types/react": "^19.1.11",
     "@types/react-dom": "^19.1.7",
+    "jsdom": "^27.0.1",
     "msw": "^2.12.10",
     "typescript": "^5.9.2",
     "vite": "^7.1.3",
