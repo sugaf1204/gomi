@@ -12,7 +12,7 @@ tmp/
 bootenv/.cache/
 bootenv/dist/
 bootenv/tmp/
-web/node_modules/
+node_modules/
 web/dist/
 web/*.tsbuildinfo
 web/vite.config.js
