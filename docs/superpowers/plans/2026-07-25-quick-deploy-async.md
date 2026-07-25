@@ -154,7 +154,9 @@ code.
 
 **Outside this feature's boundary:**
 
-20. **Per-job timeouts do not interrupt libvirt RPCs.** 11 of 12 `rpcExecutor` methods
+20. **Per-job timeouts do not interrupt libvirt RPCs.** *(Also a prerequisite for the
+    approved scope: a global deploy pool cannot be added safely until RPCs are
+    cancellable, or capacity is partitioned per hypervisor — see Task 3 Step 4a.)* 11 of 12 `rpcExecutor` methods
     discard their context (`internal/libvirt/domain.go:10-86`,
     `internal/libvirt/storage.go:11-124`); only `CreateVolumeFromReader` accepts one. The
     bounded context added in round four cannot free a slot held by a hung `StartDomain`
@@ -162,7 +164,8 @@ code.
 21. **Deploy status writes are not conditional.** `UpdateDeployStatus` and `FailDeploy`
     are Get-check-`writeExisting` (`internal/vm/service.go:193-215`), so a
     delete-and-recreate between the read and the write lets a stale worker overwrite the
-    replacement. Touches every existing deploy path.
+    replacement. Touches every existing deploy path. **Now in scope** — the async worker
+    makes this race reachable, so it is Task 3 Step 3d rather than deferred work.
 22. **libvirt domains carry no generation identity.** `BuildDomainConfig` stores no
     completion token, so host verification can finalize a same-named predecessor's domain
     as if it belonged to the current deploy.
@@ -1043,6 +1046,10 @@ func (s *Server) runVMDeploy(actor httputil.Actor, deployHV hypervisor.Hyperviso
 		if cleanupErr := s.vmDeployer.TeardownHostState(checkCtx, usedHV, created); cleanupErr != nil {
 			log.Printf("create vm %s: cleanup after superseded deploy: %v", created.Name, cleanupErr)
 		}
+		// This early return skips the completion audit below, so the original
+		// "accepted" event would stay the last word for a deploy that was
+		// superseded. Record the outcome here instead.
+		httputil.CreateAuditFor(checkCtx, s.authStore, actor, created.Name, "create-vm", "failure", "deploy superseded by a newer create or delete", nil)
 		return
 	}
 	// Deploy persists its own outcome on every path EXCEPT the one where its
@@ -1050,6 +1057,18 @@ func (s *Server) runVMDeploy(actor httputil.Actor, deployHV hypervisor.Hyperviso
 	// is lost, leaving a Pending record with a possibly-allocated volume. With
 	// the recovery sweep deferred out of scope there is no later pass to repair
 	// it, so persist the failure here on the fresh context.
+	// The deadline check must be independent of deployErr. An uncancellable
+	// libvirt call (StartDomain, say) can SUCCEED after the deadline passes:
+	// Deploy then writes its terminal status through the expired context,
+	// ignores the write error and returns nil. Without this, the worker would
+	// audit a success while the record stayed Pending and was later timed out
+	// by runtime sync.
+	if errors.Is(ctx.Err(), context.DeadlineExceeded) && deployErr == nil {
+		if _, err := s.vms.UpdateDeployStatus(checkCtx, created.Name, created.Phase, "create", created.Provisioning); err != nil {
+			log.Printf("create vm %s: persist post-deadline success: %v", created.Name, err)
+		}
+	}
+
 	if deployErr != nil {
 		log.Printf("create vm %s: deploy failed: %v", created.Name, deployErr)
 		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
@@ -1074,15 +1093,32 @@ func (s *Server) runVMDeploy(actor httputil.Actor, deployHV hypervisor.Hyperviso
 }
 ```
 
+- [ ] **Step 3d: Make deploy status writes atomic (required before detaching workers)**
+
+`UpdateDeployStatus` and `FailDeploy` check the completion token after a `Get` and then write through `writeExisting`, which resolves to `UpdateExisting` — and that statement matches on `WHERE name = ?` alone (`internal/infra/sql/vm_store.go`). The token check and the write are therefore not atomic.
+
+The per-name guard from Step 4b does **not** cover this: it serialises *host* operations, while this is a database race. If a worker reads its row, the VM is then deleted and recreated, and the worker's write lands afterwards, the stale snapshot overwrites the replacement's row — *including its completion token*. The replacement worker then finds a token mismatch and can no longer persist its own outcome, leaving the record permanently wrong.
+
+Add a store-level conditional update matching **both** name and completion token, and route `UpdateDeployStatus` and `FailDeploy` through it. This is the same treatment specified for the lease release in deferred Task 2c; here it is required, because the async worker makes the race reachable.
+
+Test the ordering explicitly: read a row, delete and recreate the VM, then let the stale write land, and assert the replacement's token and phase are untouched.
+
 - [ ] **Step 4a: Bound background deploy concurrency (required)**
 
 The synchronous handler uses request duration as backpressure: the Create VM dialog loops up to 50 VMs (`web/src/components/views/virtual-machines/useVirtualMachineOperations.ts:101`) but each request waits, so exactly one deploy runs at a time. Returning `201` immediately removes that limit — a single batch create would launch 50 concurrent image, storage and libvirt jobs. Combined with finding 20 (11 of 12 `rpcExecutor` methods ignore their context), hung operations accumulate goroutines and connections with nothing to reclaim them.
 
-Dispatch through a **bounded** background queue owned by `Server`: a buffered worker pool sized from CPU count (mirror the existing convention if one exists — check `internal/app` for how other pools are sized). Enqueue must not block the handler; the `201` still returns immediately and the deploy waits its turn in the background.
+**A single global pool is not safe on its own.** Because 11 of 12 `rpcExecutor` methods ignore their context (finding 20), `poolSize` hung operations exhaust the pool permanently: every later create still returns `201`, but no deploy can start — including on healthy hypervisors. That converts today's per-request stall into a system-wide outage, which is strictly worse than the unbounded fan-out it was meant to fix.
 
-If the queue is full, still accept the request and let it wait — do not drop the deploy or fail the create, since the record is already persisted.
+Two orderings are acceptable:
 
-Test the batch path: issue N creates where N exceeds the pool size and assert at most `poolSize` deploys are in flight simultaneously, while all N return `201` promptly.
+1. **Make the RPC boundary cancellable first** (finding 20), then add the global pool. This is the honest fix and is why finding 20 is a prerequisite, not an unrelated concern.
+2. **Partition capacity per hypervisor** so a stuck host cannot consume every slot. Each hypervisor gets its own bounded pool; a hang degrades that host only.
+
+Do not implement a single global pool without one of these. If neither is in scope for this change, leave the fan-out unbounded and record it as a known limitation rather than introducing a global chokepoint — an unbounded fan-out degrades under load, a poisoned global pool stops all deploys outright.
+
+Enqueue must never block the handler; the `201` still returns immediately.
+
+Tests: issue N creates exceeding the per-hypervisor limit and assert the cap holds while all N return `201` promptly; and — the case the batch test misses — hang `poolSize` deploys on hypervisor A and assert a create on healthy hypervisor B still starts.
 
 - [ ] **Step 4b: Serialise same-name deploys (required for Step 4 to be safe)**
 
@@ -2080,6 +2116,10 @@ Validate **only the rows in the table below**. Do not walk the design document's
 | Redeploy during an in-flight create is rejected/serialised | Task 3 Step 4b |
 | Batch create respects the deploy concurrency limit | Task 3 Step 4a |
 | Panic inside Deploy cleans up on the host it selected | Task 1 Step 3c |
+| Status writes survive a delete/recreate race | Task 3 Step 3d |
+| Superseded deploy records a terminal audit event | Task 3 Step 4 |
+| Post-deadline success is persisted | Task 3 Step 4 |
+| A stuck hypervisor does not block deploys on healthy ones | Task 3 Step 4a |
 | Machine token failure leaves no orphan Machine row | Task 7 Step 3b |
 | OS coverage: non-Ubuntu create through the async path | Task 3 Step 6b |
 | Duplicate translation on both SQL drivers | Task 2b Step 3 |
