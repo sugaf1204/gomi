@@ -144,6 +144,17 @@ export function useVirtualMachineOperations(args: VMOperationsArgs) {
     }
     const vmName = quickDeployVMName(preset)
 
+    // Reject a name we already know is taken before resolveCloudInitRefs runs.
+    // In 'create' mode that call upserts a template, so letting the request
+    // reach the server's 409 would overwrite the existing VM's template (or
+    // leave an orphan) even though no VM is created. Reset Count makes this
+    // collision easy to hit deliberately.
+    if (args.virtualMachines.some((vm) => vm.name === vmName)) {
+      notifyError(`A VM named ${vmName} already exists. Adjust the preset name or count.`)
+      args.setQuickDeploySettingsOpen(true)
+      return
+    }
+
     // Reserve the next name before awaiting so a rapid second click cannot
     // reuse this one. The server rejects duplicates with 409 as a backstop.
     args.setQuickDeployPreset((current) => ({ ...current, count: String(Math.max(1, Number(current.count) || 1) + 1) }))
