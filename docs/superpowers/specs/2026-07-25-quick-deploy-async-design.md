@@ -300,13 +300,37 @@ deadline renewed from now by the original window length — the same renewal
 `markDomainDefined` performs (`internal/vm/deploy.go:232-236`) — the restored
 `Provisioning` phase, and `HostSetupDoneAt`.
 
+#### Every path that arms a window takes the lease
+
+The lease is not a create-specific mechanism. The sweep's candidate set is defined by
+*the provisioning window*, so **every code path that arms one must claim ownership**,
+or the sweep will treat live work as orphaned.
+
+That includes redeploy, which this design does not otherwise touch. The reinstall
+handler persists an active `Provisioning` window (`internal/infra/api/vm_reinstall.go:98-104`)
+and then runs `Redeploy` synchronously for as long as it takes to recreate the volume
+and redefine the domain. Without an epoch that record matches the sweep exactly —
+active window, no owner, no `HostSetupDoneAt`, no domain yet — so a tick landing
+mid-redeploy would tear down host state underneath a live operation. Redeploy
+therefore stamps the epoch when it arms the window, clears `HostSetupDoneAt` (its
+previous deploy's completion no longer applies), sets `HostSetupDoneAt` again when it
+finishes, and releases the lease on exit.
+
+The same obligation applies to any future path that arms a provisioning window.
+
 #### Every worker releases its lease
 
-The rule is not specific to the create goroutine. A resumed worker also stamps the
-current epoch when it starts, and must clear it on every exit path — success, early
-return from hypervisor resolution or teardown, or a `Deploy` that hit its own deadline
-— using a fresh context. Omitting the release on any path strands the record
-permanently, because subsequent sweeps see the current epoch and skip it.
+A resumed worker also stamps the current epoch when it starts, and must clear it on
+every exit path — success, early return from hypervisor resolution or teardown, or a
+`Deploy` that hit its own deadline — using a fresh context. Omitting the release on any
+path strands the record permanently, because subsequent sweeps see the current epoch
+and skip it.
+
+Each recovery job also runs under its **own bounded context**, not the application
+lifetime context. A hung hypervisor or image transfer would otherwise occupy a worker
+slot forever, and with enough of them every later interrupted VM stays unrecovered even
+though the sync tick itself keeps running. The per-job timeout is what guarantees the
+slot and the lease are both eventually released.
 
 #### Cleanup after a timed-out deploy
 
@@ -401,6 +425,12 @@ Correctness checks required before this is considered done:
 - **Healthy VMs are never re-finalized**: a successfully deployed VM sitting in
   `Provisioning` with its lease released survives many sweep ticks with no libvirt
   calls at all. This is the primary regression risk of the recovery design.
+- **A live redeploy is not disturbed**: a sweep tick landing while the synchronous
+  reinstall handler is recreating a volume or redefining a domain performs no host
+  operations against that VM.
+- **Stuck recovery jobs release their slot**: a recovery job whose hypervisor calls
+  hang hits its own timeout, frees its worker slot and releases its lease, so later
+  interrupted VMs are still recovered.
 - **Lease release on timeout**: a deploy goroutine that hits its context deadline
   releases its epoch, so the next sweep recovers the record instead of treating a dead
   worker as live forever. Resumed workers release on every exit path too.
@@ -429,8 +459,11 @@ Correctness checks required before this is considered done:
 - **Backing image integrity**: a partially uploaded backing volume is not reused as if
   complete.
 - **Rapid clicks**: N consecutive Quick Deploy clicks produce N distinct VMs.
-- **OS coverage**: the resume sweep covers non-curtin and non-Ubuntu deploy paths, not
-  only the curtin/Ubuntu case (per project OS-deployment policy).
+- **OS coverage**: the resume sweep is exercised with a genuinely non-Ubuntu image —
+  a Debian- or Red Hat-family catalog entry, not an Ubuntu fixture with a different
+  install type — so recovery code that assumes Ubuntu catalog metadata is caught. Where
+  a family is intentionally unsupported, assert the explicit early error instead (per
+  project OS-deployment policy).
 - **Existing tests**: identify and update tests that assume `POST /virtual-machines`
   completes the deploy synchronously.
 - **Cascade delete**: the relocated concurrent-hypervisor-delete handling still tears

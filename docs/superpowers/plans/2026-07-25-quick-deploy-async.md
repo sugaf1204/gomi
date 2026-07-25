@@ -35,6 +35,7 @@
 | `internal/vm/store.go`, `internal/infra/sql/vm_store.go`, `internal/infra/memory/` | Insert-only create for atomic duplicate rejection | Modify |
 | `internal/vm/deploy_test.go` | Executor-factory seam coverage | Modify |
 | `internal/infra/api/vm.go` | Create handler: 201 early, atomic duplicate guard, background deploy with identity-checked cleanup | Modify |
+| `internal/infra/api/vm_reinstall.go` | Take and release the ownership lease around the synchronous redeploy | Modify |
 | `internal/app/sync.go` | Run the resume sweep before `SyncAll`, off the loop's critical path | Modify |
 | `web/src/components/views/virtual-machines/useVirtualMachineOperations.ts` | Optimistic count increment for VM Quick Deploy | Modify |
 | `web/src/components/views/machines/useMachineOperations.ts` | Same for Machine Quick Deploy | Modify |
@@ -119,6 +120,24 @@ Fixes 8 and 11 combined into a defect that broke the normal path:
     (`internal/vm/runtime_sync.go:291-294`), so a VM recovered from a slow define was
     failed microseconds later. Finalize now renews the deadline and restores the
     marker in the same write (Task 7b).
+
+### Fourth round
+
+17. **The redeploy path was never leased.** The reinstall handler arms an active
+    provisioning window (`internal/infra/api/vm_reinstall.go:98-104`) and then runs
+    `Redeploy` synchronously, with no epoch on the record. A sweep tick landing
+    mid-redeploy would have classified it as orphaned and torn down host state under a
+    live operation — the same defect the epoch was introduced to prevent, on a path
+    this design does not otherwise touch. The lesson generalises: the sweep's candidate
+    set is defined by the provisioning window, so **every** path that arms one must take
+    the lease (Task 3b).
+18. **Recovery jobs had no timeout.** A bounded worker pool bounds nothing if jobs never
+    finish; the application-lifetime context let one hung hypervisor hold a slot
+    indefinitely. Each job now runs under its own bounded context (Task 6).
+19. **"Non-Ubuntu coverage" was only an install-type change.** The curtin test kept
+    `OSImageRef: "ubuntu-test"`, so it varied the install path, not the OS family, and
+    could not catch Ubuntu-specific assumptions. A real Debian/Red Hat-family fixture is
+    now required (Task 5).
 
 ---
 
@@ -538,7 +557,7 @@ In `internal/vm/types.go`, inside `ProvisioningStatus`:
 
 Stamp it in `Deploy` where the successful path already persists status (`internal/vm/deploy.go:119`), in the same `UpdateDeployStatus` write, so a crash cannot land between starting the domain and recording that fact. Set it for the `PhaseStopped` branch (`internal/vm/deploy.go:123`) too — that deploy also has no remaining server-side work.
 
-Redeploy (`internal/vm/deploy.go:130`) arms a fresh provisioning window, so it must clear `HostSetupDoneAt` when it does; otherwise a redeploy interrupted before `StartDomain` would be treated as already finished.
+Redeploy (`internal/vm/deploy.go:130`) arms a fresh provisioning window, so it must clear `HostSetupDoneAt` when it does; otherwise a redeploy interrupted before `StartDomain` would be treated as already finished. Clearing alone is not sufficient — see Task 3b, which is mandatory, not optional.
 
 It is stored inside the existing `status` JSON column, so no migration is required — confirm by checking `marshalVMColumns` in `internal/infra/sql/vm_store.go`.
 
@@ -847,6 +866,84 @@ Expected: PASS
 ```bash
 git add internal/infra/api/vm.go internal/infra/api/
 git commit -m "Return 201 before VM deploy and reject duplicate VM names"
+```
+
+---
+
+### Task 3b: Lease the redeploy path
+
+**This task is not optional and must land before Task 6 enables the sweep.** The reinstall handler persists an active `Provisioning` window (`internal/infra/api/vm_reinstall.go:98-104`) and then runs `Redeploy` *synchronously*, which takes as long as recreating the volume and redefining the domain. With no epoch on that record, the sweep sees an active window, no owner, no `HostSetupDoneAt` and no domain yet — a textbook `ResumeRedeploy` candidate — and tears down host state underneath a live redeploy. That is the same "kill a live deploy" defect the epoch exists to prevent, reappearing on a path this design does not otherwise change.
+
+The sweep's candidate set is defined by the provisioning window, so every path that arms one must take the lease.
+
+**Files:**
+- Modify: `internal/infra/api/vm_reinstall.go:98-104` and its exit paths
+
+**Interfaces:**
+- Consumes: `Server.deployEpoch` (Task 2c), `Service.ReleaseDeployEpoch` (Task 2c).
+
+- [ ] **Step 1: Write the failing test**
+
+In `internal/infra/api/` (or `internal/vm/` if the handler is awkward to drive), assert that a record mid-redeploy is not classified as recoverable:
+
+```go
+func TestRedeployArmsWindowWithCurrentEpoch(t *testing.T) {
+	// After the reinstall handler arms the window but before Redeploy returns,
+	// the stored record must carry the current epoch so the sweep skips it.
+	// Drive the handler with a deployer whose ExecutorFactory blocks in
+	// CreateVolume, then read the record and assert:
+	//   got.Provisioning.DeployEpoch == env.deployEpoch
+	//   vm.DecideResumeAction(got, env.deployEpoch, time.Now()) == vm.ResumeNone
+}
+```
+
+Fill in the body using the blocking-deployer helper from Task 3. The two assertions are the point: the epoch is present, and the decision function therefore leaves it alone.
+
+- [ ] **Step 2: Run test to verify it fails**
+
+Run: `go test ./internal/infra/api/ -run TestRedeployArmsWindow -v`
+Expected: FAIL — `DeployEpoch` is empty, and `DecideResumeAction` returns `ResumeRedeploy`.
+
+- [ ] **Step 3: Stamp and release around the redeploy**
+
+In `internal/infra/api/vm_reinstall.go`, extend the window initialisation at line 98:
+
+```go
+	current.Provisioning = vm.ProvisioningStatus{
+		Active:          true,
+		StartedAt:       httputil.TimePtr(now),
+		DeadlineAt:      httputil.TimePtr(now.Add(s.provisionTimeout)),
+		CompletionToken: token,
+		DeployEpoch:     s.deployEpoch,
+	}
+```
+
+`HostSetupDoneAt` is left nil by this fresh struct, which is correct: the previous deploy's completion no longer applies. Confirm no other code path copies it forward.
+
+Then release the lease when the handler finishes, on every exit path after the window is persisted — success, redeploy failure, and the concurrent-delete branch. A `defer` placed immediately after the `UpdateExisting` write, using a fresh context as in Task 3, covers all of them:
+
+```go
+	defer func() {
+		releaseCtx, releaseCancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer releaseCancel()
+		if err := s.vms.ReleaseDeployEpoch(releaseCtx, name, current.Provisioning.CompletionToken); err != nil {
+			log.Printf("redeploy vm %s: release deploy lease: %v", name, err)
+		}
+	}()
+```
+
+`Redeploy`'s success path must also stamp `HostSetupDoneAt`, the same way `Deploy` does (Task 2c). Check `internal/vm/deploy.go:130-203` for where it persists its terminal status and add it there.
+
+- [ ] **Step 4: Run tests**
+
+Run: `go test ./internal/infra/api/ ./internal/vm/ -v`
+Expected: PASS
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add internal/infra/api/vm_reinstall.go internal/vm/deploy.go internal/infra/api/
+git commit -m "Take the deploy ownership lease on the redeploy path"
 ```
 
 ---
@@ -1387,13 +1484,25 @@ Expected: PASS
 
 - [ ] **Step 5: Add non-curtin coverage**
 
-The two tests above use the default (preseed/PXE) install path. Add one more that sets `InstallCfg` to the curtin type so both OS deploy paths are exercised, per the project OS-deployment policy. Copy `TestResumeInterruptedDeploysCleansUpBeforeRetry`, rename it to `TestResumeInterruptedDeploysCurtinPath`, and set on the created VM:
+The two tests above use the default (preseed/PXE) install path with an Ubuntu fixture. Two separate dimensions still need coverage, and they are not the same thing:
+
+**a) The curtin install path.** Copy `TestResumeInterruptedDeploysCleansUpBeforeRetry` as `TestResumeInterruptedDeploysCurtinPath` and set on the created VM:
 
 ```go
 		InstallCfg: &InstallConfig{Type: InstallConfigCurtin},
 ```
 
-Verify the field name and constructor against `internal/vm/types.go` before writing it; if `InstallConfig` has required companion fields, populate them.
+Verify the field name and constructor against `internal/vm/types.go` before writing it; if `InstallConfig` has required companion fields, populate them. The curtin path also reads the OS image through `d.OSImages`, so populate that service or the deploy exits before creating an overlay.
+
+**b) A genuinely non-Ubuntu image.** Changing `InstallCfg` while leaving `OSImageRef: "ubuntu-test"` does **not** satisfy the project's OS-deployment policy — it adds an install-type variant, not OS-family coverage, and cannot catch recovery code that assumes Ubuntu catalog metadata. Seed a Debian- or Red Hat-family catalog entry and run the resume through it:
+
+```go
+		OSImageRef: "debian-13-amd64-cloud",
+```
+
+That fixture name already exists in `internal/vm/cloud_image_download_test.go:34`, and `internal/vm/domain_config_test.go:34-64` carries Debian-family catalog metadata. Reuse those rather than inventing a new fixture — read the fields they set and populate the fake `OSImages` service the same way, so the family selection logic actually runs.
+
+If the resume path is intentionally limited to one family, assert the explicit early unsupported-family error instead — the policy accepts that, but not a silent Ubuntu assumption.
 
 Run: `go test ./internal/vm/ -run TestResumeInterruptedDeploys -v`
 Expected: PASS (all three)
@@ -1451,6 +1560,12 @@ Because the resumed deploy now runs off the tick, it must stamp the current epoc
 **And it must release that stamp on every exit path**, with the same deferred fresh-context release `runVMDeploy` uses (Task 3). This applies to all of: success, an early return from hypervisor resolution, an early return from teardown, a superseded-identity skip, and a `Deploy` that hit its own deadline. Removing the in-flight-set entry is not sufficient — that is process memory, while the epoch is persisted, so a worker that exits without releasing leaves the record carrying the current epoch and every subsequent sweep returns `ResumeNone` for it. The record is then stranded until the next restart.
 
 Write this as a single `defer` at the top of the worker, before any early return can be taken, rather than at each exit site.
+
+**Give each job its own bounded context.** A bounded worker pool alone does not bound anything if the jobs never end: passing the application-lifetime `ctx` to `resumeOne`/`failInterrupted` means one hung hypervisor call or stalled image transfer occupies a slot forever, and enough of them leave every later interrupted VM unrecovered while the tick itself keeps ticking. Each job therefore runs under `context.WithTimeout(context.Background(), resumeJobTimeout)` — derived from `Background`, not the tick context, so a tick returning does not cancel work in progress.
+
+Size `resumeJobTimeout` from the same budget as `provisionTimeout`; a deploy that cannot finish inside its own provisioning window has nothing to gain from running longer.
+
+Test that a job whose executor blocks past the timeout releases both its pool slot (a subsequent VM is still picked up) and its epoch (the record becomes recoverable again rather than staying stamped).
 
 Check whether `Runtime` already stores the deployer. Run:
 
@@ -1661,6 +1776,10 @@ Walk the "Verification" section of `docs/superpowers/specs/2026-07-25-quick-depl
 | Existing sync tests still pass | Task 3 Step 6 |
 | Cascade delete teardown | Task 2 Step 1 + Task 3 Step 4 |
 | Rapid clicks | Task 7 Step 4 |
+| **Live redeploy untouched by the sweep** | Task 3b Step 1 |
+| OS coverage: curtin install path | Task 5 Step 5a |
+| OS coverage: real non-Ubuntu family | Task 5 Step 5b |
+| Recovery job timeout frees slot and lease | Task 6 Step 1 |
 | Sync loop not blocked by recovery | Task 6 Step 1 (worker pool) |
 
 If any row has no test, write one now rather than marking this task done.
