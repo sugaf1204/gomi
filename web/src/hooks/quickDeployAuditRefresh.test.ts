@@ -26,7 +26,7 @@ describe('quickDeployAuditRefreshTarget', () => {
   it('skips every view that does not render the activity feed', () => {
     const views: View[] = [
       'overview', 'machines', 'hypervisors', 'virtual-machines', 'network',
-      'dhcp-leases', 'dns-records', 'cloud-init', 'os-images', 'users', 'settings'
+      'dns-records', 'cloud-init', 'os-images', 'users', 'settings'
     ]
     for (const view of views) {
       expect(quickDeployAuditRefreshTarget(view, 'node-01')).toBeNull()

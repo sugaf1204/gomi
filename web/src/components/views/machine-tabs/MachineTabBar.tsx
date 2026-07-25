@@ -19,7 +19,7 @@ export function MachineTabBar({ activeTab, onTabChange }: Props) {
         <button
           key={key}
           className={clsx(
-            'shrink-0 border-0 border-b-2 bg-transparent shadow-none py-2 px-[13px] text-[12px] font-medium hover:transform-none! hover:shadow-none! hover:text-ink transition-colors max-sm:px-[0.55rem]',
+            'shrink-0 border-0 border-b-2 bg-transparent shadow-none py-2 px-[13px] text-[12px] font-medium hover:transform-none! hover:shadow-none! hover:text-ink max-sm:px-[0.55rem]',
             activeTab === key
               ? 'border-b-brand text-brand'
               : 'border-b-transparent text-ink-soft hover:border-b-line-strong'

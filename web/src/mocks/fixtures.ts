@@ -1,4 +1,4 @@
-import type { AuditEvent, DNSRecord, Machine, Subnet } from '../types'
+import type { AuditEvent, DNSRecord, Hypervisor, Machine, Subnet, VirtualMachine } from '../types'
 
 // gpu-worker-01 simulates a live attempt, so its timings are generated
 // relative to page load.
@@ -218,4 +218,106 @@ export const dnsRecords: DNSRecord[] = [
     createdAt: '2025-12-10T06:10:00Z',
     updatedAt: '2025-12-10T06:10:00Z'
   }
+]
+
+export const hypervisors: Hypervisor[] = [
+  {
+    name: 'hv-01',
+    connection: { type: 'tcp', host: '10.0.0.5', port: 16509 },
+    machineRef: 'node-01',
+    bridgeName: 'br0',
+    phase: 'Ready',
+    capacity: { cpuCores: 32, memoryMB: 131072, storageGB: 2048 },
+    used: { cpuUsedCores: 10, memoryUsedMB: 24576, storageUsedGB: 320 },
+    vmCount: 3,
+    libvirtURI: 'qemu+tcp://10.0.0.5/system',
+    lastHeartbeat: '2026-07-26T04:40:00Z',
+    createdAt: '2025-12-01T09:00:00Z',
+    updatedAt: '2026-07-26T04:40:00Z',
+  },
+  {
+    name: 'hv-02',
+    connection: { type: 'tcp', host: '10.0.0.6', port: 16509 },
+    machineRef: 'node-02',
+    phase: 'Ready',
+    capacity: { cpuCores: 16, memoryMB: 65536, storageGB: 1024 },
+    used: { cpuUsedCores: 2, memoryUsedMB: 4096, storageUsedGB: 60 },
+    vmCount: 1,
+    lastHeartbeat: '2026-07-26T04:39:30Z',
+    createdAt: '2025-12-01T09:00:00Z',
+    updatedAt: '2026-07-26T04:39:30Z',
+  },
+]
+
+export const virtualMachines: VirtualMachine[] = [
+  {
+    name: 'db-01',
+    hypervisorRef: 'hv-01',
+    resources: { cpuCores: 8, memoryMB: 16384, diskGB: 200 },
+    osImageRef: 'ubuntu-24.04',
+    cloudInitRef: 'base-cloud-init',
+    powerControlMethod: 'libvirt',
+    phase: 'Running',
+    hypervisorName: 'hv-01',
+    ipAddresses: ['10.0.0.31'],
+    domain: 'lab.internal',
+    createdOnHost: 'hv-01',
+    createdAt: '2026-01-14T10:00:00Z',
+    updatedAt: '2026-07-26T04:40:00Z',
+  },
+  {
+    name: 'web-01',
+    hypervisorRef: 'hv-01',
+    resources: { cpuCores: 4, memoryMB: 8192, diskGB: 80 },
+    osImageRef: 'ubuntu-24.04',
+    powerControlMethod: 'libvirt',
+    phase: 'Running',
+    hypervisorName: 'hv-01',
+    ipAddresses: ['10.0.0.32'],
+    domain: 'lab.internal',
+    createdOnHost: 'hv-01',
+    createdAt: '2026-02-02T11:30:00Z',
+    updatedAt: '2026-07-26T04:40:00Z',
+  },
+  {
+    name: 'cache-01',
+    hypervisorRef: 'hv-01',
+    resources: { cpuCores: 2, memoryMB: 4096, diskGB: 40 },
+    osImageRef: 'debian-13',
+    powerControlMethod: 'libvirt',
+    phase: 'Creating',
+    hypervisorName: 'hv-01',
+    domain: 'lab.internal',
+    provisioning: {
+      active: true,
+      startedAt: '2026-07-26T04:37:00Z',
+      deadlineAt: '2026-07-26T04:47:00Z',
+      lastSignalAt: '2026-07-26T04:40:00Z',
+    },
+    createdAt: '2026-07-26T04:37:00Z',
+    updatedAt: '2026-07-26T04:40:00Z',
+  },
+  {
+    name: 'build-01',
+    hypervisorRef: 'hv-02',
+    resources: { cpuCores: 4, memoryMB: 8192, diskGB: 120 },
+    osImageRef: 'ubuntu-22.04',
+    powerControlMethod: 'libvirt',
+    phase: 'Stopped',
+    hypervisorName: 'hv-02',
+    domain: 'lab.internal',
+    createdOnHost: 'hv-02',
+    createdAt: '2026-03-19T08:05:00Z',
+    updatedAt: '2026-07-25T22:10:00Z',
+  },
+  {
+    name: 'legacy-01',
+    hypervisorRef: 'hv-03-removed',
+    resources: { cpuCores: 2, memoryMB: 2048, diskGB: 40 },
+    powerControlMethod: 'libvirt',
+    phase: 'Error',
+    lastError: 'hypervisor connection refused',
+    createdAt: '2025-11-02T14:00:00Z',
+    updatedAt: '2026-07-26T03:10:00Z',
+  },
 ]

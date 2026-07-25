@@ -52,6 +52,7 @@ type Params = {
   setAppearance: (appearance: Appearance) => void
   groupBy: GroupBy
   setGroupBy: (groupBy: GroupBy) => void
+  onJump: (view: View, target: string) => void
   machineStats: MachineStats
   machineFilter: string
   setMachineFilter: (value: string) => void
@@ -153,7 +154,8 @@ export function useWorkspaceContentProps({
   appearance,
   setAppearance,
   groupBy,
-  setGroupBy
+  setGroupBy,
+  onJump
 }: Params): Result {
   const syncedAgo = useRelativeTime(lastSyncedAt)
 
@@ -169,19 +171,17 @@ export function useWorkspaceContentProps({
       onOpenVMSettings: quickDeploy.openSettings
     },
     overview: {
-      lastSyncedAt,
       systemInfo,
-      machineCount: machines.length,
-      subnetCount: subnets.length,
+      machines,
+      virtualMachines,
       machineStats,
-      hypervisorCount: hypervisors.length,
-      vmCount: virtualMachines.length,
       vmStats: {
         running: virtualMachines.filter((vm) => vm.phase === 'Running').length,
         stopped: virtualMachines.filter((vm) => vm.phase === 'Stopped').length,
         error: virtualMachines.filter((vm) => vm.phase === 'Error').length,
         missing: virtualMachines.filter((vm) => vm.phase === 'Missing').length
-      }
+      },
+      onJump
     },
     machines: {
       machineFilter,
@@ -250,10 +250,9 @@ export function useWorkspaceContentProps({
       onSelectSubnet: setSelectedSubnet,
       onDeleteSubnet: deleteSubnet,
       onUpdateSubnet: updateSubnet,
-      selectedSubnetData
-    },
-    dhcpLeases: {
-      dhcpLeases
+      selectedSubnetData,
+      dhcpLeases,
+      machines
     },
     dnsRecords: {
       dnsRecords,
