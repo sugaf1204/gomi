@@ -86,6 +86,29 @@
   --tone-hv-bg: #e8e0f6;
   --tone-track: #f1efe9;
   --tone-hover: rgba(0, 0, 0, 0.04);
+
+  /* Deploy phase ramp. Each phase has a finished fill, a paler running tint of
+     that same fill, and a shared border. Tone alone separates the states. */
+  --phase-power-on: #c8d0e0;
+  --phase-power-on-running: #e0e5ee;
+  --phase-power-on-line: #8090b0;
+  --phase-installer-boot: #d8cce8;
+  --phase-installer-boot-running: #ebe4f3;
+  --phase-installer-boot-line: #9a86c0;
+  --phase-inventory-config: #f8e6cc;
+  --phase-inventory-config-running: #fcf2e2;
+  --phase-inventory-config-line: #c09a54;
+  --phase-image-apply: #a0d8c0;
+  --phase-image-apply-running: #c9e8da;
+  --phase-image-apply-line: #3a9a6e;
+  --phase-reboot-os: #aad4e0;
+  --phase-reboot-os-running: #d3e7ee;
+  --phase-reboot-os-line: #5a94ac;
+  --phase-untracked: #e4e0da;
+  --phase-untracked-running: #f0eeea;
+  --phase-untracked-line: #b0aca4;
+  --phase-failed: #e8a0a0;
+  --phase-failed-line: #c05050;
   --tone-shadow: rgba(80, 70, 55, 0.1);
   --tone-shadow-strong: rgba(52, 43, 34, 0.14);
 }
@@ -126,6 +149,29 @@
   --tone-hv-bg: #2b2440;
   --tone-track: #22262c;
   --tone-hover: rgba(255, 255, 255, 0.05);
+
+  /* Dark ramp: saturated fills that read against #14161a, each with a darker
+     running tint, mirroring the light ramp's done/running relationship. */
+  --phase-power-on: #6b7899;
+  --phase-power-on-running: #414c66;
+  --phase-power-on-line: #8090b0;
+  --phase-installer-boot: #8b76bb;
+  --phase-installer-boot-running: #524470;
+  --phase-installer-boot-line: #9a86c0;
+  --phase-inventory-config: #c08f43;
+  --phase-inventory-config-running: #6f5227;
+  --phase-inventory-config-line: #d69a4a;
+  --phase-image-apply: #4fb682;
+  --phase-image-apply-running: #3f7a60;
+  --phase-image-apply-line: #6bd0a0;
+  --phase-reboot-os: #5a9ab4;
+  --phase-reboot-os-running: #35596a;
+  --phase-reboot-os-line: #7cb8ce;
+  --phase-untracked: #3a3f47;
+  --phase-untracked-running: #2b2f36;
+  --phase-untracked-line: #5a606a;
+  --phase-failed: #b55757;
+  --phase-failed-line: #d16b6b;
   --tone-shadow: rgba(0, 0, 0, 0.4);
   --tone-shadow-strong: rgba(0, 0, 0, 0.55);
 }
@@ -326,25 +372,6 @@
     height: 7px;
   }
 
-  .loading-bar {
-    position: fixed;
-    bottom: 0;
-    left: 0;
-    right: 0;
-    height: 3px;
-    background: linear-gradient(90deg, transparent, var(--color-brand), transparent);
-    animation: loading 1.1s linear infinite;
-  }
-
-  .loading-spinner {
-    width: 1.5rem;
-    height: 1.5rem;
-    border-radius: 999px;
-    border: 2px solid var(--color-brand-wash);
-    border-top-color: var(--color-brand);
-    animation: loading-spin 0.9s linear infinite;
-  }
-
   .toast-region {
     position: fixed;
     top: 0.85rem;
@@ -394,13 +421,4 @@
     opacity: 1;
   }
 
-  @keyframes loading {
-    from { transform: translateX(-100%); }
-    to { transform: translateX(100%); }
-  }
-
-  @keyframes loading-spin {
-    from { transform: rotate(0deg); }
-    to { transform: rotate(360deg); }
-  }
 }

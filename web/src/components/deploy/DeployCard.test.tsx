@@ -56,12 +56,6 @@ function fillOf(element: HTMLElement) {
   return element.style.backgroundColor
 }
 
-function rgb(hex: string) {
-  const value = hex.replace('#', '')
-  const n = parseInt(value, 16)
-  return `rgb(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255})`
-}
-
 describe('DeployCard', () => {
   it('renders nothing for an empty timeline', () => {
     const timeline = deriveDeployTimeline(undefined, T0)
@@ -106,12 +100,12 @@ describe('DeployCard', () => {
     render(<DeployCard timeline={timeline} />)
     const running = cells().find((cell) => cell.dataset.phase === 'image-apply')!
     expect(running.dataset.state).toBe('running')
-    expect(fillOf(running)).toBe(rgb(RUNNING_COLORS['image-apply'].fill))
-    expect(fillOf(running)).not.toBe(rgb(PHASE_COLORS['image-apply'].fill))
+    expect(fillOf(running)).toBe(RUNNING_COLORS['image-apply'].fill)
+    expect(fillOf(running)).not.toBe(PHASE_COLORS['image-apply'].fill)
     // An earlier phase is done, so it keeps the saturated fill.
     const done = cells().find((cell) => cell.dataset.phase === 'installer-boot')!
     expect(done.dataset.state).toBe('done')
-    expect(fillOf(done)).toBe(rgb(PHASE_COLORS['installer-boot'].fill))
+    expect(fillOf(done)).toBe(PHASE_COLORS['installer-boot'].fill)
   })
 
   it('shows the failed tone and the FAILED status for a failed attempt', () => {
@@ -121,7 +115,7 @@ describe('DeployCard', () => {
     expect(screen.getByText(/DEPLOY · FAILED/)).toBeInTheDocument()
     const failed = cells().find((cell) => cell.dataset.state === 'failed')
     expect(failed).toBeDefined()
-    expect(fillOf(failed!)).toBe(rgb(FAILED_COLOR.fill))
+    expect(fillOf(failed!)).toBe(FAILED_COLOR.fill)
   })
 
   it('shows the in-progress status and the current phase label', () => {
