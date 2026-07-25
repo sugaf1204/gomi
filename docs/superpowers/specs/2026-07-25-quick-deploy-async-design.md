@@ -36,6 +36,38 @@ shorten it.
   `Phase=Provisioning`/`Creating` plus `lastAction` (`internal/vm/deploy.go:119`).
   No new persistence is required for reporting deploy results.
 
+## Status: restart-resilience scope is not viable as specified
+
+Five review rounds produced 32 defects in this design. The final round produced more
+than the one before it, and three of its findings are not fixable within this feature's
+boundary:
+
+- **Per-job timeouts cannot work.** 11 of the 12 `rpcExecutor` methods discard their
+  context outright (`internal/libvirt/domain.go:10-86`, `internal/libvirt/storage.go:11-124`);
+  only `CreateVolumeFromReader` accepts one. A hung `StartDomain` or `CreateVolume`
+  outlives any deadline and holds its worker slot indefinitely. Fixing this means adding
+  cancellable RPCs across the whole libvirt layer — a separate change affecting every
+  deploy, migrate and power path.
+- **Every deploy status write needs to become conditional.** `UpdateDeployStatus` and
+  `FailDeploy` are Get-check-`writeExisting` (`internal/vm/service.go:193-215`), which a
+  delete-and-recreate can lose. This touches all existing deploy paths, not just the
+  asynchronous one.
+- **libvirt domains carry no generation identity.** `BuildDomainConfig` stores no token,
+  so host verification cannot prove a discovered domain belongs to the current deploy
+  rather than a same-named predecessor.
+
+Each is legitimate. None is about Quick Deploy. They are the cost of making deploy
+recovery correct against arbitrary process death, and that cost now clearly exceeds the
+feature that prompted it.
+
+**The restart-resilience portion of this design (§2 and everything downstream) should
+not be implemented as written.** The reload-resilience and rapid-click portions (§1, §4,
+§5) are self-contained, were not implicated in the unresolved findings above, and
+deliver the original request.
+
+The open findings are recorded in the plan's revision log rather than patched, so a
+future attempt starts from the real constraints instead of rediscovering them.
+
 ## Goals
 
 1. Quick Deploy and Preset buttons return to an enabled state without waiting for the

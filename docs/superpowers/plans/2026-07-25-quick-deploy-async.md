@@ -139,6 +139,53 @@ Fixes 8 and 11 combined into a defect that broke the normal path:
     could not catch Ubuntu-specific assumptions. A real Debian/Red Hat-family fixture is
     now required (Task 5).
 
+### Fifth round — open, not fixed
+
+Round five produced nine findings, more than round four. They are recorded here rather
+than patched, because three of them cannot be resolved inside this feature's boundary
+and change the viability of the restart-resilience scope. All were verified against the
+code.
+
+**Outside this feature's boundary:**
+
+20. **Per-job timeouts do not interrupt libvirt RPCs.** 11 of 12 `rpcExecutor` methods
+    discard their context (`internal/libvirt/domain.go:10-86`,
+    `internal/libvirt/storage.go:11-124`); only `CreateVolumeFromReader` accepts one. The
+    bounded context added in round four cannot free a slot held by a hung `StartDomain`
+    or `CreateVolume`. Requires cancellable RPCs across the libvirt layer.
+21. **Deploy status writes are not conditional.** `UpdateDeployStatus` and `FailDeploy`
+    are Get-check-`writeExisting` (`internal/vm/service.go:193-215`), so a
+    delete-and-recreate between the read and the write lets a stale worker overwrite the
+    replacement. Touches every existing deploy path.
+22. **libvirt domains carry no generation identity.** `BuildDomainConfig` stores no
+    completion token, so host verification can finalize a same-named predecessor's domain
+    as if it belonged to the current deploy.
+
+**Inside the boundary, but unfixed pending a scope decision:**
+
+23. `ResumeFinalize` is never dispatched — Task 5's switch and Task 6's worker pool
+    handle only `ResumeRedeploy` and `ResumeFail`, so Task 7b's finalizer is dead code.
+24. `resumeOne` has no post-deploy identity recheck, unlike `runVMDeploy`.
+25. A failed `ReleaseDeployEpoch` only logs, leaving the record stamped and stranded
+    until the next restart; no retry, no in-memory ownership fallback.
+26. `failInterrupted` marks the record terminal even when teardown failed, so the orphan
+    volume is never retried.
+27. Async dispatch reopened the ordering fix: the scan returns before the worker runs, so
+    `SyncAll` can still rewrite an expired record to `Missing`/inactive before the worker
+    acts on it. The claim must be persisted at dispatch, not at execution.
+28. Temporary backing volumes need a stale-temp lifecycle — a deterministic temp name
+    collides on retry, a unique one leaks an image-sized volume per crash.
+
+**Assessment.** Findings 20–22 are legitimate and none is about Quick Deploy; they are
+the cost of correct deploy recovery against arbitrary process death. That cost exceeds
+the feature that prompted it. Tasks 2c, 3b, 4, 5, 6, 7b and 7c — the restart-resilience
+half of this plan — should not be implemented as written.
+
+Tasks 1, 2, 2b, 3 and 7 (executor seam, teardown move, atomic create, async response
+with identity-checked cleanup, optimistic UI count) are self-contained, were not
+implicated in findings 20–28, and deliver the original request: buttons that return
+immediately, rapid clicks that cannot collide, and deploys that survive a page reload.
+
 ---
 
 ### Task 1: Make the Deployer's libvirt executor injectable
