@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import type { GuardedAction, MachineTab } from '../../app-types'
+import type { GroupBy, GuardedAction, MachineTab } from '../../app-types'
 import type { AuditEvent, CloudInitTemplate, Hypervisor, Machine, PowerConfig, SSHKey, Subnet } from '../../types'
 import { MachineDialogs } from './machines/MachineDialogs'
 import { MachineSpecFields } from './machines/MachineSpecFields'
@@ -49,6 +49,8 @@ export type MachinesViewProps = {
   subnets: Subnet[]
   onRefresh: () => void | Promise<void>
   hypervisors: Hypervisor[]
+  groupBy: GroupBy
+  onGroupByChange: (groupBy: GroupBy) => void
   osImages: import('../../types').OSImage[]
   cloudInits: CloudInitTemplate[]
   sshKeys: SSHKey[]
@@ -78,6 +80,8 @@ export function MachinesView({
   subnets,
   onRefresh,
   hypervisors,
+  groupBy,
+  onGroupByChange,
   osImages,
   cloudInits,
   sshKeys
@@ -291,6 +295,9 @@ export function MachinesView({
         onMachineTabChange={onMachineTabChange}
         onRefresh={onRefresh}
         subnets={subnets}
+        hypervisors={hypervisors}
+        groupBy={groupBy}
+        onGroupByChange={onGroupByChange}
         auditEvents={auditEvents}
         onSaveMachineSettings={onSaveMachineSettings}
         machineSettingsDirty={machineSettingsDirty}

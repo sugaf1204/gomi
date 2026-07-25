@@ -1,3 +1,4 @@
+import clsx from 'clsx'
 import type { View } from '../../app-types'
 import { ActivityView, type ActivityViewProps } from '../views/ActivityView'
 import { CloudInitView, type CloudInitViewProps } from '../views/CloudInitView'
@@ -46,11 +47,15 @@ export function WorkspaceContent({
   users,
   settings
 }: WorkspaceContentProps) {
+  // Split views own their full height and scroll each column independently, so
+  // the shell must not add padding or a scroll container around them.
+  const selfLayout = view === 'machines' || view === 'virtual-machines'
+
   return (
     <section className="workspace-shell h-screen grid grid-rows-[auto_minmax(0,1fr)] max-sm:h-auto">
       <WorkspaceHeader {...header} />
 
-      <div className="min-h-0 overflow-y-auto p-[20px_22px] max-sm:p-[0.8rem]">
+      <div className={clsx('min-h-0', selfLayout ? 'overflow-hidden' : 'overflow-y-auto p-[20px_22px] max-sm:p-[0.8rem]')}>
         {view === 'overview' && <OverviewView {...overview} />}
         {view === 'machines' && <MachinesView {...machines} />}
         {view === 'hypervisors' && <HypervisorsView {...hypervisors} />}

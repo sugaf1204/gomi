@@ -11,6 +11,9 @@ export type ActivityType = 'all' | 'audit'
 export type Theme = 'default' | 'rounded'
 export type Appearance = 'light' | 'dark'
 
+// How the machine and VM lists are grouped under header rows.
+export type GroupBy = 'subnet' | 'hypervisor' | 'phase'
+
 export type ActivityItem = {
   id: string
   type: 'audit'

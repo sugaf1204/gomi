@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import type { ActivityType, Appearance, AuthFormState, ConfirmDialogState, MachineSettingsDraft, MachineTab, SubnetFormState, Theme, View } from '../app-types'
+import type { ActivityType, Appearance, GroupBy, AuthFormState, ConfirmDialogState, MachineSettingsDraft, MachineTab, SubnetFormState, Theme, View } from '../app-types'
 import type { PowerConfig } from '../types'
 import { usePersistentStringState } from './usePersistentStringState'
 
@@ -8,6 +8,8 @@ const themes: Set<string> = new Set(['default', 'rounded'])
 const appearances: Set<string> = new Set(['light', 'dark'])
 const MACHINE_SELECTION_STORAGE_KEY = 'gomi.machines.selected'
 const SYSTEM_DRAWER_STORAGE_KEY = 'gomi.rail.system-open'
+const GROUP_BY_STORAGE_KEY = 'gomi.machines.group-by'
+const groupByValues: Set<string> = new Set(['subnet', 'hypervisor', 'phase'])
 const SUBNET_SELECTION_STORAGE_KEY = 'gomi.network.selected-subnet'
 const VIRTUAL_MACHINES_PATH_SEGMENT = 'virtual-machines'
 
@@ -89,6 +91,8 @@ export function useAppUiState() {
   const [inlineEditField, setInlineEditField] = useState<'power' | null>(null)
   const [accountExpanded, setAccountExpanded] = useState(false)
   const [paletteOpen, setPaletteOpen] = useState(false)
+  const [groupByRaw, setGroupByRaw] = usePersistentStringState(GROUP_BY_STORAGE_KEY)
+  const groupBy: GroupBy = groupByValues.has(groupByRaw) ? (groupByRaw as GroupBy) : 'subnet'
   const [machineTab, setMachineTab] = useState<MachineTab>('info')
   const [confirmDialog, setConfirmDialog] = useState<ConfirmDialogState>(initialConfirmDialog)
 
@@ -222,6 +226,8 @@ export function useAppUiState() {
     toggleSystemDrawer,
     paletteOpen,
     setPaletteOpen,
+    groupBy,
+    setGroupBy: setGroupByRaw,
     machineFilter,
     setMachineFilter,
     activityTypeFilter,
