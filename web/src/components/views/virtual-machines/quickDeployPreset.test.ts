@@ -9,6 +9,10 @@ import { QUICK_DEPLOY_STORAGE_KEY, initialQuickDeployPreset } from './vmFormStat
 
 // The preset helpers only need window + localStorage, so a minimal stub keeps
 // these tests in the default node environment instead of pulling in jsdom.
+//
+// Globals are shared across suites in a worker, so `window` also carries a
+// `location`: api.ts reads window.location.origin at module load, and a
+// location-less window would break any suite that imports it after this one.
 function installStorageStub() {
   const store = new Map<string, string>()
   const storage = {
@@ -17,7 +21,11 @@ function installStorageStub() {
     removeItem: (key: string) => void store.delete(key),
     clear: () => store.clear()
   }
-  Object.assign(globalThis, { window: globalThis, localStorage: storage })
+  Object.assign(globalThis, {
+    window: globalThis,
+    localStorage: storage,
+    location: (globalThis as { location?: unknown }).location ?? { origin: 'http://localhost' }
+  })
 }
 
 beforeAll(installStorageStub)
@@ -213,6 +221,23 @@ describe('invalidVMConfigReason', () => {
 
   it('accepts an empty cpu pinning field', () => {
     expect(invalidVMConfigReason({ ...valid, cpuPinning: '' })).toBeUndefined()
+  })
+
+  // The backend checks only the vcpu key; the cpuset value goes straight into
+  // libvirt's cpuset XML attribute, so an invalid set fails at domain
+  // definition, well after the VM request is accepted.
+  it.each(['not-a-set', '1..2', '2-', '-2', 'a', '1-2-3', '^3'] as const)('rejects cpuset %s', (cpuset) => {
+    expect(invalidVMConfigReason({ ...valid, cpuCores: '4', cpuPinning: `0:${cpuset}` }))
+      .toBe(`CPU pinning cpuset "${cpuset}" is invalid (expected a CPU list such as 0, 1-4 or 1-4,^3,6)`)
+  })
+
+  it('rejects an inverted cpuset range', () => {
+    expect(invalidVMConfigReason({ ...valid, cpuCores: '4', cpuPinning: '0:4-1' }))
+      .toBe('CPU pinning cpuset "4-1" is invalid (expected a CPU list such as 0, 1-4 or 1-4,^3,6)')
+  })
+
+  it.each(['0', '7', '12', '0-3', '2-2'] as const)('accepts cpuset %s', (cpuset) => {
+    expect(invalidVMConfigReason({ ...valid, cpuCores: '4', cpuPinning: `0:${cpuset}` })).toBeUndefined()
   })
 
   // Negative values are silently dropped by buildAdvancedOptions and fractional

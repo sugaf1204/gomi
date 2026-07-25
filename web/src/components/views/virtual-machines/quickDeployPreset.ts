@@ -129,6 +129,12 @@ export function invalidVMConfigReason(formState: VMConfigForm): string | undefin
       if (Number(vcpu) >= cpuCores) {
         return `CPU pinning vcpu ${Number(vcpu)} is out of range [0, ${cpuCores})`
       }
+      // The backend validates only the vcpu key; the cpuset value is written
+      // straight into libvirt's cpuset XML attribute, so an invalid set is not
+      // caught until domain definition fails.
+      if (!isValidCPUSet(cpuset)) {
+        return `CPU pinning cpuset "${cpuset}" is invalid (expected a CPU list such as 0, 1-4 or 1-4,^3,6)`
+      }
     }
   }
 
@@ -144,6 +150,17 @@ export function invalidVMConfigReason(formState: VMConfigForm): string | undefin
     return 'Login username must be lowercase, start with a letter or underscore, and be at most 32 characters'
   }
   return undefined
+}
+
+// libvirt's cpuset attribute takes a comma-separated CPU list where each
+// element is a single CPU, a range, or a caret exclusion (e.g. "1-4,^3,6").
+// This form field already uses commas to separate vcpu:cpuset pairs, so a
+// single pin can only carry one element; a bare "^3" is rejected here rather
+// than being silently misparsed as a separate pin.
+function isValidCPUSet(raw: string): boolean {
+  const range = raw.match(/^(\d+)-(\d+)$/)
+  if (range) return Number(range[1]) <= Number(range[2])
+  return /^\d+$/.test(raw)
 }
 
 // Accepts the same addresses as Go's net.ParseIP: dotted-quad IPv4 with each
