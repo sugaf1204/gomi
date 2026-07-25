@@ -2,6 +2,22 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
+> **STOP — this plan is not ready to execute.** Nine review rounds have produced 73
+> findings and the count is not converging. Round nine established a general rule the
+> earlier rounds were discovering piecemeal: **detaching the deploy makes every code
+> path that touches a VM name, and every write that touches its record, part of this
+> change.** The per-name guard grew from create→create (round 7) to redeploy (round 8)
+> to delete (round 9); the conditional-write requirement grew from
+> `UpdateDeployStatus`/`FailDeploy` to `markDomainDefined`. There is no reason to think
+> that enumeration is complete.
+>
+> The approved subset also turned out to depend on finding 20 (11 of 12 `rpcExecutor`
+> methods ignore their context), which round five had classified as out of scope: a
+> bounded deploy pool cannot be added safely until RPCs are cancellable.
+>
+> **Decision required before implementation** — see "Scope options" below. Do not begin
+> Task 1 until one is chosen.
+
 > **SCOPE — read before executing anything.** Only **Tasks 1, 2, 2b, 3 and 7** are approved for implementation. **Tasks 2c, 3b, 4, 5, 6, 7b and 7c are DEFERRED and must not be built**: five review rounds found 32 defects in that recovery design, three of which cannot be fixed inside this feature (see the fifth-round log below). They are retained as a record of the constraints, not as work items. An agent executing this plan task-by-task must skip them, and Task 8 verifies only the approved subset.
 
 **Goal:** Make Quick Deploy return control to the user immediately, so consecutive deploys are possible, without letting repeated clicks or a page reload corrupt a deploy.
@@ -23,6 +39,68 @@
 - Go tests run with `go test ./...`; web tests with `npm test` from `web/`.
 - No Japanese in source. No Claude signatures in commit messages.
 - Breaking changes are acceptable in this project; backward compatibility is not a goal.
+
+### Ninth round — recorded, not patched
+
+Eight findings, all verified against the code. They are recorded rather than fixed
+because they demonstrate a pattern rather than eight independent bugs.
+
+**The guard keeps growing.** Round 7 serialised create-vs-create; round 8 added
+redeploy; round 9 adds delete:
+
+29. `DeleteVirtualMachine` is not in the per-name guard. A user can delete the freshly
+    returned `Pending` VM — the handler sees no domain yet, removes the record, returns
+    `204` — while the create worker goes on to build a volume and domain. The worker's
+    stale cleanup only runs after `Deploy` returns, and most libvirt calls ignore
+    cancellation, so artifacts can outlive a successful delete indefinitely.
+
+**The conditional-write requirement keeps growing.** Round 8 covered
+`UpdateDeployStatus`/`FailDeploy`; round 9 finds another:
+
+30. `markDomainDefined` (`internal/vm/deploy.go:210`) is the same
+    Get → token-compare → name-only `writeExisting` sequence, so a stale worker can
+    overwrite a replacement's row, token included.
+
+**Remaining findings:**
+
+31. The post-deadline success repair passes `created.Phase`, which is still `Pending`
+    because `Deploy`'s expired-context write never assigned back — so it would persist
+    `Pending`/`create` rather than the real outcome.
+32. Registering `onDeployWorkerDone` after the recovery defer makes it fire *first*
+    during panic unwinding (LIFO), so a test can tear down while `FailDeploy` and the
+    audit write are still running.
+33. Moving Machine token creation after the insert leaves the token fields only in
+    memory; the row is never updated, so PXE issues a second token and orphans the first.
+34. No approved test exercises the non-curtin `CreateVolume`/PXE branch —
+    `inferInstallConfigType` returns curtin for every non-empty family, so both the
+    Ubuntu and Debian fixtures take the same path.
+35. Task 7's commit stages only the two TypeScript files, omitting every Machine-side
+    server and test file Step 3b requires.
+36. The manual restart check demands a `Missing` outcome, but a crash after
+    `DomainObservedAt` is persisted yields `Error` via `IsProvisioningTimedOut` — so
+    correct late-stage behaviour would read as a regression.
+
+## Scope options
+
+Findings 29-30 are not two bugs; they are two more instances of one rule: **detaching
+the deploy pulls in every path that touches a VM name and every write that touches its
+record.** Each round has found the next instance. Choose an option before implementing.
+
+**Option C — drop the async change (smallest, recommended first step).**
+Keep only the optimistic UI counter (Task 7) and the atomic duplicate guard
+(Tasks 2b, 3's `409`). This fixes the reported rapid-click corruption. Button grey-out
+time is unchanged. None of findings 20-36 apply, because nothing is detached.
+
+**Option B — fix the foundations first.**
+Make the libvirt RPC boundary cancellable (finding 20) and give domains typed
+generation identity (finding 22) as their own changes, then revisit async deploy. Most
+of the workarounds in this plan — the per-name guard, host-verified cleanup, the pool
+caveat — exist only because those two are missing.
+
+**Option A — implement the current plan.**
+Viable only with the bounded pool caveat accepted (unbounded fan-out, recorded as a
+known limitation) and findings 29-36 fixed first. Given the trend, expect further
+instances of the same rule during implementation.
 
 ---
 
