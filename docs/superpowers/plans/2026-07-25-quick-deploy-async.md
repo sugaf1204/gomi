@@ -279,6 +279,28 @@ func (d *Deployer) Deploy(ctx context.Context, created *VirtualMachine, pxeNoClo
 
 Return `hv` on every path after line 24 resolves it, and the zero value on the early failure before that. Update all callers — run `grep -rn "vmDeployer.Deploy(\|\.Deploy(ctx" internal/ | grep -v _test` to find them — plus any tests that call it.
 
+- [ ] **Step 3c: Clean up host state when Deploy panics**
+
+A panic inside `Deploy` unwinds before it can return anything, so the caller's `usedHV` still holds the pre-deploy handle and cannot be trusted for cleanup. `Deploy` is the only place that knows which host it selected, so it must handle this itself:
+
+```go
+	defer func() {
+		if r := recover(); r != nil {
+			// hv is resolved above and is the host artifacts were created on.
+			cleanupCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			if err := d.TeardownHostState(cleanupCtx, hv, *created); err != nil {
+				log.Printf("deploy vm %s: cleanup after panic: %v", created.Name, err)
+			}
+			panic(r) // let the caller's recover record the failure and audit it
+		}
+	}()
+```
+
+Place it immediately after `hv` is resolved (`internal/vm/deploy.go:24-29`), so it covers every host operation that follows. Re-panicking keeps the caller's existing responsibilities — `FailDeploy`, the audit event, and not killing the process — intact.
+
+Test with an executor whose `CreateOverlayVolume` panics after `CreateVolume` succeeded, asserting the volume is deleted and the panic still reaches the caller.
+
 - [ ] **Step 4: Run tests to verify they pass**
 
 Run: `go test ./internal/vm/ -run TestDeployerNewExecutor -v`
@@ -769,8 +791,13 @@ func vmCreateBody(name, hypervisorRef string) map[string]any {
 }
 
 // Sequential requests cannot prove atomicity: a non-atomic check-then-insert
-// passes this while still letting two simultaneous requests both succeed. Fire
-// both from a barrier so they contend at the store.
+// passes this while still letting two simultaneous requests both succeed.
+//
+// A barrier around doRequest is NOT enough either — the scheduler can run one
+// request all the way through the store before the other starts, so a
+// check-then-upsert would still pass. The requests must be held at the store
+// boundary itself: wrap the VM store with a test double whose Insert blocks
+// until both callers have arrived, then releases them together.
 func TestCreateVirtualMachineRejectsDuplicateNameConcurrently(t *testing.T) {
 	env := setupTestEnv(t)
 	seedVMHypervisor(t, env, "hv-dup")
@@ -889,7 +916,9 @@ func TestCreateVirtualMachineRespondsWhileDeployInFlight(t *testing.T) {
 }
 ```
 
-The fake must expose `finished`, closed in its last executor call, so the test has a real completion signal rather than a sleep. Polling the record for a terminal phase under a bounded timeout is an acceptable alternative.
+The signal must come from the **worker**, not the executor. Closing a channel in the fake's last executor call still fires before `runVMDeploy` does its identity read, status handling, cleanup and completion audit — so the test could return while those still run against shared state.
+
+Give `Server` an optional `onDeployWorkerDone func(name string)` test hook, invoked from `runVMDeploy`'s outermost `defer` (after the panic-recovery defer, so it fires on every path), and have the test wait on it. Waiting for the terminal audit event or phase under a bounded timeout is an acceptable alternative; a `time.Sleep` is not.
 
 **Block a method the curtin path actually calls.** `applyInstallConfigByOSImage` derives the install type from the image's OS family via `inferInstallConfigType` (`internal/infra/api/vm_reinstall.go:335`), and a vm-capable qcow2 fixture resolves to curtin — so `Deploy` calls `CreateOverlayVolume`, never `CreateVolume`. A fake blocking in `CreateVolume` would never be reached, and the test would fail waiting on `started` for the wrong reason. Block in `CreateOverlayVolume`, and give the fake whatever backing-image behaviour `prepareCloudImageBacking` needs to get that far (`VolumeExists` returning true is the cheapest path — it short-circuits the download at `internal/vm/cloud_image.go:47-52`).
 
@@ -955,14 +984,12 @@ func (s *Server) runVMDeploy(actor httputil.Actor, deployHV hypervisor.Hyperviso
 			if _, err := s.vms.FailDeploy(failCtx, created.Name, "deploy", detail, created.Provisioning.CompletionToken); err != nil {
 				log.Printf("create vm %s: record panic failure: %v", created.Name, err)
 			}
-			// A panic can happen after the volume or domain exists. With the
-			// recovery sweep out of scope nothing revisits a terminal record,
-			// so a later redeploy under this name would hit "already exists".
-			// usedHV is declared above the defer and updated once Deploy
-			// resolves, so it is correct here during unwinding.
-			if cleanupErr := s.vmDeployer.TeardownHostState(failCtx, usedHV, created); cleanupErr != nil {
-				log.Printf("create vm %s: cleanup after panic: %v", created.Name, cleanupErr)
-			}
+			// Host cleanup for a panic is NOT done here — see Task 1 Step 3c.
+			// A panic unwinds before `resolved` is assigned, so usedHV would
+			// still hold the handler's pre-deploy handle; if the hypervisor
+			// record was replaced in between, cleaning through it would target
+			// a host the artifacts were never created on. Deploy owns that
+			// cleanup, because only Deploy knows which host it selected.
 			// Unwinding skips the normal completion audit below, so write the
 			// terminal event here — otherwise the Activity UI keeps showing
 			// "accepted" for a VM that is actually in Error.
@@ -1047,17 +1074,34 @@ func (s *Server) runVMDeploy(actor httputil.Actor, deployHV hypervisor.Hyperviso
 }
 ```
 
+- [ ] **Step 4a: Bound background deploy concurrency (required)**
+
+The synchronous handler uses request duration as backpressure: the Create VM dialog loops up to 50 VMs (`web/src/components/views/virtual-machines/useVirtualMachineOperations.ts:101`) but each request waits, so exactly one deploy runs at a time. Returning `201` immediately removes that limit — a single batch create would launch 50 concurrent image, storage and libvirt jobs. Combined with finding 20 (11 of 12 `rpcExecutor` methods ignore their context), hung operations accumulate goroutines and connections with nothing to reclaim them.
+
+Dispatch through a **bounded** background queue owned by `Server`: a buffered worker pool sized from CPU count (mirror the existing convention if one exists — check `internal/app` for how other pools are sized). Enqueue must not block the handler; the `201` still returns immediately and the deploy waits its turn in the background.
+
+If the queue is full, still accept the request and let it wait — do not drop the deploy or fail the create, since the record is already persisted.
+
+Test the batch path: issue N creates where N exceeds the pool size and assert at most `poolSize` deploys are in flight simultaneously, while all N return `201` promptly.
+
 - [ ] **Step 4b: Serialise same-name deploys (required for Step 4 to be safe)**
 
 Every teardown in Step 4 destroys the domain and volume **by name**. Libvirt artifacts carry no generation identity — `BuildDomainConfig` stores no completion token — so a stale worker cleaning up "its" VM cannot distinguish its own artifacts from a replacement's created under the same name on the same hypervisor. The token check identifies *the record* as superseded; it says nothing about *the artifacts*.
 
 This is reachable in the approved path: delete a VM, immediately Quick Deploy the same name (which the UI's optimistic counter makes easy after a delete), and the old worker's cleanup can destroy the new deploy's volume.
 
-Add an in-process guard so only one deploy worker per VM name runs at a time: a `map[string]chan struct{}` (or `singleflight`-style set) on `Server`, entered before `go s.runVMDeploy(...)` and released in the worker's outermost `defer`. A create whose name already has a live worker waits for it to finish before starting.
+Add an in-process guard so only one host-mutating operation per VM name runs at a time: a `map[string]chan struct{}` (or `singleflight`-style set) on `Server`.
 
-This is sufficient because the deploy worker is in-process and this scope has no cross-process recovery. It would **not** be sufficient once recovery returns — that is why finding 22 (typed generation identity on the libvirt domain) is recorded as a prerequisite for the deferred scope.
+**Acquire it inside the worker, never in the handler.** Taking the lock before `go s.runVMDeploy(...)` would make a same-name `POST` block until the previous deploy finished — destroying the immediate `201` this whole feature exists to deliver, potentially forever given finding 20. Dispatch the goroutine immediately; it waits for the name inside, and releases in its outermost `defer`.
 
-Test: start a blocked deploy for `vm-x`, delete the record, issue a second create for `vm-x`, release the first, and assert the second VM's volume and domain still exist.
+**Redeploy must share the same primitive.** `ReinstallVirtualMachine` has no phase guard, and after this change a `Pending` VM is immediately selectable with Redeploy enabled — so a user can trigger a synchronous destroy/undefine/recreate of the same named artifacts while the create worker is still deploying them. Either have the reinstall handler acquire the same per-name guard, or return `409` while a create worker owns the name. Prefer the `409`: reinstall runs in the request path, and making it wait would hang the request for the same reason as above.
+
+This is sufficient because all these workers are in-process and this scope has no cross-process recovery. It would **not** be sufficient once recovery returns — that is why finding 22 (typed generation identity on the libvirt domain) is recorded as a prerequisite for the deferred scope.
+
+Tests:
+- start a blocked deploy for `vm-x`, delete the record, issue a second create for `vm-x`, release the first, and assert the second VM's volume and domain still exist;
+- assert the second create's `201` arrives **while** the first worker is still blocked, proving the guard is not on the request path;
+- create `vm-y`, then call Redeploy while its worker is blocked, and assert the reinstall is rejected (or serialised) rather than destroying the in-flight artifacts.
 
 `httputil.CreateAudit` takes an `echo.Context` and cannot be used here. Read `internal/infra/httputil` for how the actor is extracted and add a background-safe variant that takes the already-resolved actor plus a plain context; capture the actor in the handler before it returns and pass it into `runVMDeploy`. Keep the handler's `accepted` event — it records that the request was received — and let this one record the result.
 
@@ -1899,7 +1943,11 @@ This is settled, not conditional: `machine.Service.Create` calls `store.Upsert` 
 
 Mirror Task 2b and Task 3 on the machine surface: add an insert-only store operation returning `resource.ErrAlreadyExists`, a `CreateExclusive` service method, and a `409` mapping in the machine create handler. Add the same concurrent test as `TestCreateVirtualMachineRejectsDuplicateNameConcurrently`, asserting exactly one `201`, one `409`, and one record.
 
-**Do not leak the registration token.** For a hypervisor-role Machine, `attachHypervisorRegistrationToken` persists a one-time token at `internal/infra/api/machine.go:93` — *before* the create call. Adding a `409` there means the losing request has already written a valid token row that now has no owning Machine and no deletion API, so repeated conflicts accumulate orphan credentials until expiry. Either move token creation after a successful insert, or delete the token when the insert conflicts. Extend the concurrent test to assert exactly one token was issued.
+**Do not leak the registration token.** For a hypervisor-role Machine, `attachHypervisorRegistrationToken` persists a one-time token at `internal/infra/api/machine.go:93` — *before* the create call. Adding a `409` there means the losing request has already written a valid token row that now has no owning Machine and no deletion API, so repeated conflicts accumulate orphan credentials until expiry. Either move token creation after a successful insert, or delete the token when the insert conflicts.
+
+If you move it after the insert, handle the opposite partial write: a token failure then leaves a committed Machine row with no credential, and a retry gets `409`. Delete the just-inserted Machine when token creation fails, or perform both in one transaction. Test that branch explicitly — inject a token-store failure and assert no orphan Machine row survives.
+
+Extend the concurrent test to assert exactly one token was issued.
 
 The project UI policy requires the two surfaces to behave alike; leaving Machines on a silently-overwriting create would make the guarantee VM-only.
 
@@ -2009,7 +2057,7 @@ Expected: all PASS.
 
 - [ ] **Step 2: Confirm each design-doc verification item**
 
-Walk the "Verification" section of `docs/superpowers/specs/2026-07-25-quick-deploy-async-design.md` and confirm a test covers each. Currently expected coverage:
+Validate **only the rows in the table below**. Do not walk the design document's full Verification section: it still describes the deferred recovery scope (restart resume, leases, finalization, backing-image publication, the worker pool), and those items are intentionally not covered here. The design doc's status section records why.
 
 | Item | Covered by |
 |---|---|
@@ -2028,6 +2076,11 @@ Walk the "Verification" section of `docs/superpowers/specs/2026-07-25-quick-depl
 | Existing tests updated for async completion | Task 3 Step 6 |
 | Rapid clicks produce distinct VMs | Task 7 Step 4 |
 | Same-name delete+recreate does not destroy the replacement | Task 3 Step 4b |
+| Same-name guard does not delay the 201 | Task 3 Step 4b |
+| Redeploy during an in-flight create is rejected/serialised | Task 3 Step 4b |
+| Batch create respects the deploy concurrency limit | Task 3 Step 4a |
+| Panic inside Deploy cleans up on the host it selected | Task 1 Step 3c |
+| Machine token failure leaves no orphan Machine row | Task 7 Step 3b |
 | OS coverage: non-Ubuntu create through the async path | Task 3 Step 6b |
 | Duplicate translation on both SQL drivers | Task 2b Step 3 |
 | Machine duplicate issues exactly one registration token | Task 7 Step 3b |
