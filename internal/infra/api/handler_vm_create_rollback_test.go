@@ -1,9 +1,12 @@
 package api_test
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
@@ -190,4 +193,49 @@ func TestCreateVirtualMachineRejectsDuplicateName(t *testing.T) {
 	if items[0].Phase == vm.PhaseError {
 		t.Fatalf("the rejected duplicate must not have altered the stored record: %+v", items[0])
 	}
+}
+
+// The request context may be exactly what failed (cancelled client, expired
+// deadline), so the rollback must not reuse it — otherwise the row survives and
+// the name is permanently unusable.
+//
+// This asserts the end state only. The in-memory store ignores context, so it
+// cannot by itself distinguish a fresh-context rollback from one reusing the
+// cancelled request context; the guarantee comes from rollbackCreatedVM
+// deriving its context from context.Background(). Kept as a regression guard
+// against the rollback being dropped or moved back into the request path.
+func TestCreateVirtualMachineRollsBackWhenRequestContextIsCancelled(t *testing.T) {
+	env := setupTestEnvWithFailingHypervisorGet(t)
+	seedVMCreatePrereqs(t, env, "hv-cancelled")
+
+	env.hvStore.failWhenExists = func() bool {
+		_, err := env.vms.Get(context.Background(), "vm-cancelled")
+		return err == nil
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/virtual-machines",
+		bytes.NewReader(mustJSON(t, vmCreateRequestBody("vm-cancelled", "hv-cancelled"))))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+env.token)
+
+	// Cancel the request context so a rollback that reuses it cannot succeed.
+	ctx, cancel := context.WithCancel(req.Context())
+	cancel()
+	req = req.WithContext(ctx)
+
+	rec := httptest.NewRecorder()
+	env.echo.ServeHTTP(rec, req)
+
+	if _, err := env.vms.Get(context.Background(), "vm-cancelled"); !errors.Is(err, resource.ErrNotFound) {
+		t.Fatalf("expected rollback on a cancelled request context, got err=%v", err)
+	}
+}
+
+func mustJSON(t *testing.T, v any) []byte {
+	t.Helper()
+	b, err := json.Marshal(v)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	return b
 }

@@ -92,3 +92,45 @@ func TestCreateStillOverwrites(t *testing.T) {
 		t.Fatalf("second Create should still upsert, got %v", err)
 	}
 }
+
+// A create that fails after inserting must not delete a replacement VM that
+// took the same name in the meantime.
+func TestDeleteCreatedOnlyRemovesItsOwnGeneration(t *testing.T) {
+	svc := vm.NewService(memory.New().VMs())
+	ctx := context.Background()
+
+	original := newExclusiveTestVM("vm-gen")
+	original.Provisioning = vm.ProvisioningStatus{Active: true, CompletionToken: "token-original"}
+	if _, err := svc.CreateExclusive(ctx, original); err != nil {
+		t.Fatalf("create original: %v", err)
+	}
+
+	// The original is deleted and a replacement takes the name.
+	if err := svc.Delete(ctx, "vm-gen"); err != nil {
+		t.Fatalf("delete original: %v", err)
+	}
+	replacement := newExclusiveTestVM("vm-gen")
+	replacement.Provisioning = vm.ProvisioningStatus{Active: true, CompletionToken: "token-replacement"}
+	if _, err := svc.CreateExclusive(ctx, replacement); err != nil {
+		t.Fatalf("create replacement: %v", err)
+	}
+
+	deleted, err := svc.DeleteCreated(ctx, "vm-gen", "token-original")
+	if err != nil {
+		t.Fatalf("DeleteCreated: %v", err)
+	}
+	if deleted {
+		t.Fatal("rollback deleted the replacement instead of skipping")
+	}
+	got, err := svc.Get(ctx, "vm-gen")
+	if err != nil {
+		t.Fatalf("replacement must survive: %v", err)
+	}
+	if got.Provisioning.CompletionToken != "token-replacement" {
+		t.Fatalf("unexpected surviving record: %+v", got)
+	}
+
+	if deleted, err := svc.DeleteCreated(ctx, "vm-gen", "token-replacement"); err != nil || !deleted {
+		t.Fatalf("owning generation should delete: deleted=%v err=%v", deleted, err)
+	}
+}

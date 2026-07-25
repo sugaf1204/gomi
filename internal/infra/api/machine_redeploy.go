@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	gohttp "net/http"
 	"strings"
 	"time"
@@ -232,6 +233,24 @@ func (s *Server) attachHypervisorRegistrationToken(ctx context.Context, m *machi
 	m.Provision.Artifacts[machine.ProvisionArtifactHypervisorRegistrationToken] = token.Token
 	m.Provision.Artifacts[machine.ProvisionArtifactHypervisorRegistrationTokenExpiresAt] = token.ExpiresAt.Format(time.RFC3339)
 	return true, nil
+}
+
+// invalidateHypervisorRegistrationToken burns the registration token minted for
+// a machine create that was then rejected. The token is persisted before the
+// machine row exists, so without this a losing duplicate leaves a usable
+// credential owned by nothing. Marking it used is enough — a used token is
+// rejected by ValidateToken and expires on its own schedule.
+func (s *Server) invalidateHypervisorRegistrationToken(ctx context.Context, m machine.Machine) {
+	if s.hypervisors == nil || m.Provision == nil {
+		return
+	}
+	token := m.Provision.Artifacts[machine.ProvisionArtifactHypervisorRegistrationToken]
+	if token == "" {
+		return
+	}
+	if _, err := s.hypervisors.MarkTokenUsed(ctx, token, "rejected-duplicate:"+m.Name); err != nil {
+		log.Printf("create machine %s: invalidate orphan registration token: %v", m.Name, err)
+	}
 }
 
 func (s *Server) resolveOSPreset(ctx context.Context, m *machine.Machine) error {

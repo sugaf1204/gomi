@@ -94,8 +94,15 @@ func (s *Server) CreateMachine(c echo.Context) error {
 		return c.JSON(gohttp.StatusInternalServerError, jsonErrorErr(err))
 	}
 
-	created, err := s.machines.Create(ctx, m)
+	created, err := s.machines.CreateExclusive(ctx, m)
 	if err != nil {
+		if errors.Is(err, resource.ErrAlreadyExists) {
+			// The registration token was minted before the insert, so the
+			// losing request must not leave a valid credential behind with no
+			// owning machine.
+			s.invalidateHypervisorRegistrationToken(ctx, m)
+			return c.JSON(gohttp.StatusConflict, jsonError("machine already exists: "+m.Name))
+		}
 		return c.JSON(gohttp.StatusBadRequest, jsonErrorErr(err))
 	}
 	httputil.CreateAudit(c, s.authStore, created.Name, "create-machine", "success", "machine created", nil)

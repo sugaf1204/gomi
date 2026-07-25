@@ -282,6 +282,32 @@ func (s *Service) DeleteOwned(ctx context.Context, name, hypervisorRef string) (
 	return true, nil
 }
 
+// DeleteCreated removes a record only while it still carries the given
+// provisioning completion token, reporting whether it was deleted. A create
+// that fails after inserting its row uses this to roll back: a plain delete by
+// name would remove a replacement VM created under the same name in the
+// meantime, leaving that request deploying host artifacts for a record that no
+// longer exists.
+func (s *Service) DeleteCreated(ctx context.Context, name, completionToken string) (bool, error) {
+	v, err := s.store.Get(ctx, name)
+	if err != nil {
+		if errors.Is(err, resource.ErrNotFound) {
+			return false, nil
+		}
+		return false, err
+	}
+	if v.Provisioning.CompletionToken != completionToken {
+		return false, nil
+	}
+	if err := s.store.Delete(ctx, name); err != nil {
+		if errors.Is(err, resource.ErrNotFound) {
+			return false, nil
+		}
+		return false, err
+	}
+	return true, nil
+}
+
 func (s *Service) Store() Store {
 	return s.store
 }
