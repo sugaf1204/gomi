@@ -91,22 +91,22 @@ function MachineList({
         </div>
       )}
       {filteredMachines.length > 0 && (
-        <div className="flex items-center gap-[0.45rem] py-[0.35rem] pl-[0.55rem] border-b border-line bg-[#f9f7f4]">
-          <input type="checkbox" className="w-[0.95rem] h-[0.95rem] m-0 shrink-0 accent-[#2b7a78] cursor-pointer" checked={selectedMachines.size === filteredMachines.length && filteredMachines.length > 0} onChange={toggleSelectAll} />
+        <div className="flex items-center gap-[0.45rem] py-[0.35rem] pl-[0.55rem] border-b border-line bg-panel-2">
+          <input type="checkbox" className="w-[0.95rem] h-[0.95rem] m-0 shrink-0 accent-brand cursor-pointer" checked={selectedMachines.size === filteredMachines.length && filteredMachines.length > 0} onChange={toggleSelectAll} />
           <span className="text-[0.78rem] text-ink-soft">Select All</span>
         </div>
       )}
       {filteredMachines.map((machine) => (
-        <div key={machine.name} className={clsx('flex items-start border-0 border-b border-line border-l-[3px] border-l-transparent', selectedMachineName === machine.name && '!border-l-brand bg-[rgba(43,122,120,0.06)]')}>
+        <div key={machine.name} className={clsx('flex items-start border-0 border-b border-line border-l-[3px] border-l-transparent', selectedMachineName === machine.name && '!border-l-brand bg-brand-wash')}>
           <div className="flex items-center pl-[0.55rem] pt-[0.72rem] shrink-0">
-            <input type="checkbox" className="w-[0.95rem] h-[0.95rem] m-0 accent-[#2b7a78] cursor-pointer" checked={selectedMachines.has(machine.name)} onChange={() => toggleMachineSelect(machine.name)} />
+            <input type="checkbox" className="w-[0.95rem] h-[0.95rem] m-0 accent-brand cursor-pointer" checked={selectedMachines.has(machine.name)} onChange={() => toggleMachineSelect(machine.name)} />
           </div>
           <button className="text-left flex-1 min-w-0 border-0 bg-transparent flex justify-between items-start gap-[0.75rem] py-[0.62rem] pl-[0.45rem] pr-[0.1rem] shadow-none hover:transform-none!" onClick={() => onSelectMachine(machine.name)}>
             <div className="min-w-0">
               <p className="m-0 font-ui font-medium tracking-normal truncate">{machine.name}</p>
               <p className="m-0 text-ink-soft text-[0.82rem]">{machine.osPreset.family} {machine.osPreset.version} - {machine.firmware.toUpperCase()}</p>
             </div>
-            {machine.role === 'hypervisor' && <span className="text-[0.7rem] px-1.5 py-0.5 rounded bg-purple-100 text-purple-700 font-medium shrink-0">HV</span>}
+            {machine.role === 'hypervisor' && <span className="text-[0.7rem] px-1.5 py-0.5 rounded bg-hv-bg text-hv font-medium shrink-0">HV</span>}
             <span className={clsx(phaseClass(machine.phase), 'shrink-0')}>{machine.phase}</span>
           </button>
         </div>
@@ -170,11 +170,11 @@ function MachineHeader({
           <div className="relative">
             <button className="py-[0.45rem] px-[0.72rem]" disabled={selectedMachines.size === 0 && !selectedMachine} onClick={() => setActionsMenuOpen((current) => !current)}>Actions</button>
             {actionsMenuOpen && (
-              <div className="absolute right-0 mt-1 min-w-[180px] bg-white border border-line shadow-[0_10px_24px_rgba(52,43,34,0.16)] z-10">
+              <div className="absolute right-0 mt-1 min-w-[180px] bg-panel border border-line shadow-[0_10px_24px_rgba(52,43,34,0.16)] z-10">
                 {actions.map((item) => (
                   <button
                     key={item.value}
-                    className={clsx('w-full text-left border-0 shadow-none rounded-none px-[0.7rem] py-[0.5rem]', item.value === 'power-off' || item.value === 'delete' ? 'text-[#9b2d2d] hover:bg-[#fff3f2]' : 'text-ink hover:bg-[#f7f3ed]')}
+                    className={clsx('w-full text-left border-0 shadow-none rounded-none px-[0.7rem] py-[0.5rem]', item.value === 'power-off' || item.value === 'delete' ? 'text-danger hover:bg-danger-bg' : 'text-ink hover:bg-panel-2')}
                     onClick={() => {
                       setActionsMenuOpen(false)
                       runPrimaryAction(item.value)
@@ -200,14 +200,14 @@ function SelectedMachineSummary({ machine, hypervisor }: { machine: Machine; hyp
       <p className="m-0 mt-[0.15rem] text-[0.84rem] flex items-center gap-[0.4rem]">
         <span className="text-ink-soft">IP:</span>
         <span>{machine.ip || '-'}</span>
-        <span className={clsx('text-[0.68rem] font-medium px-[0.35rem] py-[0.05rem] rounded-sm border', machine.ipAssignment === 'static' ? 'bg-[#e8f4f3] text-[#1a6360] border-[#b8dbd9]' : 'bg-[#f3f0ea] text-ink-soft border-[#e0dbd2]')}>
+        <span className={clsx('text-[0.68rem] font-medium px-[0.35rem] py-[0.05rem] rounded-sm border', machine.ipAssignment === 'static' ? 'bg-brand-wash text-brand-strong border-line' : 'bg-panel-2 text-ink-soft border-line')}>
           {machine.ipAssignment === 'static' ? 'Static' : 'DHCP'}
         </span>
       </p>
       {machine.powerState && <p className="m-0 mt-[0.25rem]"><span className={powerStateClass(machine.powerState)}>{powerStateLabel(machine.powerState)}</span></p>}
       {hypervisor && (
         <p className="m-0 mt-[0.25rem] text-[0.82rem]">
-          <span className="inline-flex items-center font-ui rounded-full text-[0.68rem] font-semibold px-2 py-0.5 bg-[#e8e0f6] text-[#5b3d8f]">Hypervisor</span>
+          <span className="inline-flex items-center font-ui rounded-full text-[0.68rem] font-semibold px-2 py-0.5 bg-hv-bg text-hv">Hypervisor</span>
           <span className="text-ink-soft ml-[0.4rem]">{hypervisor.vmCount} VM{hypervisor.vmCount !== 1 ? 's' : ''} hosted</span>
         </p>
       )}

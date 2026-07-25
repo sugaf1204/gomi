@@ -29,25 +29,29 @@ export function formatRelativeOffset(ms?: number) {
   return `T+${seconds}s`
 }
 
+// Fleet Rail chips are square and monospace-led (README → Typography: radius 0
+// everywhere except the avatar; lowercase phase chip in mono 600 10.5px).
+const CHIP_BASE = 'inline-flex items-center w-fit font-mono font-semibold text-[10.5px] lowercase px-[6px] py-[4px]'
+
 export function phaseClass(phase?: string) {
-  const base = 'inline-flex items-center w-fit font-ui rounded-full text-[0.71rem] font-semibold px-2 py-0.5'
+  const base = CHIP_BASE
   switch ((phase ?? '').toLowerCase()) {
     case 'ready':
     case 'running':
     case 'succeeded':
     case 'registered':
-      return `${base} bg-[#d9f1e5] text-ok`
+      return `${base} bg-ok-bg text-ok`
     case 'pending':
     case 'provisioning':
     case 'creating':
     case 'deleting':
     case 'stopped':
     case 'migrating':
-      return `${base} bg-[#f8e6cc] text-warn`
+      return `${base} bg-warn-bg text-warn`
     case 'missing':
-      return `${base} bg-[#e8e4df] text-ink-soft`
+      return `${base} bg-neutral-bg text-ink-soft`
     default:
-      return `${base} bg-[#f6dada] text-error`
+      return `${base} bg-error-bg text-error`
   }
 }
 
@@ -100,14 +104,14 @@ export function formatPowerControlMethod(power?: PowerConfig | PowerConfigRespon
 }
 
 export function powerStateClass(state?: PowerState) {
-  const base = 'inline-flex items-center w-fit font-ui rounded-full text-[0.68rem] font-semibold px-2 py-0.5'
+  const base = CHIP_BASE
   switch (state) {
     case 'running':
-      return `${base} bg-[#d9f1e5] text-ok`
+      return `${base} bg-ok-bg text-ok`
     case 'stopped':
-      return `${base} bg-[#f6dada] text-error`
+      return `${base} bg-error-bg text-error`
     default:
-      return `${base} bg-[#e8e4df] text-ink-soft`
+      return `${base} bg-neutral-bg text-ink-soft`
   }
 }
 

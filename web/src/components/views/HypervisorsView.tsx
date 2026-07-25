@@ -185,7 +185,7 @@ export function HypervisorsView({ hypervisors, onRefresh }: HypervisorsViewProps
     <>
       {regTokenOpen && regToken && (
         <ModalOverlay onBackdropClick={() => { setRegTokenOpen(false) }}>
-          <div className="w-[min(560px,100%)] bg-white border border-line-strong shadow-[0_20px_45px_rgba(52,43,34,0.2)] p-[1.1rem] grid gap-[0.65rem]">
+          <div className="w-[min(560px,100%)] bg-panel border border-line-strong shadow-[0_20px_45px_rgba(52,43,34,0.2)] p-[1.1rem] grid gap-[0.65rem]">
             <div className="flex justify-between items-center">
               <h3 className="text-[1.2rem]">Add Hypervisor</h3>
               <button
@@ -196,7 +196,7 @@ export function HypervisorsView({ hypervisors, onRefresh }: HypervisorsViewProps
             </div>
             <p className="m-0 text-[0.84rem] text-ink-soft">Run the following command on the hypervisor host to register it with GoMI.</p>
             <p className="m-0 text-ink-soft text-[0.82rem]">Expires: {formatDate(regToken.expiresAt)} (1 hour)</p>
-            <p className="m-0 text-[#b5762a] text-[0.82rem]">This command is single-use and cannot be retrieved again.</p>
+            <p className="m-0 text-warn text-[0.82rem]">This command is single-use and cannot be retrieved again.</p>
             <div className="p-[0.65rem] border border-line bg-[#1e1e2e] rounded">
               <div className="flex justify-end mb-[0.35rem]">
                 <button
@@ -221,11 +221,11 @@ export function HypervisorsView({ hypervisors, onRefresh }: HypervisorsViewProps
             setBatchDeleteConfirm(initialBatchDeleteConfirm)
           }
         }}>
-          <div className="w-[min(520px,100%)] bg-white border border-line-strong shadow-[0_20px_45px_rgba(52,43,34,0.2)] p-[1.1rem] grid gap-[0.65rem]">
-            <h3 className="text-[1.2rem] text-[#9b2d2d]">Confirm Delete</h3>
+          <div className="w-[min(520px,100%)] bg-panel border border-line-strong shadow-[0_20px_45px_rgba(52,43,34,0.2)] p-[1.1rem] grid gap-[0.65rem]">
+            <h3 className="text-[1.2rem] text-danger">Confirm Delete</h3>
             <p className="m-0 text-ink-soft text-[0.84rem]">Virtual machine records on these hypervisors are also removed from GOMI. No changes are made on the hosts.</p>
             <p className="m-0 text-ink-soft text-[0.84rem]">Target hypervisors ({batchDeleteConfirm.targets.length}):</p>
-            <div className="max-h-[180px] overflow-auto border border-line p-[0.55rem] bg-[#f9f7f4]">
+            <div className="max-h-[180px] overflow-auto border border-line p-[0.55rem] bg-panel-2">
               <ul className="m-0 pl-[1.1rem]">
                 {batchDeleteConfirm.targets.map((target) => (
                   <li key={target}><code>{target}</code></li>
@@ -238,7 +238,7 @@ export function HypervisorsView({ hypervisors, onRefresh }: HypervisorsViewProps
                 type="button"
                 onClick={() => void submitBatchDeleteConfirm()}
                 disabled={batchDeleteConfirm.running}
-                className="bg-[#d86b6b] border-[#be5252] text-white"
+                className="bg-danger-line border-danger-line text-white"
               >
                 {batchDeleteConfirm.running ? 'Deleting...' : 'Delete'}
               </button>
@@ -263,10 +263,10 @@ export function HypervisorsView({ hypervisors, onRefresh }: HypervisorsViewProps
 
           <div className="overflow-auto border-t border-line pr-[0.1rem]">
             {hypervisors.length > 0 && (
-              <div className="flex items-center gap-[0.45rem] py-[0.35rem] pl-[0.55rem] border-b border-line bg-[#f9f7f4]">
+              <div className="flex items-center gap-[0.45rem] py-[0.35rem] pl-[0.55rem] border-b border-line bg-panel-2">
                 <input
                   type="checkbox"
-                  className="w-[0.95rem] h-[0.95rem] m-0 shrink-0 accent-[#2b7a78] cursor-pointer"
+                  className="w-[0.95rem] h-[0.95rem] m-0 shrink-0 accent-brand cursor-pointer"
                   checked={checkedHVs.size === hypervisors.length && hypervisors.length > 0}
                   onChange={toggleAllChecked}
                 />
@@ -278,13 +278,13 @@ export function HypervisorsView({ hypervisors, onRefresh }: HypervisorsViewProps
                 key={hv.name}
                 className={clsx(
                   'flex items-start border-0 border-b border-line border-l-[3px] border-l-transparent',
-                  selected === hv.name && '!border-l-brand bg-[rgba(43,122,120,0.06)]'
+                  selected === hv.name && '!border-l-brand bg-brand-wash'
                 )}
               >
                 <div className="flex items-center pl-[0.55rem] pt-[0.72rem] shrink-0">
                   <input
                     type="checkbox"
-                    className="w-[0.95rem] h-[0.95rem] m-0 accent-[#2b7a78] cursor-pointer"
+                    className="w-[0.95rem] h-[0.95rem] m-0 accent-brand cursor-pointer"
                     checked={checkedHVs.has(hv.name)}
                     onChange={() => toggleChecked(hv.name)}
                   />
@@ -341,7 +341,7 @@ export function HypervisorsView({ hypervisors, onRefresh }: HypervisorsViewProps
                         Actions
                       </button>
                       {actionsMenuOpen && (
-                        <div className="absolute right-0 mt-1 min-w-[180px] bg-white border border-line shadow-[0_10px_24px_rgba(52,43,34,0.16)] z-10">
+                        <div className="absolute right-0 mt-1 min-w-[180px] bg-panel border border-line shadow-[0_10px_24px_rgba(52,43,34,0.16)] z-10">
                           {([
                             { value: 'delete', label: 'Delete' }
                           ] as Array<{ value: HypervisorPrimaryAction, label: string }>).map((item) => (
@@ -350,8 +350,8 @@ export function HypervisorsView({ hypervisors, onRefresh }: HypervisorsViewProps
                               className={clsx(
                                 'w-full text-left border-0 shadow-none rounded-none px-[0.7rem] py-[0.5rem]',
                                 item.value === 'delete'
-                                  ? 'text-[#9b2d2d] hover:bg-[#fff3f2]'
-                                  : 'text-ink hover:bg-[#f7f3ed]'
+                                  ? 'text-danger hover:bg-danger-bg'
+                                  : 'text-ink hover:bg-panel-2'
                               )}
                               onClick={() => {
                                 setActionsMenuOpen(false)

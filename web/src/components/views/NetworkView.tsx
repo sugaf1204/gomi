@@ -142,7 +142,7 @@ export function NetworkView({
     <>
       {subnetFormOpen && (
         <ModalOverlay onBackdropClick={onToggleSubnetForm}>
-          <div className="w-[min(480px,100%)] bg-white border border-line-strong shadow-[0_20px_45px_rgba(52,43,34,0.2)] p-[1.1rem] grid gap-[0.65rem]">
+          <div className="w-[min(480px,100%)] bg-panel border border-line-strong shadow-[0_20px_45px_rgba(52,43,34,0.2)] p-[1.1rem] grid gap-[0.65rem]">
             <div className="flex justify-between items-center">
               <h3 className="text-[1.2rem]">Create Subnet</h3>
               <button
@@ -185,7 +185,7 @@ export function NetworkView({
 
       {editOpen && selectedSubnetData && (
         <ModalOverlay onBackdropClick={() => { setEditOpen(false) }}>
-          <div className="w-[min(480px,100%)] bg-white border border-line-strong shadow-[0_20px_45px_rgba(52,43,34,0.2)] p-[1.1rem] grid gap-[0.65rem]">
+          <div className="w-[min(480px,100%)] bg-panel border border-line-strong shadow-[0_20px_45px_rgba(52,43,34,0.2)] p-[1.1rem] grid gap-[0.65rem]">
             <div className="flex justify-between items-center">
               <h3 className="text-[1.2rem]">Edit Subnet: {selectedSubnetData.name}</h3>
               <button
@@ -310,7 +310,7 @@ export function NetworkView({
                 {subnets.map((subnet) => (
                   <tr
                     key={subnet.name}
-                    className={clsx(selectedSubnet === subnet.name && 'bg-[#eef6f6]')}
+                    className={clsx(selectedSubnet === subnet.name && 'bg-brand-wash')}
                     onClick={() => onSelectSubnet(subnet.name)}
                   >
                     <td>{subnet.name}</td>
@@ -321,7 +321,7 @@ export function NetworkView({
                     <td>{subnet.spec.dnsServers?.join(', ') || '-'}</td>
                     <td>
                       <button
-                        className="bg-[#d86b6b] border-[#be5252] text-white py-[0.28rem] px-[0.55rem] text-[0.78rem]"
+                        className="bg-danger-line border-danger text-white py-[0.28rem] px-[0.55rem] text-[0.78rem]"
                         onClick={(e) => {
                           e.stopPropagation()
                           setDeleteConfirm({ open: true, name: subnet.name })
@@ -397,16 +397,16 @@ export function NetworkView({
 
       {deleteConfirm.open && (
         <ModalOverlay onBackdropClick={() => setDeleteConfirm({ open: false, name: '' })}>
-          <div className="w-[min(400px,100%)] bg-white border border-line-strong shadow-[0_20px_45px_rgba(52,43,34,0.2)] p-[0.95rem] grid gap-[0.6rem]">
-            <h3 className="text-[1.2rem] text-[#9b2d2d]">Delete Subnet</h3>
+          <div className="w-[min(400px,100%)] bg-panel border border-line-strong shadow-[0_20px_45px_rgba(52,43,34,0.2)] p-[0.95rem] grid gap-[0.6rem]">
+            <h3 className="text-[1.2rem] text-danger">Delete Subnet</h3>
             <p className="m-0 text-ink-soft text-[0.84rem]">Are you sure you want to delete this subnet?</p>
-            <div className="border border-line bg-[#f9f7f4] p-[0.55rem]">
+            <div className="border border-line bg-panel-2 p-[0.55rem]">
               <code>{deleteConfirm.name}</code>
             </div>
             <div className="flex justify-end gap-[0.45rem]">
               <button onClick={() => setDeleteConfirm({ open: false, name: '' })}>Cancel</button>
               <button
-                className="bg-[#d86b6b] border-[#be5252] text-white"
+                className="bg-danger-line border-danger text-white"
                 onClick={() => { void onDeleteSubnet(deleteConfirm.name); setDeleteConfirm({ open: false, name: '' }) }}
               >
                 Delete

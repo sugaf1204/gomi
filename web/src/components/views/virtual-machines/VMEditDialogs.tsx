@@ -54,7 +54,7 @@ export function VMEditDialogs({
     <>
       {formOpen && (
         <ModalOverlay onBackdropClick={() => { if (!creating) onCloseCreate() }}>
-          <div className="w-[min(760px,100%)] bg-white border border-line-strong shadow-[0_20px_45px_rgba(52,43,34,0.2)] p-[1.1rem] grid gap-[0.65rem] max-h-[90vh] overflow-auto">
+          <div className="w-[min(760px,100%)] bg-panel border border-line-strong shadow-[0_20px_45px_rgba(52,43,34,0.2)] p-[1.1rem] grid gap-[0.65rem] max-h-[90vh] overflow-auto">
             <div className="flex justify-between items-center">
               <h3 className="text-[1.2rem]">Create Virtual Machine</h3>
               <button aria-label="Close" className="border-0 bg-transparent shadow-none p-0 w-[1.8rem] h-[1.8rem] flex items-center justify-center text-[1.4rem] leading-none text-ink-soft hover:text-ink hover:shadow-none!" disabled={creating} onClick={onCloseCreate}>x</button>
@@ -94,7 +94,7 @@ export function VMEditDialogs({
 
       {reinstallOpen && selectedVM && (
         <ModalOverlay onBackdropClick={() => { if (!reinstalling) onCloseReinstall() }}>
-          <div className="w-[min(760px,100%)] bg-white border border-line-strong shadow-[0_20px_45px_rgba(52,43,34,0.2)] p-[1.1rem] grid gap-[0.65rem] max-h-[90vh] overflow-auto">
+          <div className="w-[min(760px,100%)] bg-panel border border-line-strong shadow-[0_20px_45px_rgba(52,43,34,0.2)] p-[1.1rem] grid gap-[0.65rem] max-h-[90vh] overflow-auto">
             <div className="flex justify-between items-center">
               <h3 className="text-[1.2rem]">Redeploy VM: {selectedVM.name}</h3>
               <button aria-label="Close" className="border-0 bg-transparent shadow-none p-0 w-[1.8rem] h-[1.8rem] flex items-center justify-center text-[1.4rem] leading-none text-ink-soft hover:text-ink hover:shadow-none!" disabled={reinstalling} onClick={onCloseReinstall}>x</button>

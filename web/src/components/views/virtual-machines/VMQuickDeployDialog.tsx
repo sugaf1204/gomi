@@ -42,7 +42,7 @@ export function VMQuickDeployDialog({
 
   return (
     <ModalOverlay onBackdropClick={() => { if (!quickDeploying) onClose() }}>
-      <div className="w-[min(680px,100%)] bg-white border border-line-strong shadow-[0_20px_45px_rgba(52,43,34,0.2)] p-[1.1rem] grid gap-[0.65rem] max-h-[90vh] overflow-auto">
+      <div className="w-[min(680px,100%)] bg-panel border border-line-strong shadow-[0_20px_45px_rgba(52,43,34,0.2)] p-[1.1rem] grid gap-[0.65rem] max-h-[90vh] overflow-auto">
         <div className="flex justify-between items-center">
           <div>
             <h3 className="text-[1.2rem]">Quick Deploy Preset</h3>
@@ -137,7 +137,7 @@ export function VMQuickDeployDialog({
               {cloudInits.length === 0 && <p className="m-0 text-[0.78rem] text-ink-soft">No Cloud-Init templates available.</p>}
               {cloudInits.map((ci) => (
                 <label key={ci.name} className="flex items-center gap-[0.45rem] text-[0.84rem] cursor-pointer">
-                  <input type="checkbox" className="w-[0.95rem] h-[0.95rem] m-0 accent-[#2b7a78]" checked={preset.cloudInitRefs.includes(ci.name)} onChange={() => onToggleCloudInitRef(ci.name)} />
+                  <input type="checkbox" className="w-[0.95rem] h-[0.95rem] m-0 accent-brand" checked={preset.cloudInitRefs.includes(ci.name)} onChange={() => onToggleCloudInitRef(ci.name)} />
                   {ci.name}
                 </label>
               ))}
@@ -150,7 +150,7 @@ export function VMQuickDeployDialog({
               {sshKeys.length === 0 && <p className="m-0 text-[0.78rem] text-ink-soft">No SSH keys available.</p>}
               {sshKeys.map((key) => (
                 <label key={key.name} className="flex items-center gap-[0.45rem] text-[0.84rem] cursor-pointer">
-                  <input type="checkbox" className="w-[0.95rem] h-[0.95rem] m-0 accent-[#2b7a78]" checked={preset.sshKeyRefs.includes(key.name)} onChange={() => onToggleSSHKeyRef(key.name)} />
+                  <input type="checkbox" className="w-[0.95rem] h-[0.95rem] m-0 accent-brand" checked={preset.sshKeyRefs.includes(key.name)} onChange={() => onToggleSSHKeyRef(key.name)} />
                   {key.name}
                 </label>
               ))}

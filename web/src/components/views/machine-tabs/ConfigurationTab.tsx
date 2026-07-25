@@ -79,7 +79,7 @@ export function ConfigurationTab({
         <div className="flex items-center gap-[0.55rem]">
           <h3 className="text-[1.05rem]">Power Control</h3>
           {machineSettingsDirty && (
-            <span className="inline-flex items-center font-ui rounded-full text-[0.68rem] font-semibold px-2 py-0.5 bg-[#f8e6cc] text-warn">Unsaved changes</span>
+            <span className="inline-flex items-center font-ui rounded-full text-[0.68rem] font-semibold px-2 py-0.5 bg-warn-bg text-warn">Unsaved changes</span>
           )}
         </div>
         <button
@@ -97,7 +97,7 @@ export function ConfigurationTab({
       <dl className="m-0 grid grid-cols-[160px_minmax(0,1fr)] gap-x-[0.65rem] gap-y-[0.34rem] max-sm:grid-cols-[130px_minmax(0,1fr)]">
         <dt className="text-ink-soft text-[0.84rem]">Method</dt>
         <dd className="m-0">
-          <span className="inline-flex items-center font-ui rounded-full text-[0.71rem] font-semibold px-2 py-0.5 bg-[#d9f1e5] text-ok">
+          <span className="inline-flex items-center font-ui rounded-full text-[0.71rem] font-semibold px-2 py-0.5 bg-ok-bg text-ok">
             {powerMethodLabel(machineSettingsPower.type)}
           </span>
         </dd>

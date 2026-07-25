@@ -53,8 +53,8 @@ export function SettingsView({ theme, onThemeChange, user }: SettingsViewProps) 
 
   const themeButton = (value: Theme) =>
     clsx(
-      'w-full text-left px-[0.8rem] py-[0.7rem] border border-line bg-white/75 transition-colors',
-      theme === value && 'border-brand text-brand-strong bg-[rgba(43,122,120,0.12)]'
+      'w-full text-left px-[0.8rem] py-[0.7rem] border border-line bg-panel/75 transition-colors',
+      theme === value && 'border-brand text-brand-strong bg-brand-wash'
     )
 
   async function handlePasswordSubmit(event: FormEvent<HTMLFormElement>) {
@@ -128,7 +128,7 @@ export function SettingsView({ theme, onThemeChange, user }: SettingsViewProps) 
 
   return (
     <section className="min-h-0 grid content-start gap-[1rem]">
-      <section className="ui-panel border border-line bg-white/72 p-[1rem] grid gap-[0.8rem]">
+      <section className="ui-panel border border-line bg-panel/72 p-[1rem] grid gap-[0.8rem]">
         <header>
           <p className="m-0 text-[0.75rem] uppercase tracking-[0.08em] text-ink-soft">Appearance</p>
           <h2 className="text-[1.15rem] mt-[0.25rem]">Theme</h2>
@@ -157,7 +157,7 @@ export function SettingsView({ theme, onThemeChange, user }: SettingsViewProps) 
         </div>
       </section>
 
-      <section className="ui-panel border border-line bg-white/72 p-[1rem] grid gap-[0.8rem]">
+      <section className="ui-panel border border-line bg-panel/72 p-[1rem] grid gap-[0.8rem]">
         <header>
           <p className="m-0 text-[0.75rem] uppercase tracking-[0.08em] text-ink-soft">Account</p>
           <h2 className="text-[1.15rem] mt-[0.25rem]">Current User</h2>
@@ -206,7 +206,7 @@ export function SettingsView({ theme, onThemeChange, user }: SettingsViewProps) 
               required
             />
           </label>
-          {passwordError && <p className="m-0 text-[0.84rem] text-[#9b2d2d]">{passwordError}</p>}
+          {passwordError && <p className="m-0 text-[0.84rem] text-danger">{passwordError}</p>}
           {passwordMessage && <p className="m-0 text-[0.84rem] text-brand-strong">{passwordMessage}</p>}
           <div>
             <button type="submit" disabled={savingPassword || !user} className="bg-brand border-brand-strong text-white">
@@ -216,7 +216,7 @@ export function SettingsView({ theme, onThemeChange, user }: SettingsViewProps) 
         </form>
       </section>
 
-      <section className="ui-panel border border-line bg-white/72 p-[1rem] grid gap-[0.8rem]">
+      <section className="ui-panel border border-line bg-panel/72 p-[1rem] grid gap-[0.8rem]">
         <header>
           <p className="m-0 text-[0.75rem] uppercase tracking-[0.08em] text-ink-soft">Automation</p>
           <h2 className="text-[1.15rem] mt-[0.25rem]">Service Accounts</h2>
@@ -252,7 +252,7 @@ export function SettingsView({ theme, onThemeChange, user }: SettingsViewProps) 
           </div>
         </form>
 
-        {serviceAccountError && <p className="m-0 text-[0.84rem] text-[#9b2d2d]">{serviceAccountError}</p>}
+        {serviceAccountError && <p className="m-0 text-[0.84rem] text-danger">{serviceAccountError}</p>}
         {serviceAccountMessage && <p className="m-0 text-[0.84rem] text-brand-strong">{serviceAccountMessage}</p>}
         {serviceAccountToken && (
           <pre className="m-0 max-w-[760px] overflow-auto border border-line bg-[#101827] text-[#d7deea] p-[0.75rem] text-[0.78rem]">{serviceAccountToken}</pre>
@@ -267,7 +267,7 @@ export function SettingsView({ theme, onThemeChange, user }: SettingsViewProps) 
             <p className="m-0 text-[0.84rem] text-ink-soft">Admin role required</p>
           )}
           {serviceAccounts.map((account) => (
-            <div key={account.name} className="grid gap-[0.5rem] border border-line bg-white/70 px-[0.75rem] py-[0.65rem] sm:grid-cols-[1fr_auto] sm:items-center">
+            <div key={account.name} className="grid gap-[0.5rem] border border-line bg-panel/70 px-[0.75rem] py-[0.65rem] sm:grid-cols-[1fr_auto] sm:items-center">
               <div className="min-w-0">
                 <strong className="block text-[0.92rem]">{account.name}</strong>
                 <span className="block text-[0.8rem] text-ink-soft">
