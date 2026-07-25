@@ -1,24 +1,27 @@
-import { formatDate } from '../../lib/formatters'
-import type { SystemInfo } from '../../types'
+import { useMemo } from 'react'
+import type { View } from '../../app-types'
+import { deriveDeployTimeline } from '../../lib/deploy-timeline'
+import { DeployCard } from '../deploy/DeployCard'
+import { FleetBar, type FleetSlice } from './overview/FleetBar'
+import { NeedsYou, collectAttention } from './overview/NeedsYou'
+import type { Machine, SystemInfo, VirtualMachine } from '../../types'
 
 export type OverviewViewProps = {
-  lastSyncedAt: string
   systemInfo: SystemInfo | null
-  machineCount: number
-  subnetCount: number
+  machines: Machine[]
+  virtualMachines: VirtualMachine[]
   machineStats: {
     ready: number
     provisioning: number
     attention: number
   }
-  hypervisorCount: number
-  vmCount: number
   vmStats: {
     running: number
     stopped: number
     error: number
     missing: number
   }
+  onJump: (view: View, target: string) => void
 }
 
 function formatUptime(seconds: number): string {
@@ -31,65 +34,103 @@ function formatUptime(seconds: number): string {
 }
 
 export function OverviewView({
-  lastSyncedAt,
   systemInfo,
-  machineCount,
-  subnetCount,
+  machines,
+  virtualMachines,
   machineStats,
-  hypervisorCount,
-  vmCount,
-  vmStats
+  vmStats,
+  onJump,
 }: OverviewViewProps) {
+  const attention = useMemo(() => collectAttention(machines, virtualMachines), [machines, virtualMachines])
+
+  // The machine currently deploying gets the in-flight card; the 5s poll
+  // re-derives its timeline so the tone advances without anything moving.
+  const deploying = machines.find((machine) => machine.phase.toLowerCase() === 'provisioning')
+  const timeline = useMemo(
+    () => (deploying ? deriveDeployTimeline(deploying.provision, Date.now()) : null),
+    [deploying]
+  )
+
+  const metalSlices: FleetSlice[] = [
+    { key: 'ready', count: machineStats.ready, label: 'READY', fill: 'bg-ok-bg', border: 'border-ok-line', text: 'text-ok' },
+    { key: 'provisioning', count: machineStats.provisioning, label: 'PROVISIONING', fill: 'bg-warn-bg', border: 'border-warn-line', text: 'text-warn' },
+    { key: 'attention', count: machineStats.attention, label: 'ATTENTION', fill: 'bg-error-bg', border: 'border-error-line', text: 'text-error' },
+  ]
+
+  const vmSlices: FleetSlice[] = [
+    { key: 'running', count: vmStats.running, label: 'RUNNING', fill: 'bg-ok-bg', border: 'border-ok-line', text: 'text-ok' },
+    { key: 'stopped', count: vmStats.stopped, label: 'STOPPED', fill: 'bg-neutral-bg', border: 'border-line', text: 'text-ink-soft' },
+    { key: 'error', count: vmStats.error + vmStats.missing, label: 'ATTENTION', fill: 'bg-error-bg', border: 'border-error-line', text: 'text-error' },
+  ]
+
   return (
-    <section className="min-h-0 grid content-start gap-[0.95rem]">
-      <div className="flex items-baseline gap-[1.2rem] text-[0.84rem] text-ink-soft">
-        <span>Last sync: <strong className="text-ink">{formatDate(lastSyncedAt)}</strong></span>
+    <section className="min-h-0 grid content-start gap-[22px]">
+      <div className="grid gap-[18px]">
+        <FleetBar
+          heading="BARE METAL"
+          total={machines.length}
+          summary={`${machineStats.ready} ready · ${machineStats.provisioning} provisioning · ${machineStats.attention} attention`}
+          slices={metalSlices}
+        />
+        <FleetBar
+          heading="VIRTUAL"
+          total={virtualMachines.length}
+          summary={`${vmStats.running} running · ${vmStats.stopped} stopped · ${vmStats.error + vmStats.missing} attention`}
+          slices={vmSlices}
+        />
       </div>
 
-      {systemInfo && (
-        <section className="grid grid-cols-2 lg:grid-cols-3 gap-x-[1.2rem] gap-y-[0.5rem] bg-transparent border-0 border-t border-line pt-[0.85rem]">
-          <p className="m-0 col-span-full text-ink-soft text-[0.78rem] uppercase tracking-[0.06em]">Server</p>
-          <p className="m-0 text-[0.82rem]"><span className="text-ink-soft">Hostname </span><strong>{systemInfo.hostname}</strong></p>
-          <p className="m-0 text-[0.82rem]"><span className="text-ink-soft">OS / Arch </span><strong>{systemInfo.os}/{systemInfo.arch}</strong></p>
-          <p className="m-0 text-[0.82rem]"><span className="text-ink-soft">Go </span><strong>{systemInfo.goVersion}</strong></p>
-          <p className="m-0 text-[0.82rem]"><span className="text-ink-soft">CPUs </span><strong>{systemInfo.cpuCount}</strong></p>
-          <p className="m-0 text-[0.82rem]"><span className="text-ink-soft">Memory </span><strong>{systemInfo.memoryUsedMB} MB</strong></p>
-          <p className="m-0 text-[0.82rem]"><span className="text-ink-soft">Uptime </span><strong>{formatUptime(systemInfo.uptime)}</strong></p>
-          <p className="m-0 text-[0.82rem]"><span className="text-ink-soft">Goroutines </span><strong>{systemInfo.goroutines}</strong></p>
-        </section>
-      )}
-
-      <section className="grid grid-cols-2 lg:grid-cols-4 gap-[0.85rem]">
-        <article className="bg-transparent border-0 border-t border-line shadow-none pt-[0.85rem]">
-          <p className="m-0 text-ink-soft text-[0.78rem] uppercase tracking-[0.06em]">Machines</p>
-          <p className="m-0 text-[1.6rem] font-semibold mt-[0.2rem]">{machineCount}</p>
-          <p className="m-0 text-ink-soft text-[0.78rem] mt-[0.3rem]">
-            {machineStats.ready} ready - {machineStats.provisioning} provisioning - {machineStats.attention} attention
-          </p>
-        </article>
-
-        <article className="bg-transparent border-0 border-t border-line shadow-none pt-[0.85rem]">
-          <p className="m-0 text-ink-soft text-[0.78rem] uppercase tracking-[0.06em]">Virtual Machines</p>
-          <p className="m-0 text-[1.6rem] font-semibold mt-[0.2rem]">{vmCount}</p>
-          {vmCount > 0 ? (
-            <p className="m-0 text-ink-soft text-[0.78rem] mt-[0.3rem]">
-              {vmStats.running} running - {vmStats.stopped} stopped - {vmStats.error} error - {vmStats.missing} missing
-            </p>
+      <div className="grid grid-cols-[minmax(0,1.35fr)_minmax(0,1fr)] gap-[22px] max-md:grid-cols-1">
+        <section className="grid content-start gap-2">
+          <p className="m-0 font-mono font-semibold text-[10px] tracking-[0.16em] text-ink-soft">IN FLIGHT</p>
+          {timeline && deploying ? (
+            <DeployCard
+              timeline={timeline}
+              attemptId={deploying.provision?.attemptId}
+              lastSignal={`${deploying.name} · ${timeline.events.at(-1)?.name ?? 'no signal yet'}`}
+            />
           ) : (
-            <p className="m-0 text-ink-soft text-[0.78rem] mt-[0.3rem]">No VMs</p>
+            <p className="m-0 font-mono text-[10.5px] text-ink-soft">no deploy in flight</p>
           )}
-        </article>
+        </section>
 
-        <article className="bg-transparent border-0 border-t border-line shadow-none pt-[0.85rem]">
-          <p className="m-0 text-ink-soft text-[0.78rem] uppercase tracking-[0.06em]">Hypervisors</p>
-          <p className="m-0 text-[1.6rem] font-semibold mt-[0.2rem]">{hypervisorCount}</p>
-        </article>
+        <NeedsYou items={attention} services={serviceChips(systemInfo)} onJump={onJump} />
+      </div>
 
-        <article className="bg-transparent border-0 border-t border-line shadow-none pt-[0.85rem]">
-          <p className="m-0 text-ink-soft text-[0.78rem] uppercase tracking-[0.06em]">Subnets</p>
-          <p className="m-0 text-[1.6rem] font-semibold mt-[0.2rem]">{subnetCount}</p>
-        </article>
-      </section>
+      {systemInfo && <ServerFooter systemInfo={systemInfo} />}
     </section>
+  )
+}
+
+function serviceChips(systemInfo: SystemInfo | null): { label: string; tone: 'ok' | 'warning' }[] {
+  if (!systemInfo) return []
+  return [
+    { label: 'dhcp ready', tone: 'ok' },
+    { label: 'tftp ready', tone: 'ok' },
+    { label: 'dns ready', tone: 'ok' },
+  ]
+}
+
+/** Server facts move out of the top of the page to the bottom. */
+function ServerFooter({ systemInfo }: { systemInfo: SystemInfo }) {
+  const facts: { caption: string; value: string }[] = [
+    { caption: 'hostname', value: systemInfo.hostname },
+    { caption: 'os / arch', value: `${systemInfo.os}/${systemInfo.arch}` },
+    { caption: 'runtime', value: systemInfo.goVersion },
+    { caption: 'cpus', value: String(systemInfo.cpuCount) },
+    { caption: 'memory', value: `${systemInfo.memoryUsedMB} MB` },
+    { caption: 'uptime', value: formatUptime(systemInfo.uptime) },
+    { caption: 'goroutines', value: String(systemInfo.goroutines) },
+  ]
+
+  return (
+    <footer className="flex flex-wrap gap-x-6 gap-y-3 border-t border-line bg-panel-2 pt-3">
+      {facts.map((fact) => (
+        <div key={fact.caption}>
+          <p className="m-0 font-mono text-[12px] text-ink">{fact.value}</p>
+          <p className="m-0 font-mono text-[10.5px] text-ink-soft">{fact.caption}</p>
+        </div>
+      ))}
+    </footer>
   )
 }

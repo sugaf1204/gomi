@@ -77,9 +77,17 @@ export function VirtualMachinesView({
   const [migrateConfirm, setMigrateConfirm] = useState<VMMigrateConfirmState>(initialMigrateConfirm)
   const [advancedOpen, setAdvancedOpen] = useState(false)
   const [reinstallAdvancedOpen, setReinstallAdvancedOpen] = useState(false)
+  const [vmFilter, setVMFilter] = useState('')
 
   const osImageByName = useMemo(() => new Map(osImages.map((img) => [img.name, img])), [osImages])
   const vmOSImages = useMemo(() => osImages.filter((img) => supportsDeploymentTarget(img, 'vm')), [osImages])
+  const filteredVMs = useMemo(() => {
+    const needle = vmFilter.trim().toLowerCase()
+    if (!needle) return virtualMachines
+    return virtualMachines.filter((vm) =>
+      [vm.name, vm.hypervisorRef, vm.hypervisorName].some((field) => (field ?? '').toLowerCase().includes(needle))
+    )
+  }, [virtualMachines, vmFilter])
   const checkedNames = useMemo(
     () => virtualMachines.filter((vm) => checkedVMs.has(vm.name)).map((vm) => vm.name),
     [checkedVMs, virtualMachines]
@@ -166,6 +174,12 @@ export function VirtualMachinesView({
     setQuickDeploySettingsOpen(true)
   }
 
+  function openCreateDialog() {
+    setForm({ ...initialForm })
+    setAdvancedOpen(false)
+    setFormOpen(true)
+  }
+
   useEffect(() => {
     if (!routeSelectedVM) return
     if (routeSelectedVM !== selected) {
@@ -244,11 +258,13 @@ export function VirtualMachinesView({
     })
   }
 
+  // Select-all follows the filter: the header checkbox reflects the rows the
+  // operator can actually see, so it must not sweep in filtered-out VMs.
   function toggleAllChecked() {
-    if (checkedVMs.size === virtualMachines.length) {
+    if (checkedVMs.size === filteredVMs.length) {
       setCheckedVMs(new Set())
     } else {
-      setCheckedVMs(new Set(virtualMachines.map((vm) => vm.name)))
+      setCheckedVMs(new Set(filteredVMs.map((vm) => vm.name)))
     }
   }
 
@@ -353,13 +369,15 @@ export function VirtualMachinesView({
 
       <VMWorkspace
         virtualMachines={virtualMachines}
+        filteredVMs={filteredVMs}
+        vmFilter={vmFilter}
+        onVMFilterChange={setVMFilter}
+        hypervisors={hypervisors}
         dataLoading={dataLoading}
         quickDeploying={quickDeploying}
         onQuickDeploy={() => void handleQuickDeploy()}
         onOpenQuickDeploySettings={openQuickDeploySettings}
-        setForm={setForm}
-        setAdvancedOpen={setAdvancedOpen}
-        setFormOpen={setFormOpen}
+        onOpenCreateDialog={openCreateDialog}
         checkedVMs={checkedVMs}
         checkedNames={checkedNames}
         selected={selected}

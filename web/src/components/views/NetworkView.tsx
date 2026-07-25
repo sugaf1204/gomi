@@ -1,10 +1,19 @@
-import clsx from 'clsx'
-import { useState, useEffect } from 'react'
+import { useMemo, useState } from 'react'
 import type { FormEvent } from 'react'
 import type { SubnetFormState } from '../../app-types'
-import { formatDate } from '../../lib/formatters'
-import type { Subnet } from '../../types'
-import { ModalOverlay } from '../ui/ModalOverlay'
+import { computeAddressSpace } from '../../lib/address-space'
+import type { DHCPLease, Machine, Subnet } from '../../types'
+import { AddressSpaceRuler } from './network/AddressSpaceRuler'
+import { DHCPLeaseTable } from './network/DHCPLeaseTable'
+import { SubnetFacts } from './network/SubnetFacts'
+import { SubnetTable } from './network/SubnetTable'
+import {
+  CreateSubnetDialog,
+  DeleteSubnetDialog,
+  EditSubnetDialog,
+  LEASE_TIME_PRESETS,
+  type EditForm,
+} from './network/SubnetDialogs'
 
 export type NetworkViewProps = {
   subnetFormOpen: boolean
@@ -18,35 +27,32 @@ export type NetworkViewProps = {
   onDeleteSubnet: (name: string) => void | Promise<void>
   onUpdateSubnet: (name: string, spec: Subnet['spec']) => void | Promise<void>
   selectedSubnetData: Subnet | null
+  dhcpLeases: DHCPLease[]
+  machines: Machine[]
 }
 
-const LEASE_TIME_PRESETS = [
-  { label: '30 min', value: 1800 },
-  { label: '1 hour', value: 3600 },
-  { label: '12 hours', value: 43200 },
-  { label: '24 hours', value: 86400 },
-  { label: '7 days', value: 604800 },
-  { label: 'Custom', value: -1 },
-] as const
-
-function formatLeaseTime(seconds: number | undefined): string {
-  if (!seconds || seconds === 0) return '1 hour (default)'
-  if (seconds < 60) return `${seconds}s`
-  if (seconds < 3600) return `${seconds / 60} min`
-  if (seconds < 86400) return `${seconds / 3600} hours`
-  return `${seconds / 86400} days`
+const EMPTY_EDIT_FORM: EditForm = {
+  cidr: '',
+  defaultGateway: '',
+  dnsServers: '',
+  dnsSearchDomains: '',
+  vlanId: '',
+  pxeInterface: '',
+  leaseTime: '',
+  domainName: '',
+  ntpServers: '',
 }
 
-type EditForm = {
-  cidr: string
-  defaultGateway: string
-  dnsServers: string
-  dnsSearchDomains: string
-  vlanId: string
-  pxeInterface: string
-  leaseTime: string
-  domainName: string
-  ntpServers: string
+function splitList(value: string): string[] | undefined {
+  const items = value.split(',').map((item) => item.trim()).filter(Boolean)
+  return items.length > 0 ? items : undefined
+}
+
+/** IPs of machines statically assigned to this subnet — the ruler's static band. */
+function staticIPsForSubnet(machines: Machine[], subnetName: string): string[] {
+  return machines
+    .filter((machine) => machine.subnetRef === subnetName && machine.ipAssignment === 'static' && machine.ip)
+    .map((machine) => machine.ip as string)
 }
 
 export function NetworkView({
@@ -60,80 +66,71 @@ export function NetworkView({
   onSelectSubnet,
   onDeleteSubnet,
   onUpdateSubnet,
-  selectedSubnetData
+  selectedSubnetData,
+  dhcpLeases,
+  machines,
 }: NetworkViewProps) {
   const [editOpen, setEditOpen] = useState(false)
-  const [editForm, setEditForm] = useState<EditForm>({
-    cidr: '',
-    defaultGateway: '',
-    dnsServers: '',
-    dnsSearchDomains: '',
-    vlanId: '',
-    pxeInterface: '',
-    leaseTime: '',
-    domainName: '',
-    ntpServers: ''
-  })
-  const [leaseTimePreset, setLeaseTimePreset] = useState<number>(0)
+  const [editForm, setEditForm] = useState<EditForm>(EMPTY_EDIT_FORM)
+  const [leaseTimePreset, setLeaseTimePreset] = useState(0)
   const [pxeRangeStart, setPxeRangeStart] = useState('')
   const [pxeRangeEnd, setPxeRangeEnd] = useState('')
   const [deleteConfirm, setDeleteConfirm] = useState<{ open: boolean; name: string }>({ open: false, name: '' })
 
-  useEffect(() => {
-    if (!subnetFormOpen) return
-    function onKeyDown(e: KeyboardEvent) {
-      if (e.key === 'Escape') { onToggleSubnetForm() }
-    }
-    window.addEventListener('keydown', onKeyDown)
-    return () => window.removeEventListener('keydown', onKeyDown)
-  }, [subnetFormOpen, onToggleSubnetForm])
-
-  useEffect(() => {
-    if (!editOpen) return
-    function onKeyDown(e: KeyboardEvent) {
-      if (e.key === 'Escape') { setEditOpen(false) }
-    }
-    window.addEventListener('keydown', onKeyDown)
-    return () => window.removeEventListener('keydown', onKeyDown)
-  }, [editOpen])
+  const addressSpace = useMemo(() => {
+    if (!selectedSubnetData) return null
+    return computeAddressSpace(selectedSubnetData, staticIPsForSubnet(machines, selectedSubnetData.name))
+  }, [selectedSubnetData, machines])
 
   function openEdit() {
     if (!selectedSubnetData) return
-    const lt = selectedSubnetData.spec.leaseTime ?? 0
-    const matchedPreset = LEASE_TIME_PRESETS.find((p) => p.value === lt)
+    const { spec } = selectedSubnetData
+    const leaseTime = spec.leaseTime ?? 0
+    const matchedPreset = LEASE_TIME_PRESETS.find((preset) => preset.value === leaseTime)
+
     setEditForm({
-      cidr: selectedSubnetData.spec.cidr,
-      defaultGateway: selectedSubnetData.spec.defaultGateway ?? '',
-      dnsServers: selectedSubnetData.spec.dnsServers?.join(', ') ?? '',
-      dnsSearchDomains: selectedSubnetData.spec.dnsSearchDomains?.join(', ') ?? '',
-      vlanId: selectedSubnetData.spec.vlanId != null ? String(selectedSubnetData.spec.vlanId) : '',
-      pxeInterface: selectedSubnetData.spec.pxeInterface ?? '',
-      leaseTime: lt > 0 ? String(lt) : '',
-      domainName: selectedSubnetData.spec.domainName ?? '',
-      ntpServers: selectedSubnetData.spec.ntpServers?.join(', ') ?? ''
+      cidr: spec.cidr,
+      defaultGateway: spec.defaultGateway ?? '',
+      dnsServers: spec.dnsServers?.join(', ') ?? '',
+      dnsSearchDomains: spec.dnsSearchDomains?.join(', ') ?? '',
+      vlanId: spec.vlanId != null ? String(spec.vlanId) : '',
+      pxeInterface: spec.pxeInterface ?? '',
+      leaseTime: leaseTime > 0 ? String(leaseTime) : '',
+      domainName: spec.domainName ?? '',
+      ntpServers: spec.ntpServers?.join(', ') ?? '',
     })
-    setLeaseTimePreset(matchedPreset ? matchedPreset.value : lt > 0 ? -1 : 0)
-    setPxeRangeStart(selectedSubnetData.spec.pxeAddressRange?.start ?? '')
-    setPxeRangeEnd(selectedSubnetData.spec.pxeAddressRange?.end ?? '')
+    setLeaseTimePreset(matchedPreset ? matchedPreset.value : leaseTime > 0 ? -1 : 0)
+    setPxeRangeStart(spec.pxeAddressRange?.start ?? '')
+    setPxeRangeEnd(spec.pxeAddressRange?.end ?? '')
     setEditOpen(true)
   }
 
-  async function handleSaveEdit(e: FormEvent) {
-    e.preventDefault()
+  function changeLeaseTimePreset(value: number) {
+    setLeaseTimePreset(value)
+    // A concrete preset writes its seconds through; "Default" clears the field
+    // and "Custom" (-1) leaves whatever the user already typed.
+    if (value > 0) setEditForm((form) => ({ ...form, leaseTime: String(value) }))
+    else if (value === 0) setEditForm((form) => ({ ...form, leaseTime: '' }))
+  }
+
+  async function handleSaveEdit(event: FormEvent) {
+    event.preventDefault()
     if (!selectedSubnetData) return
+
     const spec: Subnet['spec'] = {
       cidr: editForm.cidr,
       defaultGateway: editForm.defaultGateway || undefined,
-      dnsServers: editForm.dnsServers ? editForm.dnsServers.split(',').map((s) => s.trim()).filter(Boolean) : undefined,
-      dnsSearchDomains: editForm.dnsSearchDomains ? editForm.dnsSearchDomains.split(',').map((s) => s.trim()).filter(Boolean) : undefined,
+      dnsServers: splitList(editForm.dnsServers),
+      dnsSearchDomains: splitList(editForm.dnsSearchDomains),
       vlanId: editForm.vlanId ? Number(editForm.vlanId) : undefined,
       pxeInterface: editForm.pxeInterface || undefined,
       pxeAddressRange: pxeRangeStart && pxeRangeEnd ? { start: pxeRangeStart, end: pxeRangeEnd } : undefined,
       reservedRanges: selectedSubnetData.spec.reservedRanges,
       leaseTime: editForm.leaseTime ? Number(editForm.leaseTime) : undefined,
       domainName: editForm.domainName || undefined,
-      ntpServers: editForm.ntpServers ? editForm.ntpServers.split(',').map((s) => s.trim()).filter(Boolean) : undefined
+      ntpServers: splitList(editForm.ntpServers),
     }
+
     await onUpdateSubnet(selectedSubnetData.name, spec)
     setEditOpen(false)
   }
@@ -141,280 +138,65 @@ export function NetworkView({
   return (
     <>
       {subnetFormOpen && (
-        <ModalOverlay onBackdropClick={onToggleSubnetForm}>
-          <div className="w-[min(480px,100%)] bg-panel border border-line-strong shadow-[0_20px_45px_rgba(52,43,34,0.2)] p-[1.1rem] grid gap-[0.65rem]">
-            <div className="flex justify-between items-center">
-              <h3 className="text-[1.2rem]">Create Subnet</h3>
-              <button
-                aria-label="Close"
-                className="border-0 bg-transparent shadow-none p-0 w-[1.8rem] h-[1.8rem] flex items-center justify-center text-[1.4rem] leading-none text-ink-soft hover:text-ink hover:shadow-none!"
-                onClick={onToggleSubnetForm}
-              >×</button>
-            </div>
-            <form className="grid gap-[0.55rem]" onSubmit={(e) => void onCreateSubnet(e)}>
-              <div className="grid grid-cols-2 gap-[0.45rem]">
-                <label className="text-[0.84rem]">
-                  Name
-                  <input required value={subnetForm.name} onChange={(e) => onSubnetFormChange('name', e.target.value)} placeholder="e.g. lab-vlan100" />
-                </label>
-                <label className="text-[0.84rem]">
-                  CIDR
-                  <input required value={subnetForm.cidr} onChange={(e) => onSubnetFormChange('cidr', e.target.value)} placeholder="e.g. 10.0.0.0/24" />
-                </label>
-              </div>
-              <label className="text-[0.84rem]">
-                Default Gateway
-                <input value={subnetForm.gateway} onChange={(e) => onSubnetFormChange('gateway', e.target.value)} placeholder="e.g. 10.0.0.1" />
-              </label>
-              <label className="text-[0.84rem]">
-                DNS Servers
-                <input value={subnetForm.dnsServers} onChange={(e) => onSubnetFormChange('dnsServers', e.target.value)} placeholder="e.g. 8.8.8.8, 8.8.4.4" />
-              </label>
-              <label className="text-[0.84rem]">
-                VLAN ID
-                <input type="number" value={subnetForm.vlanId} onChange={(e) => onSubnetFormChange('vlanId', e.target.value)} placeholder="optional" />
-              </label>
-              <div className="flex justify-end gap-[0.45rem] pt-[0.2rem]">
-                <button type="button" onClick={onToggleSubnetForm}>Cancel</button>
-                <button type="submit" className="bg-brand border-brand-strong text-white">Create</button>
-              </div>
-            </form>
-          </div>
-        </ModalOverlay>
+        <CreateSubnetDialog
+          subnetForm={subnetForm}
+          onSubnetFormChange={onSubnetFormChange}
+          onCreateSubnet={onCreateSubnet}
+          onClose={onToggleSubnetForm}
+        />
       )}
 
       {editOpen && selectedSubnetData && (
-        <ModalOverlay onBackdropClick={() => { setEditOpen(false) }}>
-          <div className="w-[min(480px,100%)] bg-panel border border-line-strong shadow-[0_20px_45px_rgba(52,43,34,0.2)] p-[1.1rem] grid gap-[0.65rem]">
-            <div className="flex justify-between items-center">
-              <h3 className="text-[1.2rem]">Edit Subnet: {selectedSubnetData.name}</h3>
-              <button
-                aria-label="Close"
-                className="border-0 bg-transparent shadow-none p-0 w-[1.8rem] h-[1.8rem] flex items-center justify-center text-[1.4rem] leading-none text-ink-soft hover:text-ink hover:shadow-none!"
-                onClick={() => setEditOpen(false)}
-              >×</button>
-            </div>
-            <form className="grid gap-[0.55rem] max-h-[70vh] overflow-y-auto" onSubmit={(e) => void handleSaveEdit(e)}>
-              <label className="text-[0.84rem]">
-                CIDR
-                <input required value={editForm.cidr} onChange={(e) => setEditForm((f) => ({ ...f, cidr: e.target.value }))} placeholder="e.g. 10.0.0.0/24" />
-              </label>
-              <label className="text-[0.84rem]">
-                Default Gateway
-                <input value={editForm.defaultGateway} onChange={(e) => setEditForm((f) => ({ ...f, defaultGateway: e.target.value }))} placeholder="e.g. 10.0.0.1" />
-              </label>
-              <label className="text-[0.84rem]">
-                PXE Interface
-                <input value={editForm.pxeInterface} onChange={(e) => setEditForm((f) => ({ ...f, pxeInterface: e.target.value }))} placeholder="e.g. eth0" />
-              </label>
-              <div className="grid grid-cols-2 gap-[0.45rem]">
-                <label className="text-[0.84rem]">
-                  PXE Range Start
-                  <input value={pxeRangeStart} onChange={(e) => setPxeRangeStart(e.target.value)} placeholder="e.g. 192.168.2.100" />
-                </label>
-                <label className="text-[0.84rem]">
-                  PXE Range End
-                  <input value={pxeRangeEnd} onChange={(e) => setPxeRangeEnd(e.target.value)} placeholder="e.g. 192.168.2.200" />
-                </label>
-              </div>
-              <label className="text-[0.84rem]">
-                VLAN ID
-                <input type="number" value={editForm.vlanId} onChange={(e) => setEditForm((f) => ({ ...f, vlanId: e.target.value }))} placeholder="optional" />
-              </label>
-
-              <div className="border-t border-line pt-[0.5rem] mt-[0.2rem]">
-                <span className="text-[0.78rem] font-medium text-ink-soft uppercase tracking-wide">DHCP Options</span>
-              </div>
-              <label className="text-[0.84rem]">
-                DNS Servers
-                <input value={editForm.dnsServers} onChange={(e) => setEditForm((f) => ({ ...f, dnsServers: e.target.value }))} placeholder="e.g. 8.8.8.8, 8.8.4.4" />
-              </label>
-              <label className="text-[0.84rem]">
-                DNS Search Domains
-                <input value={editForm.dnsSearchDomains} onChange={(e) => setEditForm((f) => ({ ...f, dnsSearchDomains: e.target.value }))} placeholder="e.g. example.com, local" />
-              </label>
-              <label className="text-[0.84rem]">
-                Domain Name
-                <input value={editForm.domainName} onChange={(e) => setEditForm((f) => ({ ...f, domainName: e.target.value }))} placeholder="e.g. lab.local" />
-              </label>
-              <label className="text-[0.84rem]">
-                NTP Servers
-                <input value={editForm.ntpServers} onChange={(e) => setEditForm((f) => ({ ...f, ntpServers: e.target.value }))} placeholder="e.g. 192.168.2.1, 10.0.0.1" />
-              </label>
-              <label className="text-[0.84rem]">
-                Lease Time
-                <div className="flex gap-[0.35rem] items-center">
-                  <select
-                    className="flex-1"
-                    value={leaseTimePreset}
-                    onChange={(e) => {
-                      const v = Number(e.target.value)
-                      setLeaseTimePreset(v)
-                      if (v > 0) {
-                        setEditForm((f) => ({ ...f, leaseTime: String(v) }))
-                      } else if (v === 0) {
-                        setEditForm((f) => ({ ...f, leaseTime: '' }))
-                      }
-                    }}
-                  >
-                    <option value={0}>Default (1 hour)</option>
-                    {LEASE_TIME_PRESETS.map((p) => (
-                      <option key={p.value} value={p.value}>{p.label}</option>
-                    ))}
-                  </select>
-                  {leaseTimePreset === -1 && (
-                    <input
-                      type="number"
-                      className="w-[6rem]"
-                      value={editForm.leaseTime}
-                      onChange={(e) => setEditForm((f) => ({ ...f, leaseTime: e.target.value }))}
-                      placeholder="seconds"
-                      min={60}
-                      max={604800}
-                    />
-                  )}
-                </div>
-              </label>
-              <div className="flex justify-end gap-[0.45rem] pt-[0.2rem]">
-                <button type="button" onClick={() => setEditOpen(false)}>Cancel</button>
-                <button type="submit" className="bg-brand border-brand-strong text-white">Save</button>
-              </div>
-            </form>
-          </div>
-        </ModalOverlay>
+        <EditSubnetDialog
+          subnet={selectedSubnetData}
+          editForm={editForm}
+          onEditFormChange={(field, value) => setEditForm((form) => ({ ...form, [field]: value }))}
+          leaseTimePreset={leaseTimePreset}
+          onLeaseTimePresetChange={changeLeaseTimePreset}
+          pxeRangeStart={pxeRangeStart}
+          onPxeRangeStartChange={setPxeRangeStart}
+          pxeRangeEnd={pxeRangeEnd}
+          onPxeRangeEndChange={setPxeRangeEnd}
+          onSave={handleSaveEdit}
+          onClose={() => setEditOpen(false)}
+        />
       )}
-
-      <section className="min-h-0 grid grid-cols-[minmax(0,1fr)_320px] gap-[0.9rem] items-start lg:grid-cols-[minmax(0,1fr)_320px] max-lg:grid-cols-1">
-        <section className="bg-transparent border-0 border-t border-line shadow-none pt-[0.85rem] grid gap-[0.65rem] self-start">
-          <div className="flex justify-between items-center gap-4 max-sm:flex-col max-sm:items-start">
-            <h2 className="text-[1.4rem]">Subnets</h2>
-            <button className="bg-brand border-brand-strong text-white py-[0.35rem] px-[0.55rem] text-[0.82rem]" onClick={onToggleSubnetForm}>
-              Create Subnet
-            </button>
-          </div>
-
-          <div className="overflow-auto max-h-[58vh]">
-            <table>
-              <thead>
-                <tr>
-                  <th>Name</th>
-                  <th>CIDR</th>
-                  <th>Gateway</th>
-                  <th>VLAN</th>
-                  <th>PXE Interface</th>
-                  <th>DNS</th>
-                  <th />
-                </tr>
-              </thead>
-              <tbody>
-                {subnets.map((subnet) => (
-                  <tr
-                    key={subnet.name}
-                    className={clsx(selectedSubnet === subnet.name && 'bg-brand-wash')}
-                    onClick={() => onSelectSubnet(subnet.name)}
-                  >
-                    <td>{subnet.name}</td>
-                    <td><code>{subnet.spec.cidr}</code></td>
-                    <td>{subnet.spec.defaultGateway || '-'}</td>
-                    <td>{subnet.spec.vlanId ?? '-'}</td>
-                    <td>{subnet.spec.pxeInterface || '-'}</td>
-                    <td>{subnet.spec.dnsServers?.join(', ') || '-'}</td>
-                    <td>
-                      <button
-                        className="bg-danger-line border-danger text-white py-[0.28rem] px-[0.55rem] text-[0.78rem]"
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          setDeleteConfirm({ open: true, name: subnet.name })
-                        }}
-                      >
-                        Delete
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-            {subnets.length === 0 && <p className="m-0 text-ink-soft">No subnets found</p>}
-          </div>
-        </section>
-
-        <section className="bg-transparent border-0 border-t border-line shadow-none pt-[0.85rem]">
-          <div className="flex justify-between items-center mb-[0.58rem]">
-            <h3 className="text-[1.05rem]">Subnet Details</h3>
-            {selectedSubnetData && (
-              <button
-                className="bg-brand border-brand-strong text-white py-[0.28rem] px-[0.55rem] text-[0.78rem]"
-                onClick={openEdit}
-              >
-                Edit Subnet
-              </button>
-            )}
-          </div>
-          {!selectedSubnetData && <p className="m-0 text-ink-soft">Select a subnet to view details</p>}
-          {selectedSubnetData && (
-            <div className="grid gap-[0.65rem]">
-              <dl className="m-0 grid grid-cols-[130px_minmax(0,1fr)] gap-x-[0.65rem] gap-y-[0.34rem]">
-                <dt className="text-ink-soft text-[0.84rem]">Name</dt><dd className="m-0">{selectedSubnetData.name}</dd>
-                <dt className="text-ink-soft text-[0.84rem]">CIDR</dt><dd className="m-0">{selectedSubnetData.spec.cidr}</dd>
-                <dt className="text-ink-soft text-[0.84rem]">Default Gateway</dt><dd className="m-0">{selectedSubnetData.spec.defaultGateway || '-'}</dd>
-                <dt className="text-ink-soft text-[0.84rem]">PXE Interface</dt><dd className="m-0">{selectedSubnetData.spec.pxeInterface || '-'}</dd>
-                <dt className="text-ink-soft text-[0.84rem]">PXE Range</dt>
-                <dd className="m-0">
-                  {selectedSubnetData.spec.pxeAddressRange
-                    ? `${selectedSubnetData.spec.pxeAddressRange.start} - ${selectedSubnetData.spec.pxeAddressRange.end}`
-                    : '-'}
-                </dd>
-                <dt className="text-ink-soft text-[0.84rem]">VLAN ID</dt><dd className="m-0">{selectedSubnetData.spec.vlanId ?? '-'}</dd>
-                <dt className="text-ink-soft text-[0.84rem]">Reserved Ranges</dt>
-                <dd className="m-0">
-                  {selectedSubnetData.spec.reservedRanges && selectedSubnetData.spec.reservedRanges.length > 0
-                    ? selectedSubnetData.spec.reservedRanges.map((r) => `${r.start}-${r.end}`).join(', ')
-                    : '-'}
-                </dd>
-                <dt className="text-ink-soft text-[0.84rem]">Created</dt><dd className="m-0">{formatDate(selectedSubnetData.createdAt)}</dd>
-                <dt className="text-ink-soft text-[0.84rem]">Updated</dt><dd className="m-0">{formatDate(selectedSubnetData.updatedAt)}</dd>
-              </dl>
-
-              <div className="border-t border-line pt-[0.5rem]">
-                <h4 className="text-[0.88rem] m-0 mb-[0.4rem]">DHCP Options</h4>
-                <dl className="m-0 grid grid-cols-[130px_minmax(0,1fr)] gap-x-[0.65rem] gap-y-[0.34rem]">
-                  <dt className="text-ink-soft text-[0.84rem]">Lease Time</dt>
-                  <dd className="m-0">{formatLeaseTime(selectedSubnetData.spec.leaseTime)}</dd>
-                  <dt className="text-ink-soft text-[0.84rem]">DNS Servers</dt>
-                  <dd className="m-0">{selectedSubnetData.spec.dnsServers?.join(', ') || '-'}</dd>
-                  <dt className="text-ink-soft text-[0.84rem]">Search Domains</dt>
-                  <dd className="m-0">{selectedSubnetData.spec.dnsSearchDomains?.join(', ') || '-'}</dd>
-                  <dt className="text-ink-soft text-[0.84rem]">Domain Name</dt>
-                  <dd className="m-0">{selectedSubnetData.spec.domainName || '-'}</dd>
-                  <dt className="text-ink-soft text-[0.84rem]">NTP Servers</dt>
-                  <dd className="m-0">{selectedSubnetData.spec.ntpServers?.join(', ') || '-'}</dd>
-                </dl>
-              </div>
-            </div>
-          )}
-        </section>
-      </section>
 
       {deleteConfirm.open && (
-        <ModalOverlay onBackdropClick={() => setDeleteConfirm({ open: false, name: '' })}>
-          <div className="w-[min(400px,100%)] bg-panel border border-line-strong shadow-[0_20px_45px_rgba(52,43,34,0.2)] p-[0.95rem] grid gap-[0.6rem]">
-            <h3 className="text-[1.2rem] text-danger">Delete Subnet</h3>
-            <p className="m-0 text-ink-soft text-[0.84rem]">Are you sure you want to delete this subnet?</p>
-            <div className="border border-line bg-panel-2 p-[0.55rem]">
-              <code>{deleteConfirm.name}</code>
-            </div>
-            <div className="flex justify-end gap-[0.45rem]">
-              <button onClick={() => setDeleteConfirm({ open: false, name: '' })}>Cancel</button>
-              <button
-                className="bg-danger-line border-danger text-white"
-                onClick={() => { void onDeleteSubnet(deleteConfirm.name); setDeleteConfirm({ open: false, name: '' }) }}
-              >
-                Delete
-              </button>
-            </div>
-          </div>
-        </ModalOverlay>
+        <DeleteSubnetDialog
+          name={deleteConfirm.name}
+          onConfirm={() => {
+            void onDeleteSubnet(deleteConfirm.name)
+            setDeleteConfirm({ open: false, name: '' })
+          }}
+          onClose={() => setDeleteConfirm({ open: false, name: '' })}
+        />
       )}
+
+      <div className="grid gap-[18px]">
+        <SubnetTable
+          subnets={subnets}
+          selectedSubnet={selectedSubnet}
+          onSelectSubnet={onSelectSubnet}
+          onCreateSubnet={onToggleSubnetForm}
+        />
+
+        {addressSpace && <AddressSpaceRuler space={addressSpace} />}
+
+        <div className="grid grid-cols-[300px_minmax(0,1fr)] gap-[18px] items-start max-md:grid-cols-1">
+          {selectedSubnetData ? (
+            <SubnetFacts
+              subnet={selectedSubnetData}
+              onEdit={openEdit}
+              onDelete={() => setDeleteConfirm({ open: true, name: selectedSubnetData.name })}
+            />
+          ) : (
+            <p className="m-0 font-mono text-[11.5px] text-ink-soft">Select a subnet to view details</p>
+          )}
+
+          <DHCPLeaseTable dhcpLeases={dhcpLeases} />
+        </div>
+      </div>
     </>
   )
 }

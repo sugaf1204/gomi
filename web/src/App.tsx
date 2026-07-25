@@ -329,6 +329,7 @@ export default function App() {
     setAppearance,
     groupBy,
     setGroupBy,
+    onJump: (view, target) => jumpTo({ id: '', label: target, kind: 'nav', view, target }),
     machineStats,
     machineFilter,
     setMachineFilter,

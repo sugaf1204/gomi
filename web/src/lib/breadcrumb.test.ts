@@ -33,7 +33,7 @@ describe('buildBreadcrumb', () => {
   it('covers every view in the hierarchy', () => {
     const views = [
       'overview', 'machines', 'virtual-machines', 'hypervisors', 'os-images',
-      'cloud-init', 'network', 'dhcp-leases', 'dns-records', 'activity', 'users', 'settings',
+      'cloud-init', 'network', 'dns-records', 'activity', 'users', 'settings',
     ] as const
     for (const view of views) {
       const crumbs = buildBreadcrumb(view)

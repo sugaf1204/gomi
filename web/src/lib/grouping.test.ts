@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { groupCountLabel, groupMachines } from './grouping'
-import type { Hypervisor, Machine, Subnet } from '../types'
+import { groupCountLabel, groupMachines, groupVirtualMachines, vmCountLabel } from './grouping'
+import type { Hypervisor, Machine, Subnet, VirtualMachine } from '../types'
 
 function makeMachine(overrides: Partial<Machine> & { name: string }): Machine {
   return {
@@ -159,5 +159,121 @@ describe('groupCountLabel', () => {
   it('uses plural for zero and for more than one', () => {
     expect(groupCountLabel(0)).toBe('0 machines')
     expect(groupCountLabel(4)).toBe('4 machines')
+  })
+})
+
+function makeVM(overrides: Partial<VirtualMachine> & { name: string }): VirtualMachine {
+  return {
+    hypervisorRef: '',
+    resources: { cpuCores: 2, memoryMB: 4096, diskGB: 40 },
+    powerControlMethod: 'libvirt',
+    phase: 'Running',
+    ...overrides,
+  }
+}
+
+describe('groupVirtualMachines', () => {
+  it('returns [] for empty input', () => {
+    expect(groupVirtualMachines([], [])).toEqual([])
+  })
+
+  it('groups VMs under their hypervisor and renders capacity, host and vm count as facts', () => {
+    const hypervisors = [makeHypervisor({ name: 'hv-01', capacity: { cpuCores: 32, memoryMB: 131072 } })]
+    const vms = [
+      makeVM({ name: 'vm-a', hypervisorRef: 'hv-01' }),
+      makeVM({ name: 'vm-b', hypervisorRef: 'hv-01' }),
+    ]
+    const groups = groupVirtualMachines(vms, hypervisors)
+    expect(groups).toHaveLength(1)
+    expect(groups[0].title).toBe('hv-01')
+    expect(groups[0].facts).toBe('32c · 128g · 10.0.0.5 · 2 vms')
+    // Stable order within the group: incoming order is preserved.
+    expect(groups[0].virtualMachines.map((vm) => vm.name)).toEqual(['vm-a', 'vm-b'])
+  })
+
+  it('uses the singular vm count for a group of one', () => {
+    const hypervisors = [makeHypervisor({ name: 'hv-01', capacity: { cpuCores: 8, memoryMB: 8192 } })]
+    const groups = groupVirtualMachines([makeVM({ name: 'vm-a', hypervisorRef: 'hv-01' })], hypervisors)
+    expect(groups[0].facts).toBe('8c · 8g · 10.0.0.5 · 1 vm')
+  })
+
+  it('rounds memory to whole GB', () => {
+    const hypervisors = [makeHypervisor({ name: 'hv-01', capacity: { cpuCores: 8, memoryMB: 100000 } })]
+    const groups = groupVirtualMachines([makeVM({ name: 'vm-a', hypervisorRef: 'hv-01' })], hypervisors)
+    // 100000 / 1024 = 97.65625 -> rounds to 98g
+    expect(groups[0].facts).toBe('8c · 98g · 10.0.0.5 · 1 vm')
+  })
+
+  it('omits the capacity segment when capacity is undefined', () => {
+    const hypervisors = [makeHypervisor({ name: 'hv-01', capacity: undefined })]
+    const groups = groupVirtualMachines([makeVM({ name: 'vm-a', hypervisorRef: 'hv-01' })], hypervisors)
+    expect(groups[0].facts).toBe('10.0.0.5 · 1 vm')
+  })
+
+  it('omits the host segment when the connection host is absent', () => {
+    const hypervisors = [
+      makeHypervisor({
+        name: 'hv-01',
+        capacity: { cpuCores: 4, memoryMB: 8192 },
+        connection: { type: 'tcp', host: '' },
+      }),
+    ]
+    const groups = groupVirtualMachines([makeVM({ name: 'vm-a', hypervisorRef: 'hv-01' })], hypervisors)
+    expect(groups[0].facts).toBe('4c · 8g · 1 vm')
+  })
+
+  it('buckets VMs with no hypervisorRef into a trailing unassigned group with empty facts', () => {
+    const hypervisors = [makeHypervisor({ name: 'hv-01' })]
+    const vms = [makeVM({ name: 'vm-a' }), makeVM({ name: 'vm-b', hypervisorRef: 'hv-01' })]
+    const groups = groupVirtualMachines(vms, hypervisors)
+    expect(groups.map((g) => g.title)).toEqual(['hv-01', 'unassigned'])
+    expect(groups.at(-1)!).toMatchObject({ key: 'unassigned', facts: '' })
+    expect(groups.at(-1)!.virtualMachines.map((vm) => vm.name)).toEqual(['vm-a'])
+  })
+
+  it('buckets a VM whose hypervisorRef names an unknown hypervisor into unassigned', () => {
+    const groups = groupVirtualMachines([makeVM({ name: 'vm-a', hypervisorRef: 'ghost' })], [makeHypervisor({ name: 'hv-01' })])
+    expect(groups).toHaveLength(1)
+    expect(groups[0]).toMatchObject({ title: 'unassigned', facts: '', key: 'unassigned' })
+  })
+
+  it('falls back to the scheduled hypervisorName when hypervisorRef is empty', () => {
+    const hypervisors = [makeHypervisor({ name: 'hv-01', capacity: undefined })]
+    const groups = groupVirtualMachines([makeVM({ name: 'vm-a', hypervisorName: 'hv-01' })], hypervisors)
+    expect(groups.map((g) => g.title)).toEqual(['hv-01'])
+  })
+
+  it('sorts unassigned last even when its title would otherwise sort first alphabetically', () => {
+    const hypervisors = [makeHypervisor({ name: 'zeta', capacity: undefined })]
+    const vms = [makeVM({ name: 'vm-a' }), makeVM({ name: 'vm-b', hypervisorRef: 'zeta' })]
+    const groups = groupVirtualMachines(vms, hypervisors)
+    expect(groups.map((g) => g.title)).toEqual(['zeta', 'unassigned'])
+  })
+
+  it('sorts group titles case-insensitively', () => {
+    const hypervisors = [
+      makeHypervisor({ name: 'Bravo', capacity: undefined }),
+      makeHypervisor({ name: 'alpha', capacity: undefined }),
+    ]
+    const vms = [makeVM({ name: 'vm-a', hypervisorRef: 'Bravo' }), makeVM({ name: 'vm-b', hypervisorRef: 'alpha' })]
+    expect(groupVirtualMachines(vms, hypervisors).map((g) => g.title)).toEqual(['alpha', 'Bravo'])
+  })
+
+  it('never produces an empty group for a hypervisor that hosts nothing', () => {
+    const hypervisors = [makeHypervisor({ name: 'hv-01' }), makeHypervisor({ name: 'hv-02' })]
+    const groups = groupVirtualMachines([makeVM({ name: 'vm-a', hypervisorRef: 'hv-01' })], hypervisors)
+    expect(groups).toHaveLength(1)
+    expect(groups.every((g) => g.virtualMachines.length > 0)).toBe(true)
+  })
+})
+
+describe('vmCountLabel', () => {
+  it('uses singular for exactly one', () => {
+    expect(vmCountLabel(1)).toBe('1 vm')
+  })
+
+  it('uses plural for zero and for more than one', () => {
+    expect(vmCountLabel(0)).toBe('0 vms')
+    expect(vmCountLabel(4)).toBe('4 vms')
   })
 })
