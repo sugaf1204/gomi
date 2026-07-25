@@ -1,7 +1,15 @@
 # Quick Deploy: Asynchronous Deploy with Reload and Restart Resilience
 
 Date: 2026-07-25
-Status: Approved for planning
+Status: **SUPERSEDED — not approved for implementation.** The restart-resilience design
+(Goal 4, §2 and everything downstream) was abandoned after review; see the status
+section below. The remaining sections are retained as a record of the investigation and
+its constraints, not as a specification to build from. No work should start from this
+document until a scope is chosen in the implementation plan's "Scope options".
+
+**Non-normative sections:** Goal 4; §2 (Resume interrupted deploys) and its
+subsections; §3's resume-specific requirements; every Verification bullet covering
+restart resume, leases, finalization, backing-image publication and the worker pool.
 
 ## Problem
 
@@ -74,7 +82,7 @@ future attempt starts from the real constraints instead of rediscovering them.
    deploy to finish.
 2. Repeated clicks never collide on a VM name and never overwrite an existing record.
 3. A browser reload does not interrupt an in-flight deploy.
-4. A server restart does not strand a deploy; interrupted deploys resume automatically.
+4. ~~A server restart does not strand a deploy; interrupted deploys resume automatically.~~ **(ABANDONED — see Status.)**
 5. Deploy state lives in the server database as the single source of truth.
 
 ## Non-goals
@@ -116,7 +124,7 @@ hypervisor's domain and volume. The recheck must compare deploy identity — the
 and tear down via the hypervisor it resolved before deploying whenever the record is
 absent or belongs to a different deploy.
 
-### 2. Resume interrupted deploys after a restart
+### 2. Resume interrupted deploys after a restart *(NON-NORMATIVE — abandoned; retained as a record of the constraints found)*
 
 A goroutine dies with its process. Detaching the context alone gives no restart
 resilience: a crash mid-deploy leaves a `Phase=Pending` record with no host state and

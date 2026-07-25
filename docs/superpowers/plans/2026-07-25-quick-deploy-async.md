@@ -378,7 +378,9 @@ A panic inside `Deploy` unwinds before it can return anything, so the caller's `
 	}()
 ```
 
-Place it immediately after `hv` is resolved (`internal/vm/deploy.go:24-29`), so it covers every host operation that follows. Re-panicking keeps the caller's existing responsibilities — `FailDeploy`, the audit event, and not killing the process — intact.
+**Arm it only after the first successful host mutation.** Placing it immediately after `hv` is resolved would make a panic in `resolvePXEBaseURL`, `BuildLibvirtConfig` or executor construction — all before this deploy touches the host — destroy a same-named domain and volume that a previous partial deploy left behind. The normal create path fails without deleting that state, and recovery cleanup must not be more destructive than the path it stands in for.
+
+Set a `mutated` flag after the first successful `CreateVolume`/`CreateOverlayVolume`/`DefineDomain`, and have the defer return early when it is false. Tracking exactly which artifacts this invocation created is a stricter alternative. Re-panicking keeps the caller's existing responsibilities — `FailDeploy`, the audit event, and not killing the process — intact.
 
 Test with an executor whose `CreateOverlayVolume` panics after `CreateVolume` succeeded, asserting the volume is deleted and the panic still reaches the caller.
 
@@ -576,7 +578,9 @@ Add a regression test that deletes a VM in the default test environment (where `
 Then find every other caller and update it:
 
 Run: `grep -rn "teardownVMRuntimeOnHypervisor" internal/`
-Expected: only matches you are about to fix. Update each to call `s.vmDeployer.TeardownHostState`. Remove now-unused imports from `internal/infra/api/vm.go` (`strings` and `libvirt` may become unused — the compiler will tell you).
+Expected: only matches you are about to fix. Update each to call **`s.vmTeardowner().TeardownHostState`**, never `s.vmDeployer.TeardownHostState` directly — `deleteVirtualMachineRuntime` (`internal/infra/api/vm.go:239`) is one of these callers, and `VMDeployer` is nil in the default test environment and in deployless configurations, so the direct call would panic and break ordinary VM deletion.
+
+Test with **both** optional hooks nil. A test environment that installs a no-op `VMRuntimeDeleter` bypasses the faulty call entirely and would pass vacuously, so the regression test must leave `VMRuntimeDeleter` unset as well as `VMDeployer`. Remove now-unused imports from `internal/infra/api/vm.go` (`strings` and `libvirt` may become unused — the compiler will tell you).
 
 **Preserve the not-attempted marker.** `DeleteVirtualMachine` checks `errors.Is(err, ErrVMTeardownNotAttempted)` at `internal/infra/api/vm.go:217` so a `Missing` VM on an unreachable hypervisor can be deleted record-only instead of returning `502`. Repoint that check at the new `vm.ErrTeardownNotAttempted` and delete the old sentinel at `internal/infra/api/vm.go:237`:
 
@@ -1126,8 +1130,13 @@ func (s *Server) runVMDeploy(actor httputil.Actor, deployHV hypervisor.Hyperviso
 		}
 		// This early return skips the completion audit below, so the original
 		// "accepted" event would stay the last word for a deploy that was
-		// superseded. Record the outcome here instead.
-		httputil.CreateAuditFor(checkCtx, s.authStore, actor, created.Name, "create-vm", "failure", "deploy superseded by a newer create or delete", nil)
+		// superseded. Record the outcome here instead — on its OWN context:
+		// TeardownHostState above may have consumed all of checkCtx, or
+		// returned after it expired since libvirt RPCs ignore cancellation,
+		// and the audit write would then be lost.
+		auditCtx, auditCancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer auditCancel()
+		httputil.CreateAuditFor(auditCtx, s.authStore, actor, created.Name, "create-vm", "failure", "deploy superseded by a newer create or delete", nil)
 		return
 	}
 	// Deploy persists its own outcome on every path EXCEPT the one where its
@@ -2194,6 +2203,9 @@ Validate **only the rows in the table below**. Do not walk the design document's
 | Redeploy during an in-flight create is rejected/serialised | Task 3 Step 4b |
 | Batch create respects the deploy concurrency limit | Task 3 Step 4a |
 | Panic inside Deploy cleans up on the host it selected | Task 1 Step 3c |
+| Pre-mutation panic leaves existing host state untouched | Task 1 Step 3c |
+| Delete works with BOTH VMDeployer and VMRuntimeDeleter nil | Task 2 Step 5 |
+| Superseded audit survives a slow cleanup | Task 3 Step 4 |
 | Status writes survive a delete/recreate race | Task 3 Step 3d |
 | Superseded deploy records a terminal audit event | Task 3 Step 4 |
 | Post-deadline success is persisted | Task 3 Step 4 |
