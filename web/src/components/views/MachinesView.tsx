@@ -10,9 +10,7 @@ import {
   initialBatchDeleteConfirmState,
   initialBatchPowerConfirmState,
   initialBatchRedeployConfirmState,
-  initialMachineDialogState,
-  MACHINE_QUICK_DEPLOY_STORAGE_KEY,
-  readMachineQuickDeployPreset
+  initialMachineDialogState
 } from './machines/machineFormState'
 import { useMachineOperations } from './machines/useMachineOperations'
 import type {
@@ -20,7 +18,6 @@ import type {
   BatchPowerConfirmState,
   BatchRedeployConfirmState,
   MachineFormState,
-  MachineQuickDeployPreset,
   MachineDialogState,
   UpdateMachineForm
 } from './machines/machineFormState'
@@ -92,17 +89,11 @@ export function MachinesView({
   const [actionsMenuOpen, setActionsMenuOpen] = useState(false)
   const actionsMenuRef = useRef<HTMLDivElement | null>(null)
   const [form, setForm] = useState<MachineFormState>(() => createInitialMachineForm(subnets))
-  const [quickDeployPreset, setQuickDeployPreset] = useState<MachineQuickDeployPreset>(() => readMachineQuickDeployPreset(subnets))
-  const [quickDeploySettingsOpen, setQuickDeploySettingsOpen] = useState(false)
-  const [quickDeploying, setQuickDeploying] = useState(false)
 
   const {
-    quickDeployMachineName,
-    quickDeployMachineReady,
     closeMachineDialog,
     openCreateDialog,
     submitMachineDialog,
-    handleQuickDeploy,
     runPrimaryAction,
     findHypervisorForMachine,
     submitBatchPowerConfirm,
@@ -111,17 +102,12 @@ export function MachinesView({
     machineFormReady,
     submitBatchRedeployConfirm,
     toggleMachineSelect,
-    toggleSelectAll,
-    toggleQuickDeploySSHKeyRef
+    toggleSelectAll
   } = useMachineOperations({
     machineDialog,
     setMachineDialog,
     form,
     setForm,
-    quickDeployPreset,
-    setQuickDeployPreset,
-    setQuickDeploySettingsOpen,
-    setQuickDeploying,
     selectedMachines,
     setSelectedMachines,
     batchPowerConfirm,
@@ -134,7 +120,6 @@ export function MachinesView({
     selectedMachine,
     machines,
     filteredMachines,
-    osImages,
     subnets,
     hypervisors,
     onMachineUpsert,
@@ -144,27 +129,9 @@ export function MachinesView({
   })
 
   useEffect(() => {
-    if (typeof window === 'undefined') return
-    try {
-      const safePreset: Partial<MachineQuickDeployPreset> = { ...quickDeployPreset }
-      delete safePreset.ipmiPassword
-      delete safePreset.loginUserPassword
-      localStorage.setItem(MACHINE_QUICK_DEPLOY_STORAGE_KEY, JSON.stringify({
-        ...safePreset,
-        count: Math.max(1, Number(quickDeployPreset.count) || 1)
-      }))
-    } catch {
-      // ignore localStorage access errors
-    }
-  }, [quickDeployPreset])
-
-  useEffect(() => {
-    if (!machineDialog.open && !quickDeploySettingsOpen && !batchPowerConfirm.open && !batchDeleteConfirm.open && !batchRedeployConfirm.open) return
+    if (!machineDialog.open && !batchPowerConfirm.open && !batchDeleteConfirm.open && !batchRedeployConfirm.open) return
     function onKeyDown(e: KeyboardEvent) {
       if (e.key === 'Escape') {
-        if (!quickDeploying) {
-          setQuickDeploySettingsOpen(false)
-        }
         if (!batchPowerConfirm.running) {
           setBatchPowerConfirm(initialBatchPowerConfirmState)
         }
@@ -181,7 +148,7 @@ export function MachinesView({
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [machineDialog.open, machineDialog.running, quickDeploySettingsOpen, quickDeploying, batchPowerConfirm.open, batchPowerConfirm.running, batchDeleteConfirm.open, batchDeleteConfirm.running, batchRedeployConfirm.open, batchRedeployConfirm.running])
+  }, [machineDialog.open, machineDialog.running, batchPowerConfirm.open, batchPowerConfirm.running, batchDeleteConfirm.open, batchDeleteConfirm.running, batchRedeployConfirm.open, batchRedeployConfirm.running])
 
   useEffect(() => {
     if (!machineDialog.open || form.subnetRef || subnets.length === 0) return
@@ -233,19 +200,6 @@ export function MachinesView({
   return (
     <>
       <MachineDialogs
-        quickDeploySettingsOpen={quickDeploySettingsOpen}
-        quickDeployPreset={quickDeployPreset}
-        setQuickDeployPreset={setQuickDeployPreset}
-        quickDeploying={quickDeploying}
-        osImages={osImages}
-        cloudInits={cloudInits}
-        sshKeys={sshKeys}
-        subnets={subnets}
-        quickDeployMachineName={quickDeployMachineName}
-        quickDeployMachineReady={quickDeployMachineReady}
-        onCloseQuickDeploy={() => setQuickDeploySettingsOpen(false)}
-        onQuickDeploy={() => void handleQuickDeploy()}
-        onToggleQuickDeploySSHKeyRef={toggleQuickDeploySSHKeyRef}
         machineDialog={machineDialog}
         closeMachineDialog={closeMachineDialog}
         selectedMachine={selectedMachine}
@@ -276,9 +230,6 @@ export function MachinesView({
         selectedMachine={selectedMachine}
         selectedMachines={selectedMachines}
         multiSelectActive={multiSelectActive}
-        quickDeploying={quickDeploying}
-        onQuickDeploy={() => void handleQuickDeploy()}
-        onOpenQuickDeploySettings={() => setQuickDeploySettingsOpen(true)}
         onOpenCreateDialog={openCreateDialog}
         toggleMachineSelect={toggleMachineSelect}
         toggleSelectAll={toggleSelectAll}

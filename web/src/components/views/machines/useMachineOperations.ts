@@ -1,6 +1,6 @@
 import type { Dispatch, FormEvent, SetStateAction } from 'react'
 import { api } from '../../../api'
-import type { Hypervisor, Machine, OSImage, Subnet } from '../../../types'
+import type { Hypervisor, Machine, Subnet } from '../../../types'
 import {
   buildMachineLoginUserPayload,
   buildPowerConfig,
@@ -21,8 +21,7 @@ import type {
   CloudInitInputMode,
   MachineDialogState,
   MachineFormState,
-  MachinePrimaryAction,
-  MachineQuickDeployPreset
+  MachinePrimaryAction
 } from './machineFormState'
 
 type MachineOperationsArgs = {
@@ -30,10 +29,6 @@ type MachineOperationsArgs = {
   setMachineDialog: Dispatch<SetStateAction<MachineDialogState>>
   form: MachineFormState
   setForm: Dispatch<SetStateAction<MachineFormState>>
-  quickDeployPreset: MachineQuickDeployPreset
-  setQuickDeployPreset: Dispatch<SetStateAction<MachineQuickDeployPreset>>
-  setQuickDeploySettingsOpen: Dispatch<SetStateAction<boolean>>
-  setQuickDeploying: Dispatch<SetStateAction<boolean>>
   selectedMachines: Set<string>
   setSelectedMachines: Dispatch<SetStateAction<Set<string>>>
   batchPowerConfirm: BatchPowerConfirmState
@@ -46,7 +41,6 @@ type MachineOperationsArgs = {
   selectedMachine: Machine | null
   machines: Machine[]
   filteredMachines: Machine[]
-  osImages: OSImage[]
   subnets: Subnet[]
   hypervisors: Hypervisor[]
   onMachineUpsert: (machine: Machine) => void
@@ -58,31 +52,6 @@ type MachineOperationsArgs = {
 export function useMachineOperations(args: MachineOperationsArgs) {
   const notifyError = (message: string) => {
     window.dispatchEvent(new CustomEvent('gomi:toast', { detail: { tone: 'error', message } }))
-  }
-
-  const quickDeployMachineName = (preset: MachineQuickDeployPreset) => `${preset.name.trim()}-${Math.max(1, Number(preset.count) || 1)}`
-
-  const quickDeployMachineReady = (preset: MachineQuickDeployPreset) => {
-    if (!preset.name.trim()) return false
-    if ((Number(preset.count) || 0) < 1) return false
-    if (!preset.mac.trim()) return false
-    if (!preset.imageRef.trim()) return false
-    if (!args.osImages.some((img) => img.name === preset.imageRef)) return false
-    if (preset.subnetRef && preset.ipAssignment === 'static' && !preset.staticIP.trim()) return false
-    if (preset.powerType === 'ipmi' && (!preset.ipmiHost.trim() || !preset.ipmiUsername.trim() || !preset.ipmiPassword.trim())) return false
-    if (preset.powerType === 'webhook' && (!preset.webhookOnURL.trim() || !preset.webhookOffURL.trim())) return false
-    return true
-  }
-
-  function quickDeployMachineFormState(preset: MachineQuickDeployPreset): MachineFormState {
-    return {
-      ...preset,
-      hostname: quickDeployMachineName(preset),
-      cloudInitMode: preset.cloudInitExistingRef ? 'existing' : 'none',
-      cloudInitTemplateName: '',
-      cloudInitUserData: '',
-      loginUserPasswordTouched: false
-    }
   }
 
   async function resolveCloudInitRefs(mode: CloudInitInputMode, existingRef: string, templateName: string, userData: string, currentRefs: string[] = []) {
@@ -152,29 +121,6 @@ export function useMachineOperations(args: MachineOperationsArgs) {
     } catch (err) {
       notifyError(err instanceof Error ? err.message : `Failed to ${currentDialog.mode === 'create' ? 'create machine' : 'redeploy'}`)
       args.setMachineDialog((current) => ({ ...current, running: false }))
-    }
-  }
-
-  async function handleQuickDeploy() {
-    const preset = args.quickDeployPreset
-    if (!quickDeployMachineReady(preset)) {
-      args.setQuickDeploySettingsOpen(true)
-      return
-    }
-    const machineName = quickDeployMachineName(preset)
-    // Reserve the next name before awaiting so a rapid second click cannot
-    // reuse this one. The server rejects duplicates with 409 as a backstop.
-    args.setQuickDeployPreset((current) => ({ ...current, count: String(Math.max(1, Number(current.count) || 1) + 1) }))
-    args.setQuickDeploying(true)
-    try {
-      const created = await api.createMachine({ name: machineName, ...(await buildMachineSpecPayload(quickDeployMachineFormState(preset))) })
-      args.onMachineUpsert(created)
-      args.onSelectMachine(created.name)
-      args.onRefresh()
-    } catch (err) {
-      notifyError(err instanceof Error ? err.message : 'Failed to quick deploy machine')
-    } finally {
-      args.setQuickDeploying(false)
     }
   }
 
@@ -337,21 +283,14 @@ export function useMachineOperations(args: MachineOperationsArgs) {
     args.setSelectedMachines(args.selectedMachines.size === args.filteredMachines.length ? new Set() : new Set(args.filteredMachines.map((machine) => machine.name)))
   }
 
-  function toggleQuickDeploySSHKeyRef(ref: string) {
-    args.setQuickDeployPreset((current) => ({ ...current, sshKeyRefs: current.sshKeyRefs.includes(ref) ? current.sshKeyRefs.filter((item) => item !== ref) : [...current.sshKeyRefs, ref] }))
-  }
-
   function setRedeployStatus(target: string, status: { state: 'running' | 'succeeded' | 'failed'; error?: string }) {
     args.setBatchRedeployConfirm((current) => ({ ...current, activeTarget: target, status: { ...current.status, [target]: status } }))
   }
 
   return {
-    quickDeployMachineName,
-    quickDeployMachineReady,
     closeMachineDialog,
     openCreateDialog,
     submitMachineDialog,
-    handleQuickDeploy,
     runPrimaryAction,
     findHypervisorForMachine,
     submitBatchPowerConfirm,
@@ -360,7 +299,6 @@ export function useMachineOperations(args: MachineOperationsArgs) {
     machineFormReady,
     submitBatchRedeployConfirm,
     toggleMachineSelect,
-    toggleSelectAll,
-    toggleQuickDeploySSHKeyRef
+    toggleSelectAll
   }
 }

@@ -5,7 +5,6 @@ import type { CloudInitTemplate, Hypervisor, OSImage, SSHKey, Subnet, VirtualMac
 import { VMConfigFields } from './virtual-machines/VMConfigFields'
 import { VMActionDialogs } from './virtual-machines/VMActionDialogs'
 import { VMEditDialogs } from './virtual-machines/VMEditDialogs'
-import { VMQuickDeployDialog } from './virtual-machines/VMQuickDeployDialog'
 import { VMWorkspace } from './virtual-machines/VMWorkspace'
 import { useVirtualMachineOperations } from './virtual-machines/useVirtualMachineOperations'
 import {
@@ -17,9 +16,7 @@ import {
   initialReinstallForm,
   VM_SELECTION_STORAGE_KEY
 } from './virtual-machines/vmFormState'
-import { readQuickDeployPreset, writeQuickDeployPreset } from './virtual-machines/quickDeployPreset'
 import type {
-  QuickDeployPreset,
   VMConfigForm,
   VMBulkRedeployConfirmState,
   VMDeleteConfirmState,
@@ -61,9 +58,6 @@ export function VirtualMachinesView({
   const [formOpen, setFormOpen] = useState(false)
   const [form, setForm] = useState(initialForm)
   const [creating, setCreating] = useState(false)
-  const [quickDeployPreset, setQuickDeployPreset] = useState<QuickDeployPreset>(readQuickDeployPreset)
-  const [quickDeploySettingsOpen, setQuickDeploySettingsOpen] = useState(false)
-  const [quickDeploying, setQuickDeploying] = useState(false)
   const [reinstallOpen, setReinstallOpen] = useState(false)
   const [reinstallForm, setReinstallForm] = useState<VMReinstallForm>(initialReinstallForm)
   const [reinstalling, setReinstalling] = useState(false)
@@ -76,7 +70,6 @@ export function VirtualMachinesView({
   const [migrateConfirm, setMigrateConfirm] = useState<VMMigrateConfirmState>(initialMigrateConfirm)
   const [advancedOpen, setAdvancedOpen] = useState(false)
   const [reinstallAdvancedOpen, setReinstallAdvancedOpen] = useState(false)
-  const [quickDeployAdvancedOpen, setQuickDeployAdvancedOpen] = useState(false)
 
   const osImageByName = useMemo(() => new Map(osImages.map((img) => [img.name, img])), [osImages])
   const vmOSImages = useMemo(() => osImages.filter((img) => supportsDeploymentTarget(img, 'vm')), [osImages])
@@ -87,10 +80,7 @@ export function VirtualMachinesView({
   const selectedVM = virtualMachines.find((vm) => vm.name === selected) ?? null
 
   const {
-    quickDeployVMName,
-    quickDeployPresetReady,
     handleCreate,
-    handleQuickDeploy,
     handleDeleteConfirm,
     handlePowerConfirm,
     handleRedeploy,
@@ -106,10 +96,6 @@ export function VirtualMachinesView({
     setForm,
     setFormOpen,
     setCreating,
-    quickDeployPreset,
-    setQuickDeployPreset,
-    setQuickDeploySettingsOpen,
-    setQuickDeploying,
     reinstallForm,
     setReinstallForm,
     setReinstallOpen,
@@ -159,20 +145,12 @@ export function VirtualMachinesView({
     return vm.cloudInitRef || '-'
   }
 
-  function openQuickDeploySettings() {
-    setQuickDeploySettingsOpen(true)
-  }
-
   useEffect(() => {
     if (!routeSelectedVM) return
     if (routeSelectedVM !== selected) {
       setSelected(routeSelectedVM)
     }
   }, [routeSelectedVM, selected, setSelected])
-
-  useEffect(() => {
-    writeQuickDeployPreset(quickDeployPreset)
-  }, [quickDeployPreset])
 
   useEffect(() => {
     if (dataLoading) return
@@ -184,10 +162,9 @@ export function VirtualMachinesView({
   }, [dataLoading, routeSelectedVM, selected, virtualMachines, setSelected])
 
   useEffect(() => {
-    if (!formOpen && !quickDeploySettingsOpen && !reinstallOpen && !powerConfirm.open && !deleteConfirm.open && !bulkRedeployConfirm.open && !migrateConfirm.open) return
+    if (!formOpen && !reinstallOpen && !powerConfirm.open && !deleteConfirm.open && !bulkRedeployConfirm.open && !migrateConfirm.open) return
     function onKeyDown(e: KeyboardEvent) {
       if (e.key !== 'Escape') return
-      if (!quickDeploying) setQuickDeploySettingsOpen(false)
       if (!powerConfirm.running) setPowerConfirm(initialPowerConfirm)
       if (!reinstalling) setReinstallOpen(false)
       if (!deleteConfirm.running) setDeleteConfirm(initialDeleteConfirm)
@@ -196,7 +173,7 @@ export function VirtualMachinesView({
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [formOpen, quickDeploySettingsOpen, quickDeploying, reinstallOpen, reinstalling, powerConfirm.open, powerConfirm.running, deleteConfirm.open, deleteConfirm.running, bulkRedeployConfirm.open, bulkRedeployConfirm.running, migrateConfirm.open, migrateConfirm.running])
+  }, [formOpen, reinstallOpen, reinstalling, powerConfirm.open, powerConfirm.running, deleteConfirm.open, deleteConfirm.running, bulkRedeployConfirm.open, bulkRedeployConfirm.running, migrateConfirm.open, migrateConfirm.running])
 
   useEffect(() => {
     if (!actionsMenuOpen) return
@@ -250,24 +227,15 @@ export function VirtualMachinesView({
     setReinstallForm((current) => updater(current))
   }
 
-  const updateQuickDeployConfigForm: UpdateVMConfigForm = (updater) => {
-    setQuickDeployPreset((current) => ({
-      ...current,
-      ...updater(current)
-    }))
-  }
-
   function renderVMSpecFields(
     formState: VMConfigForm,
     updateForm: UpdateVMConfigForm,
     advancedExpanded: boolean,
     setAdvancedExpanded: (value: boolean | ((current: boolean) => boolean)) => void,
-    radioNamePrefix: string,
-    supportsTemplateNameHostname = false
+    radioNamePrefix: string
   ) {
     return (
       <VMConfigFields
-        supportsTemplateNameHostname={supportsTemplateNameHostname}
         formState={formState}
         updateForm={updateForm}
         advancedExpanded={advancedExpanded}
@@ -287,26 +255,6 @@ export function VirtualMachinesView({
 
   return (
     <>
-      <VMQuickDeployDialog
-        open={quickDeploySettingsOpen}
-        preset={quickDeployPreset}
-        setPreset={setQuickDeployPreset}
-        quickDeploying={quickDeploying}
-        nextName={quickDeployVMName}
-        isReady={quickDeployPresetReady}
-        onClose={() => setQuickDeploySettingsOpen(false)}
-        onDeploy={() => void handleQuickDeploy()}
-      >
-        {renderVMSpecFields(
-          quickDeployPreset,
-          updateQuickDeployConfigForm,
-          quickDeployAdvancedOpen,
-          setQuickDeployAdvancedOpen,
-          'quick-deploy',
-          true
-        )}
-      </VMQuickDeployDialog>
-
       <VMEditDialogs
         formOpen={formOpen}
         creating={creating}
@@ -352,9 +300,6 @@ export function VirtualMachinesView({
       <VMWorkspace
         virtualMachines={virtualMachines}
         dataLoading={dataLoading}
-        quickDeploying={quickDeploying}
-        onQuickDeploy={() => void handleQuickDeploy()}
-        onOpenQuickDeploySettings={openQuickDeploySettings}
         setForm={setForm}
         setAdvancedOpen={setAdvancedOpen}
         setFormOpen={setFormOpen}

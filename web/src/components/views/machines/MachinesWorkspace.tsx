@@ -23,9 +23,6 @@ type MachinesWorkspaceProps = {
   selectedMachine: Machine | null
   selectedMachines: Set<string>
   multiSelectActive: boolean
-  quickDeploying: boolean
-  onQuickDeploy: () => void
-  onOpenQuickDeploySettings: () => void
   onOpenCreateDialog: () => void
   toggleMachineSelect: (name: string) => void
   toggleSelectAll: () => void
@@ -57,10 +54,6 @@ export function MachinesWorkspace(props: MachinesWorkspaceProps) {
           <div className="flex justify-between items-center gap-2">
             <h2 className="text-[1.4rem]">Machine List</h2>
             <div className="flex items-center justify-end flex-wrap gap-[0.35rem]">
-              <button className="bg-brand border-brand-strong text-white py-[0.35rem] px-[0.55rem] text-[0.82rem]" disabled={props.quickDeploying} onClick={props.onQuickDeploy}>
-                {props.quickDeploying ? 'Deploying...' : 'Quick Deploy'}
-              </button>
-              <button className="py-[0.35rem] px-[0.55rem] text-[0.82rem]" disabled={props.quickDeploying} onClick={props.onOpenQuickDeploySettings}>Preset</button>
               <button className="py-[0.35rem] px-[0.55rem] text-[0.82rem]" onClick={props.onOpenCreateDialog}>Add</button>
             </div>
           </div>
