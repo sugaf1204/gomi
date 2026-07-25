@@ -107,6 +107,18 @@ Four rounds, four paths, no sign of the enumeration closing. Every handler that 
 a VM name is a candidate, and each new one also has to interact correctly with the
 guard's own semantics (finding 38).
 
+### Eleventh round
+
+39. `RuntimeSyncer.persistSyncedVM` writes through name-only `writeExisting`, so a sync
+    tick can overwrite a replacement's phase and token after a delete/recreate. Third
+    write path needing the conditional update, after `UpdateDeployStatus`/`FailDeploy`
+    and `markDomainDefined`.
+40. The post-create hypervisor recheck (`internal/infra/api/vm.go:106`) rolls back only
+    on `ErrNotFound`; a transient error returns 500 leaving a stranded `Pending` record
+    that now blocks retries forever with `409`.
+41. The blocking test never cancels the request, so an implementation still using
+    `c.Request().Context()` would pass — it proves ordering, not detachment.
+
 ## Scope options
 
 Findings 29-30 are not two bugs; they are two more instances of one rule: **detaching
