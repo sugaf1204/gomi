@@ -4,7 +4,7 @@ export type NavItem = {
   view: View
   label: string
   /** Which count, if any, the rail shows right-aligned on this row. */
-  count?: 'machines' | 'virtualMachines' | 'hypervisors' | 'subnets' | 'osImages' | 'cloudInits' | 'dnsRecords' | 'dhcpLeases'
+  count?: 'machines' | 'virtualMachines' | 'hypervisors' | 'subnets' | 'osImages' | 'cloudInits' | 'dnsRecords'
 }
 
 export type NavGroup = {
