@@ -72,6 +72,38 @@ func TestVMStoreInsertThenUpsertStillOverwrites(t *testing.T) {
 	}
 }
 
+// Domain and SubnetRef feed the embedded/rfc2136 DNS controllers' zone
+// resolution (see internal/infra/dns/embedded.go). A field missing from the
+// spec JSON round-trip silently drops the VM from DNS sync.
+func TestVMStoreUpsertRoundTripsDomain(t *testing.T) {
+	s := newTestBackend(t).VMs()
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Second)
+
+	v := vm.VirtualMachine{
+		Name:          "vm-domain-roundtrip",
+		HypervisorRef: "hv1",
+		Resources:     vm.ResourceSpec{CPUCores: 1},
+		SubnetRef:     "default",
+		Domain:        "canvm.jp",
+		CreatedAt:     now,
+		UpdatedAt:     now,
+	}
+	if err := s.Insert(ctx, v); err != nil {
+		t.Fatalf("Insert: %v", err)
+	}
+	got, err := s.Get(ctx, v.Name)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if got.Domain != "canvm.jp" {
+		t.Fatalf("expected domain to round-trip, got %q", got.Domain)
+	}
+	if got.SubnetRef != "default" {
+		t.Fatalf("expected subnetRef to round-trip, got %q", got.SubnetRef)
+	}
+}
+
 // The token comparison must be part of the DELETE. A separate lookup followed
 // by a delete-by-name would remove a replacement that took the name in between.
 func TestVMStoreDeleteCreatedTokenMatchesGeneration(t *testing.T) {

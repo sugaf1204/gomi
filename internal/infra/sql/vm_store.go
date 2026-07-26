@@ -47,6 +47,7 @@ type vmSpecJSON struct {
 	Network            []vm.NetworkInterface `json:"network,omitempty"`
 	IPAssignment       vm.IPAssignmentMode   `json:"ipAssignment,omitempty"`
 	SubnetRef          string                `json:"subnetRef,omitempty"`
+	Domain             string                `json:"domain,omitempty"`
 	InstallCfg         *vm.InstallConfig     `json:"installConfig,omitempty"`
 	PowerControlMethod vm.PowerControlMethod `json:"powerControlMethod"`
 	AdvancedOptions    *vm.AdvancedOptions   `json:"advancedOptions,omitempty"`
@@ -78,6 +79,7 @@ func marshalVMColumns(v vm.VirtualMachine) (specJSON, statusJSON string, err err
 		Network:            v.Network,
 		IPAssignment:       v.IPAssignment,
 		SubnetRef:          v.SubnetRef,
+		Domain:             v.Domain,
 		InstallCfg:         v.InstallCfg,
 		PowerControlMethod: v.PowerControlMethod,
 		AdvancedOptions:    v.AdvancedOptions,
@@ -363,6 +365,7 @@ func scanVMRow(row scanner) (vm.VirtualMachine, error) {
 	v.Network = spec.Network
 	v.IPAssignment = spec.IPAssignment
 	v.SubnetRef = spec.SubnetRef
+	v.Domain = spec.Domain
 	v.InstallCfg = spec.InstallCfg
 	v.PowerControlMethod = spec.PowerControlMethod
 	v.AdvancedOptions = spec.AdvancedOptions
