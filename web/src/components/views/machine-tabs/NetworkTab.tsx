@@ -63,7 +63,7 @@ export function NetworkTab({ machine, subnets, onRefresh }: Props) {
           <button
             type="button"
             onClick={startEdit}
-            className="px-[0.6rem] py-[0.25rem] text-[0.84rem] bg-surface-raised text-ink border border-edge rounded cursor-pointer"
+            className="px-[0.6rem] py-[0.25rem] text-[0.84rem] bg-panel-2 text-ink border border-line rounded cursor-pointer"
           >
             Edit
           </button>
@@ -123,7 +123,7 @@ export function NetworkTab({ machine, subnets, onRefresh }: Props) {
           type="button"
           onClick={cancel}
           disabled={saving}
-          className="px-[0.6rem] py-[0.25rem] text-[0.84rem] bg-surface-raised text-ink border border-edge rounded cursor-pointer"
+          className="px-[0.6rem] py-[0.25rem] text-[0.84rem] bg-panel-2 text-ink border border-line rounded cursor-pointer"
         >
           Cancel
         </button>

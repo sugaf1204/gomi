@@ -77,7 +77,7 @@ export function UsersView({ sshKeys, onRefresh }: UsersViewProps) {
           <textarea
             required
             rows={3}
-            className="border border-line bg-white p-[0.55rem] font-mono text-[0.84rem] resize-y"
+            className="border border-line bg-panel p-[0.55rem] font-mono text-[0.84rem] resize-y"
             placeholder="ssh-ed25519 AAAA..."
             value={form.publicKey}
             onChange={(e) => setForm((f) => ({ ...f, publicKey: e.target.value }))}
@@ -87,7 +87,7 @@ export function UsersView({ sshKeys, onRefresh }: UsersViewProps) {
           Private Key - PEM (optional)
           <textarea
             rows={4}
-            className="border border-line bg-white p-[0.55rem] font-mono text-[0.84rem] resize-y"
+            className="border border-line bg-panel p-[0.55rem] font-mono text-[0.84rem] resize-y"
             placeholder="-----BEGIN OPENSSH PRIVATE KEY-----&#10;..."
             value={form.privateKey}
             onChange={(e) => setForm((f) => ({ ...f, privateKey: e.target.value }))}
@@ -130,7 +130,7 @@ export function UsersView({ sshKeys, onRefresh }: UsersViewProps) {
                 )}
               </div>
               <button
-                className="bg-[#d86b6b] border-[#be5252] text-white py-[0.35rem] px-[0.55rem] text-[0.82rem] shrink-0"
+                className="bg-danger-line border-danger-line text-white py-[0.35rem] px-[0.55rem] text-[0.82rem] shrink-0"
                 onClick={() => setDeleteConfirm({ open: true, name: k.name })}
               >
                 Delete
@@ -141,16 +141,16 @@ export function UsersView({ sshKeys, onRefresh }: UsersViewProps) {
       )}
       {deleteConfirm.open && (
         <ModalOverlay onBackdropClick={() => setDeleteConfirm({ open: false, name: '' })}>
-          <div className="w-[min(400px,100%)] bg-white border border-line-strong shadow-[0_20px_45px_rgba(52,43,34,0.2)] p-[0.95rem] grid gap-[0.6rem]">
-            <h3 className="text-[1.2rem] text-[#9b2d2d]">Delete SSH Key</h3>
+          <div className="w-[min(400px,100%)] bg-panel border border-line-strong shadow-[0_20px_45px_rgba(52,43,34,0.2)] p-[0.95rem] grid gap-[0.6rem]">
+            <h3 className="text-[1.2rem] text-danger">Delete SSH Key</h3>
             <p className="m-0 text-ink-soft text-[0.84rem]">Are you sure you want to delete this SSH key?</p>
-            <div className="border border-line bg-[#f9f7f4] p-[0.55rem]">
+            <div className="border border-line bg-panel-2 p-[0.55rem]">
               <code>{deleteConfirm.name}</code>
             </div>
             <div className="flex justify-end gap-[0.45rem]">
               <button onClick={() => setDeleteConfirm({ open: false, name: '' })}>Cancel</button>
               <button
-                className="bg-[#d86b6b] border-[#be5252] text-white"
+                className="bg-danger-line border-danger-line text-white"
                 onClick={() => { void handleDelete(deleteConfirm.name); setDeleteConfirm({ open: false, name: '' }) }}
               >
                 Delete

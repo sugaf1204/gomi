@@ -1,26 +1,133 @@
-@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Inter:wght@300;400;500&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Instrument+Sans:wght@400;500;600&display=swap');
 @import "tailwindcss";
 
+/* Tokens are declared as Tailwind theme values so utilities such as bg-panel-2 or
+   text-ink-soft exist, but each resolves to a --tone-* custom property. The
+   --tone-* layer is what light/dark swap, so a single utility class renders
+   correctly under both appearances without variant duplication. */
 @theme {
-  --font-ui: 'Inter', sans-serif;
-  --font-display: 'Inter', sans-serif;
+  --font-ui: 'Instrument Sans', sans-serif;
+  --font-display: 'Instrument Sans', sans-serif;
   --font-mono: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  --color-bg: #f4f1ea;
-  --color-bg-soft: #ebe6db;
-  --color-panel: #ffffff;
-  --color-panel-2: #f8f5ee;
-  --color-ink: #1f2430;
-  --color-ink-soft: #5f6672;
-  --color-line: #d9d2c6;
-  --color-line-strong: #c6beaf;
-  --color-brand: #2b7a78;
-  --color-brand-strong: #1f5f5d;
-  --color-warn: #bb7c2f;
-  --color-error: #b14545;
-  --color-ok: #2f8c5e;
+
+  --color-bg: var(--tone-bg);
+  --color-bg-soft: var(--tone-bg-soft);
+  --color-panel: var(--tone-panel);
+  --color-panel-2: var(--tone-panel-2);
+  --color-panel-3: var(--tone-panel-3);
+  --color-ink: var(--tone-ink);
+  --color-ink-mid: var(--tone-ink-mid);
+  --color-ink-soft: var(--tone-ink-soft);
+  --color-line: var(--tone-line);
+  --color-line-soft: var(--tone-line-soft);
+  --color-line-strong: var(--tone-line-strong);
+  --color-control-line: var(--tone-control-line);
+  --color-brand: var(--tone-brand);
+  --color-brand-strong: var(--tone-brand-strong);
+  --color-brand-accent: var(--tone-brand-accent);
+  --color-brand-wash: var(--tone-brand-wash);
+  --color-ok: var(--tone-ok);
+  --color-ok-bg: var(--tone-ok-bg);
+  --color-ok-line: var(--tone-ok-line);
+  --color-warn: var(--tone-warn);
+  --color-warn-bg: var(--tone-warn-bg);
+  --color-warn-line: var(--tone-warn-line);
+  --color-error: var(--tone-error);
+  --color-error-bg: var(--tone-error-bg);
+  --color-error-line: var(--tone-error-line);
+  --color-danger: var(--tone-danger);
+  --color-danger-bg: var(--tone-danger-bg);
+  --color-danger-line: var(--tone-danger-line);
+  --color-neutral: var(--tone-neutral);
+  --color-neutral-bg: var(--tone-neutral-bg);
+  --color-hv: var(--tone-hv);
+  --color-hv-bg: var(--tone-hv-bg);
+  --color-track: var(--tone-track);
+
   --breakpoint-sm: 720px;
   --breakpoint-md: 980px;
   --breakpoint-lg: 1180px;
+}
+
+/* Light appearance — README "Design Tokens → Light". */
+:root,
+:root[data-appearance='light'] {
+  --tone-bg: #f4f1ea;
+  --tone-bg-soft: #ebe6db;
+  --tone-panel: #ffffff;
+  --tone-panel-2: #faf8f3;
+  --tone-panel-3: #f1ece1;
+  --tone-ink: #1f2430;
+  --tone-ink-mid: #414855;
+  --tone-ink-soft: #5f6672;
+  --tone-line: #d9d2c6;
+  --tone-line-soft: #e6e0d4;
+  --tone-line-strong: #c6beaf;
+  --tone-control-line: #d9d2c6;
+  --tone-brand: #2b7a78;
+  --tone-brand-strong: #1f5f5d;
+  --tone-brand-accent: #1f5f5d;
+  --tone-brand-wash: rgba(43, 122, 120, 0.14);
+  --tone-ok: #2f8c5e;
+  --tone-ok-bg: #d9f1e5;
+  --tone-ok-line: #96b9b7;
+  --tone-warn: #8a5c1f;
+  --tone-warn-bg: #f8e6cc;
+  --tone-warn-line: #e0c9a4;
+  --tone-error: #b14545;
+  --tone-error-bg: #f6dada;
+  --tone-error-line: #e2bcbc;
+  --tone-danger: #9b2d2d;
+  --tone-danger-bg: #fff3f2;
+  --tone-danger-line: #d86b6b;
+  --tone-neutral: #5f6672;
+  --tone-neutral-bg: #e8e4df;
+  --tone-hv: #5b3d8f;
+  --tone-hv-bg: #e8e0f6;
+  --tone-track: #f1efe9;
+  --tone-hover: rgba(0, 0, 0, 0.04);
+  --tone-shadow: rgba(80, 70, 55, 0.1);
+  --tone-shadow-strong: rgba(52, 43, 34, 0.14);
+}
+
+/* Dark appearance — README "Design Tokens → Dark". */
+:root[data-appearance='dark'] {
+  --tone-bg: #14161a;
+  --tone-bg-soft: #1f2329;
+  --tone-panel: #1b1e23;
+  --tone-panel-2: #101216;
+  --tone-panel-3: #181b20;
+  --tone-ink: #e8e4da;
+  --tone-ink-mid: #9aa1ac;
+  --tone-ink-soft: #9aa1ac;
+  --tone-line: #262a31;
+  --tone-line-soft: #1f2329;
+  --tone-line-strong: #2e333a;
+  --tone-control-line: #2e333a;
+  --tone-brand: #3fa39f;
+  --tone-brand-strong: #2b7a78;
+  --tone-brand-accent: #67c3bf;
+  --tone-brand-wash: rgba(63, 163, 159, 0.16);
+  --tone-ok: #4fb682;
+  --tone-ok-bg: #17281f;
+  --tone-ok-line: #2f5c44;
+  --tone-warn: #d69a4a;
+  --tone-warn-bg: #2a2214;
+  --tone-warn-line: #5c4a28;
+  --tone-error: #d16b6b;
+  --tone-error-bg: #2a1a1a;
+  --tone-error-line: #5c3434;
+  --tone-danger: #d16b6b;
+  --tone-danger-bg: #2a1a1a;
+  --tone-danger-line: #5c3434;
+  --tone-neutral: #9aa1ac;
+  --tone-neutral-bg: #22262c;
+  --tone-hv: #b49af0;
+  --tone-hv-bg: #2b2440;
+  --tone-track: #22262c;
+  --tone-hover: rgba(255, 255, 255, 0.05);
+  --tone-shadow: rgba(0, 0, 0, 0.4);
+  --tone-shadow-strong: rgba(0, 0, 0, 0.55);
 }
 
 :root {
@@ -42,10 +149,7 @@
     margin: 0;
     min-height: 100vh;
     color: var(--color-ink);
-    background:
-      radial-gradient(48rem 28rem at -10% -20%, #ddd7cb 0%, transparent 70%),
-      radial-gradient(48rem 28rem at 120% -10%, #d8d0c2 0%, transparent 68%),
-      linear-gradient(160deg, var(--color-bg), #f7f4ed 45%, #efe9dc 100%);
+    background: var(--color-bg);
     font-family: var(--font-ui);
   }
 
@@ -72,7 +176,7 @@
 
   button:hover {
     transform: translateY(-1px);
-    box-shadow: 0 7px 20px rgba(80, 70, 55, 0.1);
+    box-shadow: 0 7px 20px var(--tone-shadow);
   }
 
   button:disabled {
@@ -84,7 +188,7 @@
 
   input, select, textarea {
     border: 1px solid var(--color-line);
-    background: #fff;
+    background: var(--color-panel);
     color: var(--color-ink);
     border-radius: var(--ui-radius-control);
     padding: 0.55rem 0.72rem;
@@ -112,7 +216,7 @@
   th {
     position: sticky;
     top: 0;
-    background: #faf8f2;
+    background: var(--color-panel-2);
     z-index: 1;
   }
 
@@ -154,8 +258,8 @@
     border-radius: 999px;
     font-size: 0.72rem;
     font-weight: 600;
-    background: rgba(43, 122, 120, 0.14);
-    color: var(--color-brand-strong);
+    background: var(--color-brand-wash);
+    color: var(--color-brand-accent);
   }
 
   .sidebar-account-name {
@@ -166,10 +270,10 @@
     position: fixed;
     transform: translateY(-100%);
     min-width: 120px;
-    background: #fff;
+    background: var(--color-panel);
     border: 1px solid var(--color-line);
     border-radius: 8px;
-    box-shadow: 0 8px 20px rgba(52, 43, 34, 0.14);
+    box-shadow: 0 8px 20px var(--tone-shadow-strong);
     padding: 0.3rem;
     z-index: 9999;
   }
@@ -184,14 +288,14 @@
 
   .sidebar-account-action:hover {
     color: var(--color-ink);
-    background: rgba(0, 0, 0, 0.04);
+    background: var(--tone-hover);
   }
 
   .brand-icon {
     width: 34px;
     height: 34px;
     border: 1px solid var(--color-line-strong);
-    background: #fff;
+    background: var(--color-panel);
     position: relative;
   }
 
@@ -235,7 +339,7 @@
     width: 1.5rem;
     height: 1.5rem;
     border-radius: 999px;
-    border: 2px solid rgba(43, 122, 120, 0.18);
+    border: 2px solid var(--color-brand-wash);
     border-top-color: var(--color-brand);
     animation: loading-spin 0.9s linear infinite;
   }
@@ -255,18 +359,18 @@
     grid-template-columns: minmax(0, 1fr) auto;
     align-items: start;
     gap: 0.6rem;
-    border: 1px solid #d99a9a;
+    border: 1px solid var(--color-error-line);
     border-radius: var(--ui-radius-panel);
-    background: #fff2f2;
-    color: #7b2626;
+    background: var(--color-error-bg);
+    color: var(--color-error);
     padding: 0.7rem 0.74rem;
-    box-shadow: 0 8px 30px rgba(25, 15, 15, 0.14);
+    box-shadow: 0 8px 30px var(--tone-shadow-strong);
   }
 
   .toast-item-info {
-    border-color: #96b9b7;
-    background: #ebf8f7;
-    color: #1d5553;
+    border-color: var(--color-ok-line);
+    background: var(--color-brand-wash);
+    color: var(--color-brand-accent);
   }
 
   .toast-close {

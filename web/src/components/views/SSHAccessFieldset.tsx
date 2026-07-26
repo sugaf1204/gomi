@@ -82,7 +82,7 @@ export function SSHAccessFieldset({ sshKeys, value, onChange, onRefresh }: SSHAc
 
         {addOpen && (
           <div
-            className="grid gap-[0.45rem] border border-line bg-[#f9f7f4] p-[0.55rem]"
+            className="grid gap-[0.45rem] border border-line bg-panel-2 p-[0.55rem]"
             onKeyDown={(e) => {
               if (e.key === 'Enter' && !(e.target instanceof HTMLTextAreaElement)) {
                 e.preventDefault()
@@ -112,7 +112,7 @@ export function SSHAccessFieldset({ sshKeys, value, onChange, onRefresh }: SSHAc
               Public Key
               <textarea
                 rows={3}
-                className="border border-line bg-white p-[0.55rem] font-mono text-[0.84rem] resize-y"
+                className="border border-line bg-panel p-[0.55rem] font-mono text-[0.84rem] resize-y"
                 placeholder="ssh-ed25519 AAAA..."
                 value={keyForm.publicKey}
                 onChange={(e) => setKeyForm((current) => ({ ...current, publicKey: e.target.value }))}
@@ -122,7 +122,7 @@ export function SSHAccessFieldset({ sshKeys, value, onChange, onRefresh }: SSHAc
               Private Key - PEM (optional)
               <textarea
                 rows={3}
-                className="border border-line bg-white p-[0.55rem] font-mono text-[0.84rem] resize-y"
+                className="border border-line bg-panel p-[0.55rem] font-mono text-[0.84rem] resize-y"
                 placeholder="-----BEGIN OPENSSH PRIVATE KEY-----"
                 value={keyForm.privateKey}
                 onChange={(e) => setKeyForm((current) => ({ ...current, privateKey: e.target.value }))}
@@ -141,7 +141,7 @@ export function SSHAccessFieldset({ sshKeys, value, onChange, onRefresh }: SSHAc
           </div>
         )}
 
-        <div className="grid gap-[0.25rem] max-h-[160px] overflow-y-auto border border-line bg-white p-[0.4rem]">
+        <div className="grid gap-[0.25rem] max-h-[160px] overflow-y-auto border border-line bg-panel p-[0.4rem]">
           {sshKeys.length === 0 && (
             <span className="text-[0.78rem] text-ink-soft">No SSH keys registered. Add one here or in the Users view.</span>
           )}

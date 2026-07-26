@@ -126,7 +126,7 @@ export function OSImagesView({ osImages, onRefresh }: OSImagesViewProps) {
     <>
       {imageFormOpen && (
         <ModalOverlay onBackdropClick={() => { setImageFormOpen(false) }}>
-          <div className="w-[min(520px,100%)] bg-white border border-line-strong shadow-[0_20px_45px_rgba(52,43,34,0.2)] p-[1.1rem] grid gap-[0.65rem] max-h-[90vh] overflow-auto">
+          <div className="w-[min(520px,100%)] bg-panel border border-line-strong shadow-[0_20px_45px_rgba(52,43,34,0.2)] p-[1.1rem] grid gap-[0.65rem] max-h-[90vh] overflow-auto">
             <div className="flex justify-between items-center">
               <h3 className="text-[1.2rem]">Create OS Image</h3>
               <button
@@ -251,7 +251,7 @@ export function OSImagesView({ osImages, onRefresh }: OSImagesViewProps) {
                 key={img.name}
                 className={clsx(
                   'text-left w-full border-0 border-b border-line border-l-[3px] border-l-transparent bg-transparent flex justify-between items-start gap-[0.75rem] py-[0.62rem] pl-[0.55rem] pr-[0.1rem] shadow-none hover:transform-none!',
-                  selectedImage === img.name && '!border-l-brand bg-[rgba(43,122,120,0.06)] shadow-none!'
+                  selectedImage === img.name && '!border-l-brand bg-brand-wash shadow-none!'
                 )}
                 onClick={() => setSelectedImage(img.name)}
               >
@@ -285,7 +285,7 @@ export function OSImagesView({ osImages, onRefresh }: OSImagesViewProps) {
                 <div className="flex flex-col items-end gap-[0.55rem]">
                   <span className={readyBadge(selectedImageData.ready)}>{selectedImageData.ready ? 'Ready' : 'Not Ready'}</span>
                   <button
-                    className="bg-[#d86b6b] border-[#be5252] text-white py-[0.45rem] px-[0.72rem]"
+                    className="bg-danger-line border-danger-line text-white py-[0.45rem] px-[0.72rem]"
                     onClick={() => setDeleteConfirm({ open: true, name: selectedImageData.name })}
                   >
                     Delete
@@ -345,16 +345,16 @@ export function OSImagesView({ osImages, onRefresh }: OSImagesViewProps) {
 
       {deleteConfirm.open && (
         <ModalOverlay onBackdropClick={() => setDeleteConfirm({ open: false, name: '' })}>
-          <div className="w-[min(400px,100%)] bg-white border border-line-strong shadow-[0_20px_45px_rgba(52,43,34,0.2)] p-[0.95rem] grid gap-[0.6rem]">
-            <h3 className="text-[1.2rem] text-[#9b2d2d]">Delete OS Image</h3>
+          <div className="w-[min(400px,100%)] bg-panel border border-line-strong shadow-[0_20px_45px_rgba(52,43,34,0.2)] p-[0.95rem] grid gap-[0.6rem]">
+            <h3 className="text-[1.2rem] text-danger">Delete OS Image</h3>
             <p className="m-0 text-ink-soft text-[0.84rem]">Are you sure you want to delete this OS image?</p>
-            <div className="border border-line bg-[#f9f7f4] p-[0.55rem]">
+            <div className="border border-line bg-panel-2 p-[0.55rem]">
               <code>{deleteConfirm.name}</code>
             </div>
             <div className="flex justify-end gap-[0.45rem]">
               <button onClick={() => setDeleteConfirm({ open: false, name: '' })}>Cancel</button>
               <button
-                className="bg-[#d86b6b] border-[#be5252] text-white"
+                className="bg-danger-line border-danger-line text-white"
                 onClick={() => { void handleDeleteImage(deleteConfirm.name); setDeleteConfirm({ open: false, name: '' }) }}
               >
                 Delete

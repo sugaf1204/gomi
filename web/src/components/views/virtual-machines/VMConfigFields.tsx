@@ -189,7 +189,7 @@ export function VMConfigFields({
       <div className="border border-line rounded">
         <button
           type="button"
-          className="w-full text-left border-0 shadow-none rounded-none px-[0.7rem] py-[0.5rem] text-[0.84rem] font-medium bg-[#f9f7f4] hover:bg-[#f3efe8]"
+          className="w-full text-left border-0 shadow-none rounded-none px-[0.7rem] py-[0.5rem] text-[0.84rem] font-medium bg-panel-2 hover:bg-panel-3"
           onClick={() => setAdvancedExpanded((current) => !current)}
         >
           {advancedExpanded ? '▾' : '▸'} Advanced Options

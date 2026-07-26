@@ -29,7 +29,7 @@ export function VMQuickDeployDialog({
 
   return (
     <ModalOverlay onBackdropClick={() => { if (!quickDeploying) onClose() }}>
-      <div className="w-[min(680px,100%)] bg-white border border-line-strong shadow-[0_20px_45px_rgba(52,43,34,0.2)] p-[1.1rem] grid gap-[0.65rem] max-h-[90vh] overflow-auto">
+      <div className="w-[min(680px,100%)] bg-panel border border-line-strong shadow-[0_20px_45px_rgba(52,43,34,0.2)] p-[1.1rem] grid gap-[0.65rem] max-h-[90vh] overflow-auto">
         <div className="flex justify-between items-center">
           <div>
             <h3 className="text-[1.2rem]">Quick Deploy Preset</h3>
