@@ -1,3 +1,10 @@
+gomi (0.0.32) unstable; urgency=medium
+
+  * Fix VM domain not persisting, which silently dropped VMs from embedded
+    and RFC2136 DNS sync.
+
+ -- sugaf1204 <sugaf1204@example.invalid>  Mon, 27 Jul 2026 12:00:00 +0900
+
 gomi (0.0.31) unstable; urgency=medium
 
   * Rebuild the web UI shell as a tiered rail with breadcrumbs, a command
