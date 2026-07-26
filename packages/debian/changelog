@@ -1,3 +1,22 @@
+gomi (0.0.31) unstable; urgency=medium
+
+  * Rebuild the web UI shell as a tiered rail with breadcrumbs, a command
+    palette and dark mode, unified onto themeable design tokens.
+  * Rebuild the Overview, Virtual Machines and Network views, group the machine
+    list under switchable header rows, and reduce the machine tabs to Overview,
+    Deploy and Config.
+  * Rebuild the deploy tab as a fully-attributed phase timeline.
+  * Add a VM Missing state with record-only cascade deletes and a
+    Wake-on-LAN clock skew fix.
+  * Make VM Quick Deploy available from every view, give its preset full VM
+    create parity, and prevent duplicate VMs from rapid Quick Deploy clicks.
+  * Reclaim DHCP leases via TTL and on VM delete, and skip PXE options for
+    unregistered MAC addresses.
+  * Preserve Jinja headers in PXE user-data rendering.
+  * Add component test infrastructure for the web UI.
+
+ -- sugaf1204 <sugaf1204@example.invalid>  Sun, 26 Jul 2026 23:55:57 +0900
+
 gomi (0.0.30) unstable; urgency=medium
 
   * Add service account token issuance for automation access.
