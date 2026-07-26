@@ -93,7 +93,7 @@ export function useAppUiState() {
   const [paletteOpen, setPaletteOpen] = useState(false)
   const [groupByRaw, setGroupByRaw] = usePersistentStringState(GROUP_BY_STORAGE_KEY)
   const groupBy: GroupBy = groupByValues.has(groupByRaw) ? (groupByRaw as GroupBy) : 'subnet'
-  const [machineTab, setMachineTab] = useState<MachineTab>('info')
+  const [machineTab, setMachineTab] = useState<MachineTab>('overview')
   const [confirmDialog, setConfirmDialog] = useState<ConfirmDialogState>(initialConfirmDialog)
 
   function setView(v: View) {
@@ -202,7 +202,7 @@ export function useAppUiState() {
     setMachineSettingsDraft(initialMachineSettingsDraft)
     setMachineSettingsSaving(false)
     setInlineEditField(null)
-    setMachineTab('info')
+    setMachineTab('overview')
     setConfirmDialog(initialConfirmDialog)
   }
 
