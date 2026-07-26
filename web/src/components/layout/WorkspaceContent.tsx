@@ -47,21 +47,23 @@ export function WorkspaceContent({
   settings
 }: WorkspaceContentProps) {
   return (
-    <section className="workspace-shell h-screen overflow-y-auto grid grid-rows-[auto_minmax(0,1fr)] gap-[0.9rem] p-[1rem_1.1rem_1.1rem] max-sm:h-auto max-sm:p-[0.8rem]">
+    <section className="workspace-shell h-screen grid grid-rows-[auto_minmax(0,1fr)] max-sm:h-auto">
       <WorkspaceHeader {...header} />
 
-      {view === 'overview' && <OverviewView {...overview} />}
-      {view === 'machines' && <MachinesView {...machines} />}
-      {view === 'hypervisors' && <HypervisorsView {...hypervisors} />}
-      {view === 'virtual-machines' && <VirtualMachinesView {...virtualMachines} />}
-      {view === 'activity' && <ActivityView {...activity} />}
-      {view === 'network' && <NetworkView {...network} />}
-      {view === 'dhcp-leases' && <DHCPLeasesView {...dhcpLeases} />}
-      {view === 'dns-records' && <DNSRecordsView {...dnsRecords} />}
-      {view === 'cloud-init' && <CloudInitView {...cloudInit} />}
-      {view === 'os-images' && <OSImagesView {...osImages} />}
-      {view === 'users' && <UsersView {...users} />}
-      {view === 'settings' && <SettingsView {...settings} />}
+      <div className="min-h-0 overflow-y-auto p-[20px_22px] max-sm:p-[0.8rem]">
+        {view === 'overview' && <OverviewView {...overview} />}
+        {view === 'machines' && <MachinesView {...machines} />}
+        {view === 'hypervisors' && <HypervisorsView {...hypervisors} />}
+        {view === 'virtual-machines' && <VirtualMachinesView {...virtualMachines} />}
+        {view === 'activity' && <ActivityView {...activity} />}
+        {view === 'network' && <NetworkView {...network} />}
+        {view === 'dhcp-leases' && <DHCPLeasesView {...dhcpLeases} />}
+        {view === 'dns-records' && <DNSRecordsView {...dnsRecords} />}
+        {view === 'cloud-init' && <CloudInitView {...cloudInit} />}
+        {view === 'os-images' && <OSImagesView {...osImages} />}
+        {view === 'users' && <UsersView {...users} />}
+        {view === 'settings' && <SettingsView {...settings} />}
+      </div>
     </section>
   )
 }

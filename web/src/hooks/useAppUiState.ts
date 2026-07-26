@@ -1,11 +1,13 @@
 import { useEffect, useState } from 'react'
-import type { ActivityType, AuthFormState, ConfirmDialogState, MachineSettingsDraft, MachineTab, SubnetFormState, Theme, View } from '../app-types'
+import type { ActivityType, Appearance, AuthFormState, ConfirmDialogState, MachineSettingsDraft, MachineTab, SubnetFormState, Theme, View } from '../app-types'
 import type { PowerConfig } from '../types'
 import { usePersistentStringState } from './usePersistentStringState'
 
 const views: Set<string> = new Set(['overview', 'machines', 'hypervisors', 'virtual-machines', 'activity', 'network', 'dhcp-leases', 'dns-records', 'cloud-init', 'os-images', 'users', 'settings'])
 const themes: Set<string> = new Set(['default', 'rounded'])
+const appearances: Set<string> = new Set(['light', 'dark'])
 const MACHINE_SELECTION_STORAGE_KEY = 'gomi.machines.selected'
+const SYSTEM_DRAWER_STORAGE_KEY = 'gomi.rail.system-open'
 const SUBNET_SELECTION_STORAGE_KEY = 'gomi.network.selected-subnet'
 const VIRTUAL_MACHINES_PATH_SEGMENT = 'virtual-machines'
 
@@ -48,6 +50,12 @@ function readThemeFromStorage(): Theme {
   return themes.has(value ?? '') ? (value as Theme) : 'default'
 }
 
+function readAppearanceFromStorage(): Appearance {
+  const value = localStorage.getItem('gomi.appearance')
+  if (appearances.has(value ?? '')) return value as Appearance
+  return window.matchMedia?.('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
+}
+
 const initialAuthForm: AuthFormState = { username: '', password: '' }
 const initialSubnetForm: SubnetFormState = { name: '', cidr: '', gateway: '', dnsServers: '', vlanId: '' }
 const initialMachineSettingsDraft: MachineSettingsDraft = { power: { type: 'manual' } }
@@ -68,6 +76,9 @@ export function useAppUiState() {
   const [view, setViewState] = useState<View>(initialRoute.view)
   const [selectedVirtualMachineRoute, setSelectedVirtualMachineRouteState] = useState<string>(initialRoute.selectedVirtualMachineRoute)
   const [theme, setThemeState] = useState<Theme>(readThemeFromStorage)
+  const [appearance, setAppearanceState] = useState<Appearance>(readAppearanceFromStorage)
+  const [systemDrawerRaw, setSystemDrawerRaw] = usePersistentStringState(SYSTEM_DRAWER_STORAGE_KEY)
+  const systemDrawerOpen = systemDrawerRaw === 'open'
   const [machineFilter, setMachineFilter] = useState('')
   const [activityTypeFilter, setActivityTypeFilter] = useState<ActivityType>('all')
   const [activityMachineFilter, setActivityMachineFilter] = useState('')
@@ -77,6 +88,7 @@ export function useAppUiState() {
   const [machineSettingsSaving, setMachineSettingsSaving] = useState(false)
   const [inlineEditField, setInlineEditField] = useState<'power' | null>(null)
   const [accountExpanded, setAccountExpanded] = useState(false)
+  const [paletteOpen, setPaletteOpen] = useState(false)
   const [machineTab, setMachineTab] = useState<MachineTab>('info')
   const [confirmDialog, setConfirmDialog] = useState<ConfirmDialogState>(initialConfirmDialog)
 
@@ -106,6 +118,19 @@ export function useAppUiState() {
     localStorage.setItem('gomi.theme', next)
   }
 
+  function setAppearance(next: Appearance) {
+    setAppearanceState(next)
+    localStorage.setItem('gomi.appearance', next)
+  }
+
+  function toggleAppearance() {
+    setAppearance(appearance === 'dark' ? 'light' : 'dark')
+  }
+
+  function toggleSystemDrawer() {
+    setSystemDrawerRaw(systemDrawerOpen ? '' : 'open')
+  }
+
   useEffect(() => {
     function onPopState() {
       const route = readRouteFromLocation()
@@ -126,6 +151,10 @@ export function useAppUiState() {
   useEffect(() => {
     document.documentElement.dataset.theme = theme
   }, [theme])
+
+  useEffect(() => {
+    document.documentElement.dataset.appearance = appearance
+  }, [appearance])
 
   function updateAuthForm(field: keyof AuthFormState, value: string) {
     setAuthForm((current) => ({ ...current, [field]: value }))
@@ -186,6 +215,13 @@ export function useAppUiState() {
     setSelectedVirtualMachineRoute,
     theme,
     setTheme,
+    appearance,
+    setAppearance,
+    toggleAppearance,
+    systemDrawerOpen,
+    toggleSystemDrawer,
+    paletteOpen,
+    setPaletteOpen,
     machineFilter,
     setMachineFilter,
     activityTypeFilter,
