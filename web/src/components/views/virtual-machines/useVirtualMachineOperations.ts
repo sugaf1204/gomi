@@ -3,6 +3,7 @@ import { api } from '../../../api'
 import type { Hypervisor, OSImage, Subnet, VirtualMachine } from '../../../types'
 import {
   buildAdvancedOptions,
+  buildBridgePlaceholder,
   buildVMLoginUserPayload,
   currentVMCloudInitRefs,
   initialBulkRedeployConfirm,
@@ -13,9 +14,7 @@ import {
   mergeSelectedCloudInitRef,
   toReinstallForm
 } from './vmFormState'
-import { invalidVMConfigReason, renderPresetTemplateName } from './quickDeployPreset'
 import type {
-  QuickDeployPreset,
   VMBulkRedeployConfirmState,
   VMConfigForm,
   VMDeleteConfirmState,
@@ -32,10 +31,6 @@ type VMOperationsArgs = {
   setForm: Dispatch<SetStateAction<VMForm>>
   setFormOpen: Dispatch<SetStateAction<boolean>>
   setCreating: Dispatch<SetStateAction<boolean>>
-  quickDeployPreset: QuickDeployPreset
-  setQuickDeployPreset: Dispatch<SetStateAction<QuickDeployPreset>>
-  setQuickDeploySettingsOpen: Dispatch<SetStateAction<boolean>>
-  setQuickDeploying: Dispatch<SetStateAction<boolean>>
   reinstallForm: VMReinstallForm
   setReinstallForm: Dispatch<SetStateAction<VMReinstallForm>>
   setReinstallOpen: Dispatch<SetStateAction<boolean>>
@@ -71,25 +66,14 @@ export function useVirtualMachineOperations(args: VMOperationsArgs) {
     window.dispatchEvent(new CustomEvent('gomi:toast', { detail: { tone: 'error', message } }))
   }
 
-  const quickDeployVMName = (preset: QuickDeployPreset) => `${preset.name.trim()}-${Math.max(1, Number(preset.count) || 1)}`
-  const quickDeployPresetReady = (preset: QuickDeployPreset) => {
-    if (!preset.name.trim()) return false
-    if ((Number(preset.count) || 0) < 1) return false
-    if (!preset.osImageRef.trim()) return false
-    if (preset.ipAssignment === 'static' && !preset.staticIP.trim()) return false
-    if (preset.cloudInitMode === 'create' && !(preset.cloudInitTemplateName.trim() && preset.cloudInitUserData.trim())) return false
-    if (invalidVMConfigReason(preset)) return false
-    return args.vmOSImages.some((img) => img.name === preset.osImageRef)
-  }
-
-  // hostname is substituted into the template name only. The user-data body is
-  // stored verbatim so cloud-init renders its own Jinja on the target.
-  async function resolveCloudInitRefs(formState: VMConfigForm, description: string, currentRefs: string[] = [], hostname = '') {
+  // The create and redeploy dialogs name each VM per iteration, so they leave
+  // the hostname placeholder literal; only the header Quick Deploy resolves it.
+  async function resolveCloudInitRefs(formState: VMConfigForm, description: string, currentRefs: string[] = []) {
     if (formState.cloudInitMode === 'none') return [] as string[]
     if (formState.cloudInitMode === 'existing') {
       return mergeSelectedCloudInitRef(formState.cloudInitExistingRef.trim(), currentRefs)
     }
-    const templateName = renderPresetTemplateName(formState.cloudInitTemplateName.trim(), hostname)
+    const templateName = formState.cloudInitTemplateName.trim()
     const userData = formState.cloudInitUserData.trim()
     if (!templateName || !userData) throw new Error('Cloud-Init inline creation requires both template name and user-data')
     const created = await api.createCloudInitTemplate({ name: templateName, description, userData })
@@ -129,52 +113,6 @@ export function useVirtualMachineOperations(args: VMOperationsArgs) {
       notifyError(err instanceof Error ? err.message : 'Failed to create VM')
     } finally {
       args.setCreating(false)
-    }
-  }
-
-  async function handleQuickDeploy() {
-    const preset = args.quickDeployPreset
-    if (!quickDeployPresetReady(preset)) {
-      // Reopen the dialog so the preset can be corrected, and name the reason
-      // when there is a specific one rather than just a missing required field.
-      const reason = invalidVMConfigReason(preset)
-      if (reason) notifyError(reason)
-      args.setQuickDeploySettingsOpen(true)
-      return
-    }
-    const vmName = quickDeployVMName(preset)
-
-    // Reject a name we already know is taken before resolveCloudInitRefs runs.
-    // In 'create' mode that call upserts a template, so letting the request
-    // reach the server's 409 would overwrite the existing VM's template (or
-    // leave an orphan) even though no VM is created. Reset Count makes this
-    // collision easy to hit deliberately.
-    if (args.virtualMachines.some((vm) => vm.name === vmName)) {
-      notifyError(`A VM named ${vmName} already exists. Adjust the preset name or count.`)
-      args.setQuickDeploySettingsOpen(true)
-      return
-    }
-
-    // Reserve the next name before awaiting so a rapid second click cannot
-    // reuse this one. The server rejects duplicates with 409 as a backstop.
-    args.setQuickDeployPreset((current) => ({ ...current, count: String(Math.max(1, Number(current.count) || 1) + 1) }))
-
-    args.setQuickDeploying(true)
-    try {
-      const cloudInitRefs = await resolveCloudInitRefs(preset, 'Auto-generated from Quick Deploy preset', [], vmName)
-      const vmNetwork = buildVMNetworkPayload(preset)
-      const result = await api.createVirtualMachine({
-        ...buildCreateVMPayload(preset, cloudInitRefs, vmNetwork),
-        name: vmName
-      })
-      args.onVirtualMachineUpsert(result)
-      args.setVMSelection(vmName)
-      args.onRefresh()
-      if (result.phase === 'Error') notifyError(`VM created but deploy failed: ${result.lastError || 'deploy failed'}`)
-    } catch (err) {
-      notifyError(err instanceof Error ? err.message : 'Failed to quick deploy VM')
-    } finally {
-      args.setQuickDeploying(false)
     }
   }
 
@@ -367,12 +305,7 @@ export function useVirtualMachineOperations(args: VMOperationsArgs) {
     if (action === 'redeploy') args.checkedNames.length > 0 ? openBulkRedeployDialog(targets) : args.selectedVM && openReinstallDialog(args.selectedVM)
   }
 
-  function bridgePlaceholder(formState: VMConfigForm): string {
-    const hypervisor = args.hypervisors.find((item) => item.name === formState.hypervisorRef)
-    if (hypervisor?.bridgeName) return hypervisor.bridgeName
-    if (formState.subnetRef) return args.subnets.find((item) => item.name === formState.subnetRef)?.spec.pxeInterface || 'virbr0'
-    return 'virbr0'
-  }
+  const bridgePlaceholder = buildBridgePlaceholder(args.hypervisors, args.subnets)
 
   const setRedeployTargetRunning = (target: string) => setRedeployTargetStatus(target, { state: 'running' })
   const setRedeployTargetSucceeded = (target: string) => setRedeployTargetStatus(target, { state: 'succeeded' })
@@ -382,10 +315,7 @@ export function useVirtualMachineOperations(args: VMOperationsArgs) {
   }
 
   return {
-    quickDeployVMName,
-    quickDeployPresetReady,
     handleCreate,
-    handleQuickDeploy,
     handleDeleteConfirm,
     handlePowerConfirm,
     handleRedeploy,

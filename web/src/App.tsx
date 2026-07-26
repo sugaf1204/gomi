@@ -1,10 +1,14 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { GuardedAction } from './app-types'
 import { api } from './api'
+import { supportsDeploymentTarget } from './lib/osImages'
 import { AppWorkspaceShell } from './components/layout/AppWorkspaceShell'
+import { VMQuickDeploySettings } from './components/layout/VMQuickDeploySettings'
 import { ToastRegion, type ToastItem } from './components/ui/ToastRegion'
 import { AuthView } from './components/views/AuthView'
 import { useAppDataState } from './hooks/useAppDataState'
+import { quickDeployAuditRefreshTarget } from './hooks/quickDeployAuditRefresh'
+import { useVMQuickDeploy } from './hooks/useVMQuickDeploy'
 import { useAppDerivedData } from './hooks/useAppDerivedData'
 import { useSelectionSyncEffects } from './hooks/useAppEffects'
 import { useAuthHandlers, useMachineActionHandlers, useSubnetHandlers } from './hooks/useAppHandlers'
@@ -27,6 +31,11 @@ function errorMessage(value: unknown) {
     return 'Unknown error'
   }
 }
+
+// Quick Deploy used to have a separate Machines-side preset. Nothing reads this
+// key any more, and the stored blob can hold an IPMI username and a webhook URL,
+// so it is cleared rather than left behind in every existing browser.
+const REMOVED_MACHINE_QUICK_DEPLOY_STORAGE_KEY = 'gomi.machines.quick-deploy-preset'
 
 function createToastId() {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
@@ -146,6 +155,14 @@ export default function App() {
       sessionResettingRef.current = false
     }
   }, [token])
+
+  useEffect(() => {
+    try {
+      localStorage.removeItem(REMOVED_MACHINE_QUICK_DEPLOY_STORAGE_KEY)
+    } catch {
+      // ignore localStorage access errors
+    }
+  }, [])
 
   useEffect(() => {
     if (!error) return
@@ -269,7 +286,28 @@ export default function App() {
     refreshAll
   })
 
+  const vmOSImages = useMemo(() => osImages.filter((img) => supportsDeploymentTarget(img, 'vm')), [osImages])
+
+  // Rebuilt every render on purpose: useVMQuickDeploy holds this in a ref it
+  // reassigns each render, so the deploy reads the view and filter as they are
+  // when it finishes rather than when it started.
+  const refreshQuickDeployAudit = async () => {
+    const target = quickDeployAuditRefreshTarget(view, activityMachineFilter)
+    if (!target) return
+    await refreshAudit(target.machineName)
+  }
+
+  const quickDeploy = useVMQuickDeploy({
+    token,
+    virtualMachines,
+    vmOSImages,
+    onVirtualMachineUpsert: upsertVirtualMachine,
+    refreshAll,
+    refreshAuditIfVisible: refreshQuickDeployAudit
+  })
+
   const workspaceContentProps = useWorkspaceContentProps({
+    quickDeploy,
     refreshAll,
     lastSyncedAt,
     dataLoading: !hasLoadedOnce && state === 'loading',
@@ -376,6 +414,15 @@ export default function App() {
           onCancel: closeConfirm,
           onConfirm: () => void submitConfirm()
         }}
+      />
+      <VMQuickDeploySettings
+        quickDeploy={quickDeploy}
+        hypervisors={hypervisors}
+        osImages={osImages}
+        cloudInits={cloudInits}
+        sshKeys={sshKeys}
+        subnets={subnets}
+        onRefresh={refreshAll}
       />
       <ToastRegion toasts={toasts} onDismiss={dismissToast} />
     </>

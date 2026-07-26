@@ -1,8 +1,7 @@
 import type { Dispatch, FormEvent, ReactNode, SetStateAction } from 'react'
 import clsx from 'clsx'
-import { supportsDeploymentTarget } from '../../../lib/osImages'
 import { ModalOverlay } from '../../ui/ModalOverlay'
-import type { CloudInitTemplate, Machine, OSImage, PowerType, SSHKey, Subnet } from '../../../types'
+import type { Machine } from '../../../types'
 import {
   initialBatchDeleteConfirmState,
   initialBatchPowerConfirmState,
@@ -14,24 +13,10 @@ import type {
   BatchRedeployConfirmState,
   MachineDialogState,
   MachineFormState,
-  MachineQuickDeployPreset,
   UpdateMachineForm
 } from './machineFormState'
 
 type MachineDialogsProps = {
-  quickDeploySettingsOpen: boolean
-  quickDeployPreset: MachineQuickDeployPreset
-  setQuickDeployPreset: Dispatch<SetStateAction<MachineQuickDeployPreset>>
-  quickDeploying: boolean
-  osImages: OSImage[]
-  cloudInits: CloudInitTemplate[]
-  sshKeys: SSHKey[]
-  subnets: Subnet[]
-  quickDeployMachineName: (preset: MachineQuickDeployPreset) => string
-  quickDeployMachineReady: (preset: MachineQuickDeployPreset) => boolean
-  onCloseQuickDeploy: () => void
-  onQuickDeploy: () => void
-  onToggleQuickDeploySSHKeyRef: (ref: string) => void
   machineDialog: MachineDialogState
   closeMachineDialog: () => void
   selectedMachine: Machine | null
@@ -55,72 +40,11 @@ type MachineDialogsProps = {
 export function MachineDialogs(props: MachineDialogsProps) {
   return (
     <>
-      <QuickDeployDialog {...props} />
       <MachineEditDialog {...props} />
       <BatchRedeployDialog {...props} />
       <BatchPowerDialog {...props} />
       <BatchDeleteDialog {...props} />
     </>
-  )
-}
-
-function QuickDeployDialog({
-  quickDeploySettingsOpen,
-  quickDeployPreset,
-  setQuickDeployPreset,
-  quickDeploying,
-  osImages,
-  cloudInits,
-  sshKeys,
-  subnets,
-  quickDeployMachineName,
-  quickDeployMachineReady,
-  onCloseQuickDeploy,
-  onQuickDeploy,
-  onToggleQuickDeploySSHKeyRef
-}: MachineDialogsProps) {
-  if (!quickDeploySettingsOpen) return null
-  return (
-    <ModalOverlay onBackdropClick={() => { if (!quickDeploying) onCloseQuickDeploy() }}>
-      <div className="w-[min(680px,100%)] bg-white border border-line-strong shadow-[0_20px_45px_rgba(52,43,34,0.2)] p-[1.1rem] grid gap-[0.65rem] max-h-[90vh] overflow-auto">
-        <DialogHeader title="Quick Deploy Preset" disabled={quickDeploying} onClose={onCloseQuickDeploy}>
-          <p className="m-0 text-ink-soft text-[0.82rem]">Next machine: <code>{quickDeployPreset.name.trim() ? quickDeployMachineName(quickDeployPreset) : '-'}</code></p>
-        </DialogHeader>
-        <div className="grid gap-[0.55rem]">
-          <NameCountFields preset={quickDeployPreset} setPreset={setQuickDeployPreset} />
-          <label className="text-[0.84rem]">MAC Address<input required value={quickDeployPreset.mac} onChange={(e) => setQuickDeployPreset((current) => ({ ...current, mac: e.target.value }))} placeholder="aa:bb:cc:dd:ee:ff" /></label>
-          <PowerPresetFields preset={quickDeployPreset} setPreset={setQuickDeployPreset} />
-          <ImagePresetFields preset={quickDeployPreset} setPreset={setQuickDeployPreset} osImages={osImages} />
-          <label className="text-[0.84rem]">Target Disk <span className="text-ink-soft">(optional)</span><input value={quickDeployPreset.targetDisk} onChange={(e) => setQuickDeployPreset((current) => ({ ...current, targetDisk: e.target.value }))} placeholder="/dev/disk/by-id/..." /></label>
-          <label className="text-[0.84rem]">
-            Cloud-Init <span className="text-ink-soft">(optional)</span>
-            <select value={quickDeployPreset.cloudInitExistingRef} onChange={(e) => setQuickDeployPreset((current) => ({ ...current, cloudInitExistingRef: e.target.value }))}>
-              <option value="">None</option>
-              {cloudInits.map((ci) => <option key={ci.name} value={ci.name}>{ci.name}</option>)}
-            </select>
-          </label>
-          <NetworkPresetFields preset={quickDeployPreset} setPreset={setQuickDeployPreset} subnets={subnets} />
-          <SSHPresetFields preset={quickDeployPreset} setPreset={setQuickDeployPreset} sshKeys={sshKeys} onToggleSSHKeyRef={onToggleQuickDeploySSHKeyRef} />
-          <div className="flex justify-between gap-[0.45rem] pt-[0.2rem]">
-            <button type="button" onClick={() => setQuickDeployPreset((current) => ({ ...current, count: '1' }))} disabled={quickDeploying}>Reset Count</button>
-            <div className="flex justify-end gap-[0.45rem]">
-              <button type="button" onClick={onCloseQuickDeploy} disabled={quickDeploying}>Close</button>
-              <button
-                type="button"
-                className="bg-brand border-brand-strong text-white"
-                disabled={quickDeploying || !quickDeployMachineReady(quickDeployPreset)}
-                onClick={() => {
-                  onCloseQuickDeploy()
-                  onQuickDeploy()
-                }}
-              >
-                {quickDeploying ? 'Deploying...' : 'Deploy Now'}
-              </button>
-            </div>
-          </div>
-        </div>
-      </div>
-    </ModalOverlay>
   )
 }
 
@@ -232,128 +156,6 @@ function DialogHeader({ title, disabled, onClose, children }: { title: string; d
       </div>
       <button aria-label="Close" className="border-0 bg-transparent shadow-none p-0 w-[1.8rem] h-[1.8rem] flex items-center justify-center text-[1.4rem] leading-none text-ink-soft hover:text-ink hover:shadow-none!" disabled={disabled} onClick={onClose}>x</button>
     </div>
-  )
-}
-
-function NameCountFields({ preset, setPreset }: { preset: MachineQuickDeployPreset; setPreset: Dispatch<SetStateAction<MachineQuickDeployPreset>> }) {
-  return (
-    <div className="grid grid-cols-1 sm:grid-cols-[minmax(0,1fr)_130px] gap-[0.55rem]">
-      <label className="text-[0.84rem] min-w-0">Name<input required value={preset.name} onChange={(e) => setPreset((current) => ({ ...current, name: e.target.value }))} placeholder="e.g. node" /></label>
-      <label className="text-[0.84rem] min-w-0">Count<input type="number" min="1" value={preset.count} onChange={(e) => setPreset((current) => ({ ...current, count: e.target.value }))} /></label>
-    </div>
-  )
-}
-
-function PowerPresetFields({ preset, setPreset }: { preset: MachineQuickDeployPreset; setPreset: Dispatch<SetStateAction<MachineQuickDeployPreset>> }) {
-  return (
-    <>
-      <label className="text-[0.84rem]">
-        Power Control Type
-        <select required value={preset.powerType} onChange={(e) => setPreset((current) => ({ ...current, powerType: e.target.value as PowerType }))}>
-          <option value="manual">Manual</option>
-          <option value="ipmi">IPMI</option>
-          <option value="webhook">Webhook</option>
-          <option value="wol">Wake-on-LAN</option>
-        </select>
-      </label>
-      {preset.powerType === 'ipmi' && <SecretPowerFields preset={preset} setPreset={setPreset} />}
-      {preset.powerType === 'webhook' && <WebhookPresetFields preset={preset} setPreset={setPreset} />}
-      {preset.powerType === 'wol' && <label className="text-[0.84rem]">Wake MAC <span className="text-ink-soft">(defaults to machine MAC)</span><input value={preset.wolMAC} onChange={(e) => setPreset((current) => ({ ...current, wolMAC: e.target.value }))} placeholder={preset.mac || 'aa:bb:cc:dd:ee:ff'} /></label>}
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-[0.45rem]">
-        <label className="text-[0.84rem] min-w-0">Arch<select value={preset.arch} onChange={(e) => setPreset((current) => ({ ...current, arch: e.target.value }))}><option value="amd64">amd64</option><option value="arm64">arm64</option></select></label>
-        <label className="text-[0.84rem] min-w-0">Firmware<select value={preset.firmware} onChange={(e) => setPreset((current) => ({ ...current, firmware: e.target.value as 'uefi' | 'bios' }))}><option value="uefi">UEFI</option><option value="bios">BIOS</option></select></label>
-      </div>
-      <label className="text-[0.84rem] flex items-center gap-2 cursor-pointer select-none"><input type="checkbox" checked={preset.isHypervisor} onChange={(e) => setPreset((current) => ({ ...current, isHypervisor: e.target.checked }))} />Register as Hypervisor</label>
-      {preset.isHypervisor && <label className="text-[0.84rem]">Bridge Name<input type="text" value={preset.bridgeName} onChange={(e) => setPreset((current) => ({ ...current, bridgeName: e.target.value }))} placeholder="br0" /></label>}
-    </>
-  )
-}
-
-function SecretPowerFields({ preset, setPreset }: { preset: MachineQuickDeployPreset; setPreset: Dispatch<SetStateAction<MachineQuickDeployPreset>> }) {
-  return (
-    <div className="grid gap-[0.45rem] pl-[0.4rem] border-l-2 border-brand/30">
-      <label className="text-[0.84rem]">BMC Host<input required value={preset.ipmiHost} onChange={(e) => setPreset((current) => ({ ...current, ipmiHost: e.target.value }))} placeholder="10.0.0.1" /></label>
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-[0.55rem]">
-        <label className="text-[0.84rem] min-w-0">Username<input required value={preset.ipmiUsername} onChange={(e) => setPreset((current) => ({ ...current, ipmiUsername: e.target.value }))} placeholder="admin" /></label>
-        <label className="text-[0.84rem] min-w-0">Password<input type="password" required value={preset.ipmiPassword} onChange={(e) => setPreset((current) => ({ ...current, ipmiPassword: e.target.value }))} /></label>
-      </div>
-      <p className="m-0 text-[0.78rem] text-ink-soft">IPMI password is used for this deploy only and is not saved in localStorage.</p>
-    </div>
-  )
-}
-
-function WebhookPresetFields({ preset, setPreset }: { preset: MachineQuickDeployPreset; setPreset: Dispatch<SetStateAction<MachineQuickDeployPreset>> }) {
-  return (
-    <div className="grid gap-[0.45rem] pl-[0.4rem] border-l-2 border-brand/30">
-      <label className="text-[0.84rem]">Power On URL<input required value={preset.webhookOnURL} onChange={(e) => setPreset((current) => ({ ...current, webhookOnURL: e.target.value }))} placeholder="https://..." /></label>
-      <label className="text-[0.84rem]">Power Off URL<input required value={preset.webhookOffURL} onChange={(e) => setPreset((current) => ({ ...current, webhookOffURL: e.target.value }))} placeholder="https://..." /></label>
-      <label className="text-[0.84rem]">Status URL <span className="text-ink-soft">(optional)</span><input value={preset.webhookStatusURL} onChange={(e) => setPreset((current) => ({ ...current, webhookStatusURL: e.target.value }))} placeholder="https://..." /></label>
-      <label className="text-[0.84rem]">Boot Order URL <span className="text-ink-soft">(optional, BIOS deploy)</span><input value={preset.webhookBootOrderURL} onChange={(e) => setPreset((current) => ({ ...current, webhookBootOrderURL: e.target.value }))} placeholder="https://..." /></label>
-    </div>
-  )
-}
-
-function ImagePresetFields({ preset, setPreset, osImages }: { preset: MachineQuickDeployPreset; setPreset: Dispatch<SetStateAction<MachineQuickDeployPreset>>; osImages: OSImage[] }) {
-  return (
-    <label className="text-[0.84rem]">
-      OS Image
-      <select value={preset.imageRef} onChange={(e) => {
-        const selected = osImages.find((img) => img.name === e.target.value)
-        setPreset((current) => ({ ...current, imageRef: e.target.value, osFamily: selected?.osFamily || '', osVersion: selected?.osVersion || '' }))
-      }}>
-        <option value="">Select...</option>
-        {osImages.filter((img) => supportsDeploymentTarget(img, 'baremetal')).map((img) => <option key={img.name} value={img.name}>{img.name} ({img.osFamily} {img.osVersion}{img.variant ? ` ${img.variant}` : ''})</option>)}
-      </select>
-    </label>
-  )
-}
-
-function NetworkPresetFields({ preset, setPreset, subnets }: { preset: MachineQuickDeployPreset; setPreset: Dispatch<SetStateAction<MachineQuickDeployPreset>>; subnets: Subnet[] }) {
-  return (
-    <fieldset className="border border-line rounded p-0 m-0">
-      <legend className="text-[0.84rem] font-medium px-[0.4rem] ml-[0.3rem]">Network</legend>
-      <div className="grid gap-[0.45rem] p-[0.7rem]">
-        <label className="text-[0.84rem]">
-          Subnet {subnets.length === 0 && <span className="text-ink-soft">(optional)</span>}
-          <select value={preset.subnetRef} onChange={(e) => {
-            const subnetName = e.target.value
-            const subnet = subnets.find((item) => item.name === subnetName)
-            setPreset((current) => ({ ...current, subnetRef: subnetName, ipAssignment: subnetName ? current.ipAssignment : 'dhcp', staticIP: subnetName ? current.staticIP : '', domain: subnet?.spec.domainName || '' }))
-          }}>
-            <option value="">None</option>
-            {subnets.map((subnet) => <option key={subnet.name} value={subnet.name}>{subnet.name} ({subnet.spec.cidr})</option>)}
-          </select>
-        </label>
-        {preset.subnetRef && (
-          <>
-            <div className="flex items-center gap-[0.8rem] text-[0.84rem]">
-              <span>IP Assignment:</span>
-              <label className="flex items-center gap-1 cursor-pointer"><input type="radio" name="machine-quick-deploy-ip-assignment" checked={preset.ipAssignment === 'dhcp'} onChange={() => setPreset((current) => ({ ...current, ipAssignment: 'dhcp' }))} />DHCP</label>
-              <label className="flex items-center gap-1 cursor-pointer"><input type="radio" name="machine-quick-deploy-ip-assignment" checked={preset.ipAssignment === 'static'} onChange={() => setPreset((current) => ({ ...current, ipAssignment: 'static' }))} />Static</label>
-            </div>
-            {preset.ipAssignment === 'static' && <label className="text-[0.84rem]">Static IP<input value={preset.staticIP} onChange={(e) => setPreset((current) => ({ ...current, staticIP: e.target.value }))} placeholder="e.g. 10.0.0.50" /></label>}
-            <label className="text-[0.84rem]">Domain<input value={preset.domain} onChange={(e) => setPreset((current) => ({ ...current, domain: e.target.value }))} placeholder="e.g. example.local" /></label>
-          </>
-        )}
-      </div>
-    </fieldset>
-  )
-}
-
-function SSHPresetFields({ preset, setPreset, sshKeys, onToggleSSHKeyRef }: { preset: MachineQuickDeployPreset; setPreset: Dispatch<SetStateAction<MachineQuickDeployPreset>>; sshKeys: SSHKey[]; onToggleSSHKeyRef: (ref: string) => void }) {
-  return (
-    <fieldset className="border border-line rounded p-0 m-0">
-      <legend className="text-[0.84rem] font-medium px-[0.4rem] ml-[0.3rem]">SSH Access</legend>
-      <div className="grid gap-[0.45rem] p-[0.7rem]">
-        {sshKeys.length === 0 && <p className="m-0 text-[0.78rem] text-ink-soft">No SSH keys available.</p>}
-        {sshKeys.map((key) => <label key={key.name} className="flex items-center gap-[0.45rem] text-[0.84rem] cursor-pointer"><input type="checkbox" className="w-[0.95rem] h-[0.95rem] m-0 accent-[#2b7a78]" checked={preset.sshKeyRefs.includes(key.name)} onChange={() => onToggleSSHKeyRef(key.name)} />{key.name}</label>)}
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-[0.45rem]">
-          <label className="text-[0.84rem] min-w-0">Login Username<input value={preset.loginUserUsername} onChange={(e) => setPreset((current) => ({ ...current, loginUserUsername: e.target.value }))} placeholder="e.g. ubuntu" /></label>
-          <label className="text-[0.84rem] min-w-0">Login Password<input type="password" value={preset.loginUserPassword} onChange={(e) => setPreset((current) => ({ ...current, loginUserPassword: e.target.value }))} /></label>
-        </div>
-        <p className="m-0 text-[0.78rem] text-ink-soft">Login password is used for this deploy only and is not saved in localStorage.</p>
-      </div>
-    </fieldset>
   )
 }
 

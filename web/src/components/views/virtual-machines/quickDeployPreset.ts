@@ -48,8 +48,17 @@ export function readQuickDeployPreset(): QuickDeployPreset {
   }
 }
 
-// Cloud-Init user-data routinely carries SSH keys and tokens, so it is dropped
-// alongside the login password rather than written to localStorage.
+// The fields that must never outlive the moment they were typed in. Cloud-Init
+// user-data routinely carries SSH keys and tokens, and the login password is a
+// credential, so neither is written to localStorage — and for the same reason
+// neither may survive a logout in memory. One list drives both, since "not
+// persisted" and "not carried across sessions" are the same property here.
+const QUICK_DEPLOY_SECRET_FIELDS = {
+  loginUserPassword: '',
+  loginUserPasswordTouched: false,
+  cloudInitUserData: ''
+} as const satisfies Partial<QuickDeployPreset>
+
 export function writeQuickDeployPreset(preset: QuickDeployPreset) {
   if (typeof window === 'undefined') return
   try {
@@ -61,6 +70,14 @@ export function writeQuickDeployPreset(preset: QuickDeployPreset) {
   } catch {
     // ignore localStorage access errors
   }
+}
+
+// Clears the secrets while keeping the preset the user configured. Wiping the
+// whole preset would discard the name, count, resources and image that the
+// feature exists to remember, all of which are already in localStorage and are
+// not session-scoped.
+export function clearQuickDeploySecrets(preset: QuickDeployPreset): QuickDeployPreset {
+  return { ...preset, ...QUICK_DEPLOY_SECRET_FIELDS }
 }
 
 // The inline Cloud-Init template name is a GOMI resource identifier, so GOMI
@@ -78,6 +95,28 @@ export function renderPresetTemplateName(rawName: string, hostname: string): str
   // for non-emptiness, so a name containing $&, $` or $' would otherwise expand
   // as a replacement token instead of being inserted literally.
   return rawName.replace(/\{\{\s*hostname\s*\}\}/g, () => hostname)
+}
+
+// The name the next deploy will claim. `count` is the suffix rather than a
+// batch size: each deploy takes the current number and increments it.
+export function quickDeployVMName(preset: QuickDeployPreset): string {
+  return `${preset.name.trim()}-${Math.max(1, Number(preset.count) || 1)}`
+}
+
+// Whether the preset can be deployed as-is. The header's New VM button acts on
+// the stored preset without opening a dialog first, so every required field has
+// to be checked here rather than by form validation. Only `name` is read off the
+// image list, so any {name} shape stands in for OSImage[].
+export function quickDeployPresetReady(preset: QuickDeployPreset, vmOSImages: { name: string }[]): boolean {
+  if (!preset.name.trim()) return false
+  if ((Number(preset.count) || 0) < 1) return false
+  if (!preset.osImageRef.trim()) return false
+  if (preset.ipAssignment === 'static' && !preset.staticIP.trim()) return false
+  if (preset.cloudInitMode === 'create' && !(preset.cloudInitTemplateName.trim() && preset.cloudInitUserData.trim())) return false
+  if (invalidVMConfigReason(preset)) return false
+  // Checked against the VM-capable subset the dialog offers, so a preset naming
+  // a baremetal-only image cannot slip through.
+  return vmOSImages.some((img) => img.name === preset.osImageRef)
 }
 
 // The Create dialog is a real <form>, so the browser enforces required/min on

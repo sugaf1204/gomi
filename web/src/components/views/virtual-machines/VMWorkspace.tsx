@@ -9,9 +9,6 @@ import type { VMForm, VMPrimaryAction } from './vmFormState'
 type VMWorkspaceProps = {
   virtualMachines: VirtualMachine[]
   dataLoading: boolean
-  quickDeploying: boolean
-  onQuickDeploy: () => void
-  onOpenQuickDeploySettings: () => void
   setForm: Dispatch<SetStateAction<VMForm>>
   setAdvancedOpen: Dispatch<SetStateAction<boolean>>
   setFormOpen: Dispatch<SetStateAction<boolean>>
@@ -35,9 +32,6 @@ type VMWorkspaceProps = {
 export function VMWorkspace({
   virtualMachines,
   dataLoading,
-  quickDeploying,
-  onQuickDeploy,
-  onOpenQuickDeploySettings,
   setForm,
   setAdvancedOpen,
   setFormOpen,
@@ -64,10 +58,6 @@ export function VMWorkspace({
           <div className="flex justify-between items-center gap-2">
             <h2 className="text-[1.4rem]">Virtual Machines</h2>
             <div className="flex items-center justify-end flex-wrap gap-[0.35rem]">
-              <button className="bg-brand border-brand-strong text-white py-[0.35rem] px-[0.55rem] text-[0.82rem]" disabled={quickDeploying} onClick={onQuickDeploy}>
-                {quickDeploying ? 'Deploying...' : 'Quick Deploy'}
-              </button>
-              <button className="py-[0.35rem] px-[0.55rem] text-[0.82rem]" disabled={quickDeploying} onClick={onOpenQuickDeploySettings}>Preset</button>
               <button
                 className="py-[0.35rem] px-[0.55rem] text-[0.82rem]"
                 onClick={() => {
