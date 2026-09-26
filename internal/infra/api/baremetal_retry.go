@@ -11,8 +11,8 @@ import (
 
 // RetryBareMetalClaim is an explicit administrator recovery operation. It never
 // releases ownership or changes the sealed bootstrap, disk or enrolled identity.
-// A failed installer may have lost its key: the PXE identity check still runs
-// before any destructive operation, and rejects such a retry without wiping.
+// A failed installer can still hold the only identity copy in RAM. Require
+// authenticated disk-restoration evidence before retrying, even after timeout.
 func (s *Server) RetryBareMetalClaim(c echo.Context) error {
 	if s.bareMetal == nil || s.osimages == nil {
 		return c.NoContent(http.StatusServiceUnavailable)
@@ -43,7 +43,7 @@ func (s *Server) RetryBareMetalClaim(c echo.Context) error {
 	// bootstrap without waiting for the full provisioning timeout.
 	postInstall := h.State == baremetal.Deploying && m.Provision.Active &&
 		m.Phase == machine.PhaseProvisioning && m.Provision.Artifacts["imageApplied"] == "true"
-	if !failed && !postInstall {
+	if (!failed && !postInstall) || m.Provision.Artifacts["imageApplied"] != "true" {
 		return bareMetalError(c, baremetal.ErrConflict)
 	}
 	img, err := s.osimages.Get(ctx, m.OSPreset.ImageRef)

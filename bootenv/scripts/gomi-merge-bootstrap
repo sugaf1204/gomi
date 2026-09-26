@@ -2,6 +2,7 @@
 """Combine decrypted CABPK data with GOMI's OS/network/completion seed locally."""
 import argparse
 import os
+import re
 from pathlib import Path
 import sys
 import tempfile
@@ -15,6 +16,15 @@ class BootstrapDumper(yaml.SafeDumper):
 def represent_string(dumper, value):
     # YAML quoting/line wrapping can insert escapes or double quotes *inside*
     # Jinja expressions. Cloud-init runs Jinja before parsing the YAML.
+    if getattr(dumper, "jinja", False):
+        # Boundary trim tags operate on the complete YAML document, not just
+        # the logical value. Trim its own whitespace first, then stop Jinja
+        # from consuming the block header or the following YAML field.
+        boundary = "{# gomi scalar boundary #}"
+        if re.match(r"\s*{[{%#]-", value):
+            value = boundary + value.lstrip()
+        if re.search(r"-(?:}}|%}|#})\s*$", value):
+            value = value.rstrip() + boundary
     literal = "\n" in value or any(mark in value for mark in ("{{", "{%", "{#"))
     return dumper.represent_scalar("tag:yaml.org,2002:str", value, style="|" if literal else None)
 
@@ -22,8 +32,12 @@ def represent_string(dumper, value):
 BootstrapDumper.add_representer(str, represent_string)
 
 
-def serialize(config):
-    return yaml.dump(config, Dumper=BootstrapDumper, sort_keys=False, width=sys.maxsize)
+def serialize(config, jinja=False):
+    class Dumper(BootstrapDumper):
+        pass
+
+    Dumper.jinja = jinja
+    return yaml.dump(config, Dumper=Dumper, sort_keys=False, width=sys.maxsize)
 
 
 def merge(base, bootstrap):
@@ -86,7 +100,7 @@ def main():
         raise ValueError("invalid metadata")
     metadata["instance-id"] = args.owner
     private_write(seed / "meta-data", yaml.safe_dump(metadata))
-    private_write(seed / "user-data", header + serialize(merged))
+    private_write(seed / "user-data", header + serialize(merged, jinja=source.startswith("## template: jinja")))
     os.chmod(seed, 0o700)
 
 

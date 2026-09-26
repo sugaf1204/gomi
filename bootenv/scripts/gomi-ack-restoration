@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+# Sealed BareMetal only: do not reboot until the server persists the restore event.
+set -euo pipefail
+[ "$#" -eq 1 ] && [ -n "$1" ] || exit 1
+while ! curl -fsS --connect-timeout 10 --max-time 30 -X POST \
+  --data-urlencode type=image_applied \
+  --data-urlencode 'message=curtin install completed' "$1" >/dev/null 2>&1; do
+  echo 'Waiting for GOMI to acknowledge restored disk identity; keeping installer running' >&2
+  sleep 5
+done

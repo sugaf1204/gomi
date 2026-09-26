@@ -131,6 +131,8 @@ func runBareMetalLifecycle(t *testing.T, kube client.Client) {
 	deployed.Phase = machine.PhaseReady
 	deployed.Provision.Active = false
 	deployed.Provision.CompletedAt = &now
+	// Completion follows curtin restoring the enrolled identity to disk.
+	deployed.Provision.Artifacts = map[string]string{"imageApplied": "true"}
 	must(t, backend.Machines().Upsert(ctx, deployed))
 	step()
 	must(t, kube.Get(ctx, objectKey, infra))
