@@ -106,11 +106,14 @@ func (s *Server) DeleteBareMetalClaim(c echo.Context) error {
 	}
 	// A running installer holds its enrollment private key in RAM. Never reboot
 	// it into cleanup while its target disk may be between partition and restore.
-	if m.Provision != nil && m.Provision.Active {
+	if m.Provision != nil && m.Provision.Active && m.Provision.Artifacts["imageApplied"] != "true" {
 		return c.JSON(http.StatusAccepted, h)
 	}
-	if h.State == baremetal.Failed || m.Phase == machine.PhaseError {
-		return c.JSON(http.StatusConflict, jsonError("failed physical deployment requires recovery before release"))
+	// Once curtin restored the identity, cancellation may clean up a failed or
+	// stalled guest bootstrap. If cleanup itself failed, do not create an
+	// automatic destructive retry loop; only explicit admin recovery may retry.
+	if m.SealedBootstrap != nil && m.SealedBootstrap.Cleanup && (h.State == baremetal.Failed || m.Phase == machine.PhaseError) {
+		return c.JSON(http.StatusConflict, jsonError("failed physical cleanup requires explicit recovery"))
 	}
 	original := m
 	m.TargetDisk = h.TargetDisk

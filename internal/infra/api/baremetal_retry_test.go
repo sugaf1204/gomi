@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -27,6 +28,10 @@ func TestBareMetalRetryRequiresFailedAttemptAndAdmin(t *testing.T) {
 		attempt string
 		want    int
 	}{
+		{"delete-failed", false, auth.RoleOperator, baremetal.Failed, "old", http.StatusAccepted},
+		{"delete-post-install", true, auth.RoleOperator, baremetal.Deploying, "old", http.StatusAccepted},
+		{"delete-installer", true, auth.RoleOperator, baremetal.Deploying, "old", http.StatusAccepted},
+		{"delete-cleanup-failed", false, auth.RoleOperator, baremetal.Failed, "old", http.StatusConflict},
 		{"post-install", true, auth.RoleAdmin, baremetal.Deploying, "old", http.StatusAccepted},
 		{"retry", false, auth.RoleAdmin, baremetal.Failed, "old", http.StatusAccepted},
 		{"running", true, auth.RoleAdmin, baremetal.Failed, "old", http.StatusConflict},
@@ -56,8 +61,11 @@ func TestBareMetalRetryRequiresFailedAttemptAndAdmin(t *testing.T) {
 			if tc.state == baremetal.Deploying {
 				m.Phase = machine.PhaseProvisioning
 			}
-			if tc.name == "post-install" {
+			if strings.HasSuffix(tc.name, "post-install") {
 				m.Provision.Artifacts = map[string]string{"imageApplied": "true"}
+			}
+			if tc.name == "delete-cleanup-failed" {
+				m.SealedBootstrap.Cleanup = true
 			}
 			if err = b.Machines().Upsert(ctx, m); err != nil {
 				t.Fatal(err)
@@ -86,7 +94,12 @@ func TestBareMetalRetryRequiresFailedAttemptAndAdmin(t *testing.T) {
 			createUser(t, b.Auth(), "actor", "password", tc.role)
 			token := createSession(t, b.Auth(), "actor")
 			e := infraapi.NewServer(infraapi.ServerConfig{Machines: machine.NewService(b.Machines()), OSImages: osimage.NewService(b.OSImages()), AuthStore: b.Auth(), AuthService: infraapi.NewAuthService(b.Auth(), time.Hour), BareMetal: s}).Echo()
-			rec := doRequest(e, http.MethodPost, "/api/v1/bare-metal-claims/capi-owner/retry", map[string]string{"attemptID": tc.attempt}, token)
+			method, route := http.MethodPost, "/api/v1/bare-metal-claims/capi-owner/retry"
+			deleting := strings.HasPrefix(tc.name, "delete-")
+			if deleting {
+				method, route = http.MethodDelete, "/api/v1/bare-metal-claims/capi-owner"
+			}
+			rec := doRequest(e, method, route, map[string]string{"attemptID": tc.attempt}, token)
 			requireStatus(t, rec, tc.want)
 			updated, err := s.FindOwner(ctx, h.Owner)
 			if err != nil {
@@ -96,14 +109,26 @@ func TestBareMetalRetryRequiresFailedAttemptAndAdmin(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if tc.want == http.StatusAccepted {
-				if updated.State != baremetal.Deploying || updated.AttemptID == "old" || saved.Provision.AttemptID != updated.AttemptID {
+			if tc.want == http.StatusAccepted && tc.name != "delete-installer" {
+				next := baremetal.Deploying
+				if deleting {
+					next = baremetal.Releasing
+				}
+				if updated.State != next || updated.AttemptID == "old" || saved.Provision.AttemptID != updated.AttemptID {
 					t.Fatal("new attempt not atomically fenced")
 				}
-				if string(saved.SealedBootstrap.Envelope) != string(m.SealedBootstrap.Envelope) || saved.TargetDisk != m.TargetDisk {
+				if saved.TargetDisk != m.TargetDisk || (!deleting && string(saved.SealedBootstrap.Envelope) != string(m.SealedBootstrap.Envelope)) || (deleting && (!saved.SealedBootstrap.Cleanup || (len(saved.SealedBootstrap.Envelope) != 0 && string(saved.SealedBootstrap.Envelope) != "null"))) {
 					t.Fatal("retry changed enrollment inputs")
 				}
-				requireStatus(t, doRequest(e, http.MethodPost, "/api/v1/bare-metal-claims/capi-owner/retry", map[string]string{"attemptID": "old"}, token), http.StatusConflict)
+				if deleting {
+					requireStatus(t, doRequest(e, http.MethodDelete, "/api/v1/bare-metal-claims/capi-owner", nil, token), http.StatusAccepted)
+					again, err := s.FindOwner(ctx, h.Owner)
+					if err != nil || again != updated {
+						t.Fatal("repeat deletion restarted cleanup")
+					}
+				} else {
+					requireStatus(t, doRequest(e, http.MethodPost, "/api/v1/bare-metal-claims/capi-owner/retry", map[string]string{"attemptID": "old"}, token), http.StatusConflict)
+				}
 				if err = b.Machines().Upsert(ctx, m); err == nil {
 					t.Fatal("late previous attempt overwrote retry")
 				}

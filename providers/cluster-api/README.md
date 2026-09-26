@@ -195,12 +195,15 @@ stable CAPI claim ID.
 Pool acquisition and deployment commit are atomic in GOMI's SQL store. A repeat or
 lost response observes the existing claim instead of starting another install.
 Normal machine mutation APIs are blocked for enrolled hosts. A deletion during
-installation waits rather than rebooting an installer holding its key in RAM.
-Once installation completes, deletion starts a separate OS reset without CABPK
+disk installation waits rather than rebooting an installer holding its key in RAM.
+Once curtin reports `image_applied`, deletion can cancel an unfinished kubeadm
+bootstrap. A failed deployment can also enter cleanup; the identity check still
+fails closed before wiping if its key was lost. Deletion starts an OS reset without CABPK
 data and keeps the finalizer until the reset completes. It preserves hardware
 inventory and the enrollment identity. It does not promise forensic erasure of
 old flash blocks. A failed physical deployment retains its claim for recovery;
-there is no automatic endless reinstall loop.
+there is no automatic endless reinstall loop. Failed cleanup requires explicit
+administrator recovery rather than repeatedly resetting the disk.
 
 After fixing the cause, an administrator can explicitly retry a **Failed** claim
 with `POST /api/v1/bare-metal-claims/<owner>/retry` and JSON
