@@ -29,6 +29,8 @@ func TestBareMetalRetryRequiresFailedAttemptAndAdmin(t *testing.T) {
 		want    int
 	}{
 		{"delete-failed", false, auth.RoleOperator, baremetal.Failed, "old", http.StatusAccepted},
+		{"delete-failed-before-restore", false, auth.RoleOperator, baremetal.Failed, "old", http.StatusConflict},
+		{"failed-before-restore", false, auth.RoleAdmin, baremetal.Failed, "old", http.StatusConflict},
 		{"delete-post-install", true, auth.RoleOperator, baremetal.Deploying, "old", http.StatusAccepted},
 		{"delete-installer", true, auth.RoleOperator, baremetal.Deploying, "old", http.StatusAccepted},
 		{"delete-cleanup-failed", false, auth.RoleOperator, baremetal.Failed, "old", http.StatusConflict},
@@ -61,7 +63,7 @@ func TestBareMetalRetryRequiresFailedAttemptAndAdmin(t *testing.T) {
 			if tc.state == baremetal.Deploying {
 				m.Phase = machine.PhaseProvisioning
 			}
-			if strings.HasSuffix(tc.name, "post-install") {
+			if strings.HasSuffix(tc.name, "post-install") || tc.name == "retry" || tc.name == "delete-failed" || tc.name == "delete-cleanup-failed" || tc.name == "stale" {
 				m.Provision.Artifacts = map[string]string{"imageApplied": "true"}
 			}
 			if tc.name == "delete-cleanup-failed" {

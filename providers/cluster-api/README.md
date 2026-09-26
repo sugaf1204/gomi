@@ -197,8 +197,10 @@ lost response observes the existing claim instead of starting another install.
 Normal machine mutation APIs are blocked for enrolled hosts. A deletion during
 disk installation waits rather than rebooting an installer holding its key in RAM.
 Once curtin reports `image_applied`, deletion can cancel an unfinished kubeadm
-bootstrap. A failed deployment can also enter cleanup; the identity check still
-fails closed before wiping if its key was lost. Deletion starts an OS reset without CABPK
+bootstrap. Failed or timed-out deployments require the same authenticated
+`image_applied` evidence: without it, cleanup and retry return 409 and preserve
+the installer RAM, which may hold the only remaining identity copy. Recover the
+installer and finish restoring the identity before rebooting. Deletion starts an OS reset without CABPK
 data and keeps the finalizer until the reset completes. It preserves hardware
 inventory and the enrollment identity. It does not promise forensic erasure of
 old flash blocks. A failed physical deployment retains its claim for recovery;
@@ -207,7 +209,8 @@ administrator recovery rather than repeatedly resetting the disk.
 
 After fixing the cause, an administrator can explicitly retry a **Failed** claim
 with `POST /api/v1/bare-metal-claims/<owner>/retry` and JSON
-`{"attemptID":"<failed attempt ID>"}`. The installer must no longer be active.
+`{"attemptID":"<failed attempt ID>"}`. The installer must no longer be active, and its authenticated `image_applied`
+event must confirm the identity was restored to disk.
 For a broken guest bootstrap still waiting for its timeout, a **Deploying** claim
 can also be retried after the authenticated `image_applied` event confirms curtin
 completed and restored the enrollment keys. Check guest logs before requesting

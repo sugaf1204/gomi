@@ -1,3 +1,10 @@
+gomi (0.0.38) unstable; urgency=medium
+
+  * Preserve RAM-held BareMetal identities after failed disk installation.
+  * Guard cloud-init YAML boundaries against Jinja whitespace control.
+
+ -- sugaf1204 <sugaf1204@example.invalid>  Sun, 27 Sep 2026 04:10:00 +0900
+
 gomi (0.0.37) unstable; urgency=medium
 
   * Allow CAPI deletion to clean up failed or stalled guest bootstrap after

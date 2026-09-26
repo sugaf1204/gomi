@@ -96,7 +96,7 @@ class MergeTests(unittest.TestCase):
         config = merger.merge({"runcmd": [callback], "ssh_authorized_keys": ["ssh-ed25519 public"]},
                               {"write_files": [{"path": "/run/kubeadm.yaml", "content": content}],
                                "runcmd": ["echo {{ v1['local_hostname'] }}", "x" * 150 + " {{ v1.instance_id }}"]})
-        rendered = Environment(undefined=StrictUndefined).from_string(merger.serialize(config)).render(
+        rendered = Environment(undefined=StrictUndefined).from_string(merger.serialize(config, jinja=True)).render(
             v1={"local_hostname": "node1", "instance_id": "capi-owner"})
         result = yaml.safe_load(rendered)
         kubeadm = yaml.safe_load(result["write_files"][0]["content"])
@@ -105,6 +105,24 @@ class MergeTests(unittest.TestCase):
         self.assertEqual(result["runcmd"][0], "echo node1")
         self.assertEqual(result["ssh_authorized_keys"], ["ssh-ed25519 public"])
         self.assertEqual(yaml.safe_load(merger.serialize(config)), config)
+
+    def test_jinja_boundary_trimming_cannot_consume_yaml_structure(self):
+        env = Environment(undefined=StrictUndefined, keep_trailing_newline=True)
+        cases = [
+            "{{- value }}", "  \n{{- value }}", "{{ value -}}\n\n",
+            "{% if true -%}echo hello{%- endif %}",
+            "{%- if true %}echo hello{% endif -%}\n",
+            "{%- if false %}unused{% endif -%}",
+            "{#- comment -#}", "{{- 'quoted' -}}", "echo {{- value }}",
+            "a\n  {{- value -}}\n b", "{{ value }}\n\n",
+        ]
+        for value in cases:
+            with self.subTest(value=value):
+                config = {"runcmd": [value, "next-command"], "hostname": "unchanged"}
+                result = yaml.safe_load(env.from_string(merger.serialize(config, jinja=True)).render(value="hello"))
+                self.assertEqual(result["runcmd"], [env.from_string(value).render(value="hello"), "next-command"])
+                self.assertEqual(result["hostname"], "unchanged")
+                self.assertEqual(yaml.safe_load(merger.serialize(config)), config)
 
     def test_completion_is_after_bootstrap_and_gomi_setup_survives(self):
         callback = "# gomi-capi-completion\nnotify /install-complete"

@@ -104,10 +104,13 @@ func (s *Server) DeleteBareMetalClaim(c echo.Context) error {
 	if err != nil {
 		return bareMetalError(c, err)
 	}
-	// A running installer holds its enrollment private key in RAM. Never reboot
-	// it into cleanup while its target disk may be between partition and restore.
-	if m.Provision != nil && m.Provision.Active && m.Provision.Artifacts["imageApplied"] != "true" {
-		return c.JSON(http.StatusAccepted, h)
+	// Even a failed or timed-out installer may hold the only identity copy in
+	// RAM. Require proof of disk restoration before any cleanup power cycle.
+	if m.Provision == nil || m.Provision.Artifacts["imageApplied"] != "true" {
+		if m.Provision != nil && m.Provision.Active {
+			return c.JSON(http.StatusAccepted, h)
+		}
+		return c.JSON(http.StatusConflict, jsonError("disk identity restoration is unconfirmed; recover the installer before rebooting"))
 	}
 	// Once curtin restored the identity, cancellation may clean up a failed or
 	// stalled guest bootstrap. If cleanup itself failed, do not create an
