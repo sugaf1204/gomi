@@ -29,8 +29,17 @@ jobs:
         with:
           go-version: '1.26.x'
           cache-dependency-path: |
+            go.sum
             providers/cluster-api/go.sum
             providers/cluster-api/test/integration/go.sum
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Build embedded UI required by the CLI tests
+        working-directory: web
+        run: npm ci && npm run build
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
