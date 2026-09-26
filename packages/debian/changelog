@@ -1,3 +1,11 @@
+gomi (0.0.36) unstable; urgency=medium
+
+  * Preserve embedded Jinja expressions in sealed BareMetal cloud-init data.
+  * Add explicit administrator recovery with atomic deployment attempt fences.
+  * Skip v0.0.35: its release was stopped by the package/tag version check.
+
+ -- sugaf1204 <sugaf1204@example.invalid>  Sun, 27 Sep 2026 03:15:00 +0900
+
 gomi (0.0.34) unstable; urgency=medium
 
   * Add explicitly enrolled BareMetal pools and atomic Cluster API host claims.
