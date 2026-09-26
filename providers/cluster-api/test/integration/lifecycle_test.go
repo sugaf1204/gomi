@@ -53,6 +53,7 @@ func TestRealAPIsLifecycle(t *testing.T) {
 	for _, family := range []string{"ubuntu", "fedora"} {
 		t.Run(family, func(t *testing.T) { runLifecycle(t, kube, family) })
 	}
+	t.Run("bare-metal", func(t *testing.T) { runBareMetalLifecycle(t, kube) })
 	t.Run("manager-watch", func(t *testing.T) { testManagerWatches(t, config, kube) })
 }
 func runLifecycle(t *testing.T, kube client.Client, family string) {
@@ -88,7 +89,7 @@ func runLifecycle(t *testing.T, kube client.Client, family string) {
 	bootstrap := "bootstrap"
 	owner := &clusterv1.Machine{ObjectMeta: metav1.ObjectMeta{Name: "owner", Namespace: namespace}, Spec: clusterv1.MachineSpec{ClusterName: cluster.Name, InfrastructureRef: clusterv1.ContractVersionedObjectReference{APIGroup: infrav1.GroupVersion.Group, Kind: "GomiMachine", Name: "machine"}, Bootstrap: clusterv1.Bootstrap{DataSecretName: &bootstrap}}}
 	must(t, kube.Create(ctx, owner))
-	machine := &infrav1.GomiMachine{ObjectMeta: metav1.ObjectMeta{Name: "machine", Namespace: namespace, OwnerReferences: []metav1.OwnerReference{{APIVersion: clusterv1.GroupVersion.String(), Kind: "Machine", Name: owner.Name, UID: owner.UID}}}, Spec: infrav1.GomiMachineSpec{VirtualMachine: infrav1.VirtualMachineSpec{OSImageRef: "prepared", HypervisorRef: "test-hv", Resources: infrav1.Resources{CPUCores: 2, MemoryMB: 2048, DiskGB: 20}}}}
+	machine := &infrav1.GomiMachine{ObjectMeta: metav1.ObjectMeta{Name: "machine", Namespace: namespace, OwnerReferences: []metav1.OwnerReference{{APIVersion: clusterv1.GroupVersion.String(), Kind: "Machine", Name: owner.Name, UID: owner.UID}}}, Spec: infrav1.GomiMachineSpec{VirtualMachine: &infrav1.VirtualMachineSpec{OSImageRef: "prepared", HypervisorRef: "test-hv", Resources: infrav1.Resources{CPUCores: 2, MemoryMB: 2048, DiskGB: 20}}}}
 	must(t, kube.Create(ctx, machine))
 	data := []byte("## template: jinja\n#cloud-config\nwrite_files:\n- path: /run/kubeadm/kubeadm.yaml\n  content: |\n    apiVersion: kubeadm.k8s.io/v1beta4\n    kind: JoinConfiguration\n    nodeRegistration:\n      kubeletExtraArgs:\n      - name: provider-id\n        value: gomi:///{{ v1.local_hostname }}\nruncmd:\n- kubeadm join --config /run/kubeadm/kubeadm.yaml\n")
 	must(t, kube.Create(ctx, &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: bootstrap, Namespace: namespace}, Data: map[string][]byte{"value": data, "format": []byte("cloud-config")}}))

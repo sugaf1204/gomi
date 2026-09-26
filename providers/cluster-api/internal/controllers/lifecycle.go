@@ -29,6 +29,9 @@ func ensureTemplate(ctx context.Context, api *gomi.Client, id, data string) erro
 	return api.CreateTemplate(ctx, gomi.Template{Name: id, UserData: data, Description: ownership(id), DeliveryMode: "vm-seed"})
 }
 func (r *MachineReconciler) remove(ctx context.Context, api *gomi.Client, infra *infrav1.GomiMachine) (ctrl.Result, error) {
+	if infra.Spec.Kind == "BareMetal" {
+		return r.removeBareMetal(ctx, api, infra)
+	}
 	if !controllerutil.ContainsFinalizer(infra, finalizer) {
 		return ctrl.Result{}, nil
 	}

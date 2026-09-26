@@ -71,6 +71,7 @@ type curtinStorage struct {
 }
 
 type curtinConfig struct {
+	EarlyCommands        map[string][]string     `yaml:"early_commands,omitempty"`
 	Install              curtinInstall           `yaml:"install"`
 	Reporting            curtinReporting         `yaml:"reporting"`
 	BlockMeta            curtinBlockMeta         `yaml:"block-meta"`

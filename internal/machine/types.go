@@ -103,7 +103,18 @@ const (
 	ProvisionArtifactHypervisorRegistrationTokenExpiresAt = "hypervisorRegistrationTokenExpiresAt"
 )
 
+// SealedBootstrap is encrypted for a host-enrolled RSA key. Only the installer
+// with that private key may reconstruct the CAPI cloud-config.
+type SealedBootstrap struct {
+	Cleanup        bool            `json:"cleanup,omitempty"`
+	Owner          string          `json:"owner"`
+	KeyFingerprint string          `json:"keyFingerprint"`
+	Envelope       json.RawMessage `json:"envelope"`
+}
+
 type Machine struct {
+	SealedBootstrap *SealedBootstrap `json:"sealedBootstrap,omitempty"`
+
 	Name string `json:"name"`
 
 	// Spec fields

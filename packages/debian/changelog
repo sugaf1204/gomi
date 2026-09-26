@@ -1,3 +1,13 @@
+gomi (0.0.34) unstable; urgency=medium
+
+  * Add explicitly enrolled BareMetal pools and atomic Cluster API host claims.
+  * Seal physical kubeadm bootstrap for the enrolled host and preserve its
+    identity before installation; retain ownership through deployment cleanup.
+  * Add local service-account creation with private, idempotent token files.
+  * Publish canonical provider image references for clusterctl.
+
+ -- sugaf1204 <sugaf1204@example.invalid>  Sun, 27 Sep 2026 03:00:00 +0900
+
 gomi (0.0.33) unstable; urgency=medium
 
   * Add an experimental Cluster API infrastructure provider for cloud-image VMs.

@@ -22,6 +22,11 @@ import (
 
 func main() {
 	args := os.Args[1:]
+	if accountIndex := indexArg(args, "service-account"); accountIndex >= 0 {
+		accountArgs := append([]string{}, args[accountIndex+1:]...)
+		accountArgs = append(accountArgs, args[:accountIndex]...)
+		os.Exit(runServiceAccountCommand(accountArgs))
+	}
 	if setupIndex := indexArg(args, "setup"); setupIndex >= 0 {
 		setupArgs := append([]string{}, args[setupIndex+1:]...)
 		setupArgs = append(setupArgs, args[:setupIndex]...)

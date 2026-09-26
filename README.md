@@ -69,6 +69,27 @@ Open the web console at `http://<host>:5392/` and sign in.
 | `operator` | Operational write access for provisioning and lifecycle actions |
 | `viewer` | Read-only |
 
+### Automation credentials
+
+An administrator can issue service accounts through the authenticated API. On the
+server, a local administrator with database access can also create an account
+without resetting the interactive administrator password:
+
+```bash
+sudo install -d -m 700 /etc/gomi/credentials
+sudo gomi service-account create --config=/etc/gomi/gomi.yaml \
+  --name=cluster-api --role=operator \
+  --token-file=/etc/gomi/credentials/cluster-api.token
+```
+
+The token is written to a mode-0600 file, never standard output. Re-running the
+same command verifies the existing account and token; it does not rotate or
+escalate the account. Keep the file outside Git, and supply its contents as a
+Bearer token or as the Cluster API credentials Secret's `token` key. Use an admin
+account only for host enrollment; the provider itself needs the operator role.
+See [the provider guide](providers/cluster-api/README.md) for BareMetal enrollment,
+sealed bootstrap, prerequisites and recovery limitations.
+
 ### Profiling
 
 Runtime profiling endpoints are exposed on the main HTTP server.

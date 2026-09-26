@@ -8,15 +8,15 @@ importing server internals or accessing its database.
 
 - Cluster API **v1.14.2**, **v1beta2 contract**; provider CRDs use v1alpha1.
 - `GomiCluster`, `GomiMachine`, `GomiMachineTemplate`.
-- Cloud-image VMs with existing kubeadm bootstrap/control-plane providers.
+- Cloud-image VMs and explicitly enrolled physical hosts with the kubeadm bootstrap/control-plane providers.
 - Create, observe, delete, retry, pause and rediscovery after `clusterctl move`.
 - OS-neutral cloud-config transport; authenticated server integration tests cover
   Ubuntu and Fedora. Arbitrary distro images are not automatically Kubernetes-ready.
 
-Bare-metal allocation/release, Ignition, image building, load-balancer management,
-CNI installation and ClusterClass are not implemented. BareMetal is rejected by
-both the CRD and controller. VM errors surface in Ready; replacement/remediation
-is handled by CAPI and optionally a MachineHealthCheck.
+Ignition, image building, load-balancer management, CNI installation and ClusterClass
+are not implemented. Deployment errors surface in Ready; replacement/remediation
+is handled by CAPI and optionally a MachineHealthCheck. Physical hosts remain
+allocated until OS cleanup completes; failures require recovery before reuse.
 
 ## Prerequisites
 
@@ -143,7 +143,7 @@ gh release download "$TAG" --repo sugaf1204/gomi --pattern 'cluster-api-provider
 sha256sum -c provider-checksums.txt
 docker load -i "cluster-api-provider-gomi_${TAG}_linux_amd64.tar.gz"
 # Example for a local kind management cluster:
-kind load docker-image "capgomi:${TAG}" --name <management-cluster>
+kind load docker-image "docker.io/library/capgomi:${TAG}" --name <management-cluster>
 kubectl apply -f infrastructure-components.yaml
 ```
 
@@ -153,3 +153,58 @@ under `dist/`. Publish these together on a SemVer GitHub release. Initial metada
 maps 0.0.x to v1beta2; update it for additional minor release series. For published
 assets, configure clusterctl with a custom InfrastructureProvider named `gomi`
 and the release's components URL. No built-in provider registration is included.
+
+## BareMetal enrollment and lifecycle
+
+Use `kind: BareMetal` with `bareMetal.pool` and `bareMetal.osImageRef` in the
+GomiMachineTemplate instead of `virtualMachine`. GOMI must report
+`bareMetalSealedBootstrap: true`. An administrator enrolls each existing physical
+machine using `PUT /api/v1/bare-metal-hosts/<name>` with an explicit whole-disk `targetDisk`, a `pool` and trusted RSA
+`publicKey` in PEM SubjectPublicKeyInfo format. Obtain it through a verified SSH
+connection or another trusted channel, for example `ssh-keygen -e -m PKCS8 -f
+/etc/ssh/ssh_host_rsa_key.pub` on the host. Never send a private key to this API.
+
+The matching unencrypted RSA host private key must already be on the selected
+installation disk, in `/etc/ssh/ssh_host_rsa_key`, on an ext-family or XFS filesystem.
+For a blank host, provision/enroll its identity through a trusted initial setup
+first. Unsupported storage (including encrypted root without an unlock path) fails
+before partitioning. Keep an encrypted/offline identity backup for recovery from a
+power loss between disk erasure and key restoration. The temporary preservation
+copy is in RAM and cannot survive loss of power.
+
+The provider seals CABPK cloud-config using RSA-OAEP-SHA256 and AES-256-GCM, binding
+it to the host and stable claim owner. GOMI persists ciphertext, never a plaintext
+physical-bootstrap template. The updated boot environment preserves and verifies
+the host key, decrypts bootstrap before disk partitioning, installs the SquashFS
+rootfs, restores host keys and merges bootstrap into the local NoCloud seed. CA
+keys and join tokens are not served as public PXE user-data. Enrollment encryption
+protects confidentiality; it does not authenticate unsigned PXE boot code. Keep the
+provisioning network trusted and isolate it from untrusted clients.
+
+Only Ubuntu, Debian and Fedora SquashFS deployment paths are currently accepted.
+The image and/or bootstrap commands must install Kubernetes/CRI prerequisites for
+the selected OS/version. The provider does not turn an arbitrary image into a
+Kubernetes node automatically. Use `gomi:///{{ v1.instance_id }}` for kubelet's
+provider ID: physical metadata retains the host name but its instance ID is the
+stable CAPI claim ID.
+
+Pool acquisition and deployment commit are atomic in GOMI's SQL store. A repeat or
+lost response observes the existing claim instead of starting another install.
+Normal machine mutation APIs are blocked for enrolled hosts. A deletion during
+installation waits rather than rebooting an installer holding its key in RAM.
+Once installation completes, deletion starts a separate OS reset without CABPK
+data and keeps the finalizer until the reset completes. It preserves hardware
+inventory and the enrollment identity. It does not promise forensic erasure of
+old flash blocks. A failed physical deployment retains its claim for recovery;
+there is no automatic endless reinstall loop.
+
+This is reprovisioning, not adoption of an existing Kubernetes cluster. Back up
+etcd, application data and host identities before enabling the physical pool.
+Three hosts with three control planes have no spare surge capacity: use a CAPI
+rollout strategy compatible with the available pool and preserve etcd quorum.
+
+For crypto/seed interoperability checks, install `bootenv/tests/requirements.txt`
+in a virtual environment, set `GOMI_BOOTSTRAP_TEST_PYTHON` to its Python executable,
+and run the provider tests plus `python -m unittest discover -s bootenv/tests` from
+the repository root. `make integration` includes real Kubernetes CRD validation,
+SQL allocation and the GOMI HTTP lifecycle; physical boot still needs live testing.

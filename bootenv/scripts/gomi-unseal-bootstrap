@@ -1,0 +1,89 @@
+#!/usr/bin/env python3
+"""Decrypt a claim's bootstrap locally; never send the host private key to GOMI."""
+import argparse
+import base64
+import hashlib
+import json
+import os
+import sys
+import tempfile
+import yaml
+
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.asymmetric import padding, rsa
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+
+
+def unseal(document, private_key, host, owner):
+    expected = {"version", "algorithm", "host", "owner", "keyFingerprint",
+                "wrappedKey", "nonce", "ciphertext"}
+    if set(document) != expected:
+        raise ValueError("invalid envelope fields")
+    if document["version"] != 1 or document["algorithm"] != "RSA-OAEP-SHA256+A256GCM":
+        raise ValueError("unsupported envelope")
+    if document["host"] != host or document["owner"] != owner:
+        raise ValueError("claim identity mismatch")
+    if not isinstance(private_key, rsa.RSAPrivateKey) or private_key.key_size < 2048:
+        raise ValueError("invalid enrollment key")
+    der = private_key.public_key().public_bytes(
+        serialization.Encoding.DER, serialization.PublicFormat.SubjectPublicKeyInfo)
+    if hashlib.sha256(der).hexdigest() != document["keyFingerprint"]:
+        raise ValueError("enrollment fingerprint mismatch")
+    label = ("gomi-capi-bootstrap/v1\0" + host + "\0" + owner).encode()
+    wrapped = base64.b64decode(document["wrappedKey"], validate=True)
+    key = private_key.decrypt(wrapped, padding.OAEP(
+        mgf=padding.MGF1(hashes.SHA256()), algorithm=hashes.SHA256(), label=label))
+    nonce = base64.b64decode(document["nonce"], validate=True)
+    ciphertext = base64.b64decode(document["ciphertext"], validate=True)
+    if len(key) != 32 or len(nonce) != 12 or not 16 < len(ciphertext) <= (4 << 20) + 16:
+        raise ValueError("invalid encrypted bootstrap size")
+    return AESGCM(key).decrypt(nonce, ciphertext, label)
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    for name in ("key", "host", "owner", "input", "output"):
+        parser.add_argument("--" + name, required=True)
+    args = parser.parse_args()
+    with open(args.key, "rb") as stream:
+        raw_key = stream.read(65536)
+    if raw_key.startswith(b"-----BEGIN OPENSSH PRIVATE KEY-----"):
+        key = serialization.load_ssh_private_key(raw_key, password=None)
+    else:
+        key = serialization.load_pem_private_key(raw_key, password=None)
+    with open(args.input, "rb") as stream:
+        encoded = stream.read((6 << 20) + 1)
+    if len(encoded) > 6 << 20:
+        raise ValueError("bootstrap envelope too large")
+    plaintext = unseal(json.loads(encoded), key, args.host, args.owner)
+    source = plaintext.decode()
+    if not source.lstrip().startswith(("#cloud-config\n", "## template: jinja\n#cloud-config\n")):
+        raise ValueError("unsupported bootstrap format")
+    if not isinstance(yaml.safe_load(source), dict):
+        raise ValueError("invalid cloud-config")
+    # Write only after successful authentication; failed retries cannot replace
+    # existing seed data with partial or unauthenticated plaintext.
+    temporary = None
+    try:
+        with tempfile.NamedTemporaryFile(dir=os.path.dirname(args.output) or ".",
+                                         prefix=".gomi-seed-", delete=False) as stream:
+            temporary = stream.name
+            os.fchmod(stream.fileno(), 0o600)
+            stream.write(plaintext)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, args.output)
+        temporary = None
+    finally:
+        if temporary is not None:
+            os.unlink(temporary)
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except Exception:
+        # Exceptions from parsers/crypto libraries must not expose key material
+        # or bootstrap content in PXE logs or deployment events.
+        print("cannot authenticate or decrypt bare-metal bootstrap", file=sys.stderr)
+        sys.exit(1)

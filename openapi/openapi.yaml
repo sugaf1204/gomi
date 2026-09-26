@@ -21,6 +21,7 @@ tags:
   - name: audit
   - name: users
   - name: service-accounts
+  - name: bare-metal
 
 paths:
   /capabilities:
@@ -40,6 +41,9 @@ paths:
                   vmSeedTemplates:
                     type: boolean
                     description: Supports protected in-process VM seed delivery.
+                  bareMetalSealedBootstrap:
+                    type: boolean
+                    description: Supports enrolled physical host claims and sealed bootstrap delivery.
 
   /setup/status:
     get:
@@ -1237,6 +1241,138 @@ paths:
         '201':
           description: created
 
+  /bare-metal-hosts/{name}:
+    parameters:
+      - name: name
+        in: path
+        required: true
+        schema: {type: string}
+    put:
+      tags: [bare-metal]
+      summary: Enroll a physical host in an allocation pool (admin only)
+      description: Insert-only enrollment. Repeating the same pool/key preserves any active claim. Registered hosts reject ordinary machine mutation APIs.
+      security: [{bearerAuth: []}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [pool, publicKey, targetDisk]
+              properties:
+                pool: {type: string, minLength: 1}
+                targetDisk: {type: string, description: Explicit whole installation disk path}
+                publicKey:
+                  type: string
+                  description: Trusted PEM SubjectPublicKeyInfo RSA public key (2048 bits or greater). The corresponding private host key must exist on the installation disk.
+      responses:
+        '200':
+          description: Enrolled host, including existing claim state
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/BareMetalHost'}
+        '400': {description: Invalid enrollment key or request}
+        '403': {description: Administrator role required}
+        '404': {description: Physical machine not registered in GOMI}
+        '409': {description: Conflicting enrollment or active provisioning}
+    get:
+      tags: [bare-metal]
+      summary: Read physical host allocation state
+      security: [{bearerAuth: []}]
+      responses:
+        '200':
+          description: Enrolled host
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/BareMetalHost'}
+        '404': {description: Host is not enrolled}
+
+  /bare-metal-claims:
+    post:
+      tags: [bare-metal]
+      summary: Atomically acquire an enrolled host (operator or admin)
+      security: [{bearerAuth: []}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [pool, owner]
+              properties:
+                pool: {type: string, minLength: 1}
+                owner: {type: string, pattern: '^capi-[a-z0-9-]{1,123}$'}
+      responses:
+        '200':
+          description: Stable claim; repeating the owner returns the same host
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/BareMetalHost'}
+        '409': {description: Pool exhausted or owner already allocated to another pool}
+
+  /bare-metal-claims/{owner}:
+    parameters:
+      - name: owner
+        in: path
+        required: true
+        schema: {type: string}
+    get:
+      tags: [bare-metal]
+      summary: Observe a claim and reconcile completed installation or cleanup
+      security: [{bearerAuth: []}]
+      responses:
+        '200':
+          description: Current claim
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/BareMetalHost'}
+        '404': {description: Claim absent or cleanup completed and host released}
+        '409': {description: Deployment attempt identity conflict}
+    delete:
+      tags: [bare-metal]
+      summary: Reset the OS and release a claim after completion (operator or admin)
+      description: An unstarted claim is released immediately. Active installation is allowed to finish before cleanup. Failed installation requires recovery; it is never silently erased again. Physical inventory is retained.
+      security: [{bearerAuth: []}]
+      responses:
+        '202':
+          description: Waiting for deployment or OS cleanup
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/BareMetalHost'}
+        '204': {description: Claim already absent or unstarted claim released}
+        '409': {description: Ownership conflict or failed physical deployment requires recovery}
+
+  /bare-metal-claims/{owner}/deploy:
+    parameters:
+      - name: owner
+        in: path
+        required: true
+        schema: {type: string}
+    post:
+      tags: [bare-metal]
+      summary: Commit a sealed physical OS deployment (operator or admin)
+      description: Atomically persists the attempt and claim before power cycling. Retrying identical data never starts another installation. Requires a supported SquashFS image and an enrolled key present on the target disk.
+      security: [{bearerAuth: []}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [osImageRef, envelope]
+              properties:
+                osImageRef: {type: string}
+                envelope: {$ref: '#/components/schemas/SealedBootstrapEnvelope'}
+      responses:
+        '202':
+          description: Deployment committed or identical request already accepted
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/BareMetalHost'}
+        '400': {description: Invalid envelope, unsupported OS/artifact or missing power control}
+        '404': {description: Claim not found}
+        '409': {description: Ownership, state or deployment request conflict}
+
   /service-accounts:
     get:
       summary: List service accounts
@@ -1456,6 +1592,34 @@ components:
         role:
           type: string
           enum: [admin, operator, viewer]
+
+    BareMetalHost:
+      type: object
+      required: [name, pool, publicKey, targetDisk, state, revision]
+      properties:
+        name: {type: string}
+        pool: {type: string}
+        targetDisk: {type: string}
+        publicKey: {type: string, description: Enrolled RSA public key; never a private key}
+        owner: {type: string}
+        state: {type: string, enum: [Available, Claimed, Deploying, Ready, Releasing, Failed]}
+        revision: {type: integer, format: int64}
+        attemptID: {type: string}
+        ipAddress: {type: string}
+
+    SealedBootstrapEnvelope:
+      type: object
+      additionalProperties: false
+      required: [version, algorithm, host, owner, keyFingerprint, wrappedKey, nonce, ciphertext]
+      properties:
+        version: {type: integer, enum: [1]}
+        algorithm: {type: string, enum: [RSA-OAEP-SHA256+A256GCM]}
+        host: {type: string}
+        owner: {type: string}
+        keyFingerprint: {type: string, pattern: '^[a-f0-9]{64}$'}
+        wrappedKey: {type: string, format: byte}
+        nonce: {type: string, format: byte}
+        ciphertext: {type: string, format: byte}
 
     ServiceAccount:
       type: object

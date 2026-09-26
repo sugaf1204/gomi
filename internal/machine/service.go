@@ -172,6 +172,19 @@ func (s *Service) Reinstall(ctx context.Context, name, actor string, opts *Reins
 	if err != nil {
 		return Machine{}, err
 	}
+	m, err = PrepareReinstall(m, actor, opts, s.provisionTimeout)
+	if err != nil {
+		return Machine{}, err
+	}
+	if err := s.store.Upsert(ctx, m); err != nil {
+		return Machine{}, err
+	}
+	return m, nil
+}
+
+// PrepareReinstall validates and constructs an attempt without side effects.
+// Claim workflows persist it atomically with their ownership fence.
+func PrepareReinstall(m Machine, actor string, opts *ReinstallOptions, timeout time.Duration) (Machine, error) {
 	if opts != nil {
 		if opts.Hostname != nil {
 			m.Hostname = strings.TrimSpace(*opts.Hostname)
@@ -260,7 +273,7 @@ func (s *Service) Reinstall(ctx context.Context, name, actor string, opts *Reins
 		return Machine{}, err
 	}
 	now := time.Now().UTC()
-	deadline := now.Add(s.provisionTimeout)
+	deadline := now.Add(timeout)
 	m.Phase = PhaseProvisioning
 	m.LastError = ""
 	m.Provision = &ProvisionProgress{
@@ -274,9 +287,6 @@ func (s *Service) Reinstall(ctx context.Context, name, actor string, opts *Reins
 		CompletionToken: token,
 	}
 	m.UpdatedAt = now
-	if err := s.store.Upsert(ctx, m); err != nil {
-		return Machine{}, err
-	}
 	return m, nil
 }
 

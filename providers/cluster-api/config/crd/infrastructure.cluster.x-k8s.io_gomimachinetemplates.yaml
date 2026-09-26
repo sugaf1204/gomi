@@ -45,10 +45,31 @@ spec:
                 properties:
                   spec:
                     properties:
+                      bareMetal:
+                        description: BareMetalSpec selects a pool enrolled explicitly
+                          through the GOMI API.
+                        properties:
+                          osImageRef:
+                            description: |-
+                              OSImageRef must be a prepared SquashFS image with cloud-init, kubeadm,
+                              kubelet and the container runtime installed.
+                            minLength: 1
+                            type: string
+                          pool:
+                            minLength: 1
+                            type: string
+                        required:
+                        - osImageRef
+                        - pool
+                        type: object
+                        x-kubernetes-validations:
+                        - message: bareMetal is immutable; replace the Machine instead
+                          rule: self == oldSelf
                       kind:
                         default: VirtualMachine
                         enum:
                         - VirtualMachine
+                        - BareMetal
                         type: string
                       virtualMachine:
                         properties:
@@ -105,9 +126,12 @@ spec:
                         - osImageRef
                         - resources
                         type: object
-                    required:
-                    - virtualMachine
                     type: object
+                    x-kubernetes-validations:
+                    - message: BareMetal requires bareMetal and no virtualMachine
+                      rule: (self.kind == 'BareMetal') == has(self.bareMetal)
+                    - message: VirtualMachine requires virtualMachine and no bareMetal
+                      rule: (self.kind == 'VirtualMachine') == has(self.virtualMachine)
                 required:
                 - spec
                 type: object

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/sugaf1204/gomi/internal/auth"
+	"github.com/sugaf1204/gomi/internal/baremetal"
 	"github.com/sugaf1204/gomi/internal/bootenv"
 	"github.com/sugaf1204/gomi/internal/cloudinit"
 	"github.com/sugaf1204/gomi/internal/discovery"
@@ -33,6 +34,7 @@ import (
 
 type Runtime struct {
 	Config          config.Config
+	bareMetalStore  baremetal.Store
 	machineStore    machine.Store
 	subnetStore     subnet.Store
 	authStore       auth.Store
@@ -134,6 +136,7 @@ func (r *Runtime) buildStores(cfg config.Config) error {
 
 	log.Printf("database ready: driver=%s", cfg.DBDriver)
 
+	r.bareMetalStore = backend.BareMetal()
 	r.machineStore = backend.Machines()
 	r.subnetStore = backend.Subnets()
 	r.authStore = backend.Auth()
@@ -176,6 +179,7 @@ func (r *Runtime) StartServer(ctx context.Context) error {
 	}
 
 	srv := infraapi.NewServer(infraapi.ServerConfig{
+		BareMetal:        r.bareMetalStore,
 		Machines:         r.machineSvc,
 		PowerExecutor:    r.executor,
 		Subnets:          r.subnetStore,

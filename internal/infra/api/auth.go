@@ -2,8 +2,6 @@ package api
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"errors"
 	gohttp "net/http"
 	"strings"
@@ -222,13 +220,7 @@ func serviceAccountToResponse(account auth.ServiceAccount) serviceAccountRespons
 	}
 }
 
-func generateServiceAccountToken() (string, error) {
-	tokenBytes := make([]byte, 32)
-	if _, err := rand.Read(tokenBytes); err != nil {
-		return "", err
-	}
-	return "gomi_sa_" + hex.EncodeToString(tokenBytes), nil
-}
+func generateServiceAccountToken() (string, error) { return auth.GenerateServiceAccountToken() }
 
 type setupStatusResponse struct {
 	Required bool `json:"required"`

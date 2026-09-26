@@ -181,6 +181,9 @@ func (h *Handler) buildCurtinInstallConfig(ctx context.Context, c echo.Context, 
 	for i, cmd := range lateCommands {
 		cfg.LateCommands[fmt.Sprintf("%02d-gomi-late", i+10)] = []string{"sh", "-c", cmd}
 	}
+	if err := configureSealedBootstrap(&cfg, m, targetDisk); err != nil {
+		return "", err
+	}
 	raw, err := yaml.Marshal(cfg)
 	if err != nil {
 		return "", err
@@ -189,6 +192,9 @@ func (h *Handler) buildCurtinInstallConfig(ctx context.Context, c echo.Context, 
 }
 
 func (h *Handler) buildDiskImageDeployResponse(base, token, attemptID string, m *machine.Machine, img osimage.OSImage, info *hwinfo.HardwareInfo) (*diskImageDeployResponse, error) {
+	if m.SealedBootstrap != nil {
+		return nil, fmt.Errorf("sealed bare-metal bootstrap requires a SquashFS rootfs artifact")
+	}
 	if !img.Ready {
 		return nil, fmt.Errorf("os image %q is not ready", img.Name)
 	}

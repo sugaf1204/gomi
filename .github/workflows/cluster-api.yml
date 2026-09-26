@@ -4,6 +4,8 @@ on:
     paths:
       - 'providers/cluster-api/**'
       - 'internal/**'
+      - 'cmd/gomi/**'
+      - 'bootenv/**'
       - 'go.mod'
       - 'go.sum'
       - '.github/workflows/cluster-api.yml'
@@ -11,6 +13,8 @@ on:
     paths:
       - 'providers/cluster-api/**'
       - 'internal/**'
+      - 'cmd/gomi/**'
+      - 'bootenv/**'
       - 'go.mod'
       - 'go.sum'
       - '.github/workflows/cluster-api.yml'
@@ -27,6 +31,15 @@ jobs:
           cache-dependency-path: |
             providers/cluster-api/go.sum
             providers/cluster-api/test/integration/go.sum
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Boot environment crypto and seed tests
+        run: |
+          python -m venv "$RUNNER_TEMP/gomi-bootstrap-tests"
+          "$RUNNER_TEMP/gomi-bootstrap-tests/bin/pip" install -r bootenv/tests/requirements.txt
+          "$RUNNER_TEMP/gomi-bootstrap-tests/bin/python" -m unittest discover -s bootenv/tests -v
+          echo "GOMI_BOOTSTRAP_TEST_PYTHON=$RUNNER_TEMP/gomi-bootstrap-tests/bin/python" >> "$GITHUB_ENV"
       - name: Generate and verify CRDs
         working-directory: providers/cluster-api
         run: |
@@ -36,7 +49,7 @@ jobs:
         working-directory: providers/cluster-api
         run: make test build manifests
       - name: GOMI protected seed and deployment regressions
-        run: go test -race ./internal/cloudinit ./internal/infra/api ./internal/infra/pxehttp ./internal/infra/sql ./internal/infra/memory ./internal/vm
+        run: go test -race ./cmd/gomi ./internal/baremetal ./internal/machine ./internal/cloudinit ./internal/infra/api ./internal/infra/pxehttp ./internal/infra/sql ./internal/infra/memory ./internal/vm
       - name: Real Kubernetes and GOMI API integration
         working-directory: providers/cluster-api
         run: make integration
@@ -50,7 +63,7 @@ jobs:
           TAG: ${{ github.ref_name }}
         run: |
           set -euo pipefail
-          image="capgomi:${TAG}"
+          image="docker.io/library/capgomi:${TAG}"
           docker tag capgomi:dev "$image"
           docker run --rm "$image" --help
           make manifests IMG="$image"

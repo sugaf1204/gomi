@@ -42,7 +42,7 @@ func setup(t *testing.T) *fixture {
 	_ = infrav1.AddToScheme(scheme)
 	bootstrap := "bootstrap"
 	objects := []client.Object{
-		&infrav1.GomiMachine{ObjectMeta: metav1.ObjectMeta{Namespace: "test", Name: "machine", UID: "machine-uid", OwnerReferences: []metav1.OwnerReference{{APIVersion: clusterv1.GroupVersion.String(), Kind: "Machine", Name: "owner"}}}, Spec: infrav1.GomiMachineSpec{VirtualMachine: infrav1.VirtualMachineSpec{OSImageRef: "prepared-fedora", Resources: infrav1.Resources{CPUCores: 2, MemoryMB: 2048, DiskGB: 20}}}},
+		&infrav1.GomiMachine{ObjectMeta: metav1.ObjectMeta{Namespace: "test", Name: "machine", UID: "machine-uid", OwnerReferences: []metav1.OwnerReference{{APIVersion: clusterv1.GroupVersion.String(), Kind: "Machine", Name: "owner"}}}, Spec: infrav1.GomiMachineSpec{VirtualMachine: &infrav1.VirtualMachineSpec{OSImageRef: "prepared-fedora", Resources: infrav1.Resources{CPUCores: 2, MemoryMB: 2048, DiskGB: 20}}}},
 		&clusterv1.Machine{ObjectMeta: metav1.ObjectMeta{Namespace: "test", Name: "owner"}, Spec: clusterv1.MachineSpec{ClusterName: "cluster", Bootstrap: clusterv1.Bootstrap{DataSecretName: &bootstrap}}},
 		&clusterv1.Cluster{ObjectMeta: metav1.ObjectMeta{Namespace: "test", Name: "cluster"}, Spec: clusterv1.ClusterSpec{InfrastructureRef: clusterv1.ContractVersionedObjectReference{APIGroup: infrav1.GroupVersion.Group, Kind: "GomiCluster", Name: "infra"}}},
 		&infrav1.GomiCluster{ObjectMeta: metav1.ObjectMeta{Namespace: "test", Name: "infra"}, Spec: infrav1.GomiClusterSpec{Server: server.URL, CredentialsRef: infrav1.SecretReference{Name: "credentials"}}},

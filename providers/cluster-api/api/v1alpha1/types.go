@@ -90,13 +90,28 @@ type VirtualMachineSpec struct {
 	SSHKeyRefs   []string `json:"sshKeyRefs,omitempty"`
 }
 
+// BareMetalSpec selects a pool enrolled explicitly through the GOMI API.
+type BareMetalSpec struct {
+	// +kubebuilder:validation:MinLength=1
+	Pool string `json:"pool"`
+	// OSImageRef must be a prepared SquashFS image with cloud-init, kubeadm,
+	// kubelet and the container runtime installed.
+	// +kubebuilder:validation:MinLength=1
+	OSImageRef string `json:"osImageRef"`
+}
+
 // +kubebuilder:validation:XValidation:rule="!has(oldSelf.instanceID) || has(self.instanceID)",message="instanceID cannot be removed"
+// +kubebuilder:validation:XValidation:rule="(self.kind == 'BareMetal') == has(self.bareMetal)",message="BareMetal requires bareMetal and no virtualMachine"
+// +kubebuilder:validation:XValidation:rule="(self.kind == 'VirtualMachine') == has(self.virtualMachine)",message="VirtualMachine requires virtualMachine and no bareMetal"
+// +kubebuilder:validation:XValidation:rule="self.kind == oldSelf.kind",message="kind is immutable"
 type GomiMachineSpec struct {
-	// +kubebuilder:validation:Enum=VirtualMachine
+	// +kubebuilder:validation:Enum=VirtualMachine;BareMetal
 	// +kubebuilder:default=VirtualMachine
 	Kind string `json:"kind,omitempty"`
 	// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="virtualMachine is immutable; replace the Machine instead"
-	VirtualMachine VirtualMachineSpec `json:"virtualMachine"`
+	VirtualMachine *VirtualMachineSpec `json:"virtualMachine,omitempty"`
+	// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="bareMetal is immutable; replace the Machine instead"
+	BareMetal *BareMetalSpec `json:"bareMetal,omitempty"`
 	// InstanceID is persisted before provisioning and survives clusterctl move.
 	// +kubebuilder:validation:Pattern=`^capi-[a-z0-9-]+$`
 	// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="instanceID is immutable"
@@ -132,11 +147,16 @@ type GomiMachineList struct {
 	metav1.ListMeta `json:"metadata,omitempty"`
 	Items           []GomiMachine `json:"items"`
 }
+
+// +kubebuilder:validation:XValidation:rule="(self.kind == 'BareMetal') == has(self.bareMetal)",message="BareMetal requires bareMetal and no virtualMachine"
+// +kubebuilder:validation:XValidation:rule="(self.kind == 'VirtualMachine') == has(self.virtualMachine)",message="VirtualMachine requires virtualMachine and no bareMetal"
 type GomiMachineTemplateMachineSpec struct {
-	// +kubebuilder:validation:Enum=VirtualMachine
+	// +kubebuilder:validation:Enum=VirtualMachine;BareMetal
 	// +kubebuilder:default=VirtualMachine
-	Kind           string             `json:"kind,omitempty"`
-	VirtualMachine VirtualMachineSpec `json:"virtualMachine"`
+	Kind           string              `json:"kind,omitempty"`
+	VirtualMachine *VirtualMachineSpec `json:"virtualMachine,omitempty"`
+	// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="bareMetal is immutable; replace the Machine instead"
+	BareMetal *BareMetalSpec `json:"bareMetal,omitempty"`
 }
 type GomiMachineTemplateResource struct {
 	Spec GomiMachineTemplateMachineSpec `json:"spec"`
