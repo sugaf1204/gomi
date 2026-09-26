@@ -32,3 +32,15 @@ func TestValidateCloudInitTemplate_MissingUserData(t *testing.T) {
 		t.Fatal("expected error for missing userData")
 	}
 }
+
+func TestValidateDeliveryMode(t *testing.T) {
+	for _, mode := range []string{"", DeliveryVMSeed, "typo"} {
+		t.Run(mode, func(t *testing.T) {
+			tpl := validTemplate()
+			tpl.DeliveryMode = mode
+			if (ValidateCloudInitTemplate(tpl) != nil) != (mode == "typo") {
+				t.Fatal("unexpected delivery mode validation")
+			}
+		})
+	}
+}

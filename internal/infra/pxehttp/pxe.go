@@ -1,6 +1,7 @@
 package pxehttp
 
 import (
+	"context"
 	"fmt"
 	"github.com/labstack/echo/v4"
 	"github.com/sugaf1204/gomi/internal/machine"
@@ -67,14 +68,19 @@ func (h *Handler) PXEPreseed(c echo.Context) error {
 }
 
 func (h *Handler) PXENocloudUserData(c echo.Context) error {
-	rawMAC := c.Param("mac")
-	ctx := c.Request().Context()
-	target, _, err := h.resolvePXETarget(ctx, rawMAC)
+	body, err := h.renderNoCloudUserData(c.Request().Context(), c.Param("mac"), h.resolvePXEBaseURL(c))
 	if err != nil {
 		return c.JSON(gohttp.StatusInternalServerError, jsonErrorErr(err))
 	}
+	return c.Blob(gohttp.StatusOK, "text/plain; charset=utf-8", []byte(body))
+}
 
-	base := h.resolvePXEBaseURL(c)
+func (h *Handler) renderNoCloudUserData(ctx context.Context, rawMAC, base string) (string, error) {
+	target, _, err := h.resolvePXETarget(ctx, rawMAC)
+	if err != nil {
+		return "", err
+	}
+
 	token := pxeTargetToken(target)
 	sourceType := normalizePXEUserDataInstallType(target.installType)
 	completeURL := buildPXEInstallCompleteURL(base, token, sourceType)
@@ -82,7 +88,7 @@ func (h *Handler) PXENocloudUserData(c echo.Context) error {
 
 	var body string
 	if inline, found, err := h.resolvePXEInstallInline(ctx, rawMAC, sourceType); err != nil {
-		return c.JSON(gohttp.StatusInternalServerError, jsonErrorErr(err))
+		return "", err
 	} else if found {
 		body = inline
 	} else {
@@ -95,7 +101,7 @@ func (h *Handler) PXENocloudUserData(c echo.Context) error {
 	}
 	result, err := injectCloudConfigCompletion(body, completeURL, hostname, completeRetries)
 	if err != nil {
-		return c.JSON(gohttp.StatusInternalServerError, jsonErrorErr(err))
+		return "", err
 	}
 
 	// Inject registered SSH keys and any per-target login user. Without a
@@ -110,7 +116,7 @@ func (h *Handler) PXENocloudUserData(c echo.Context) error {
 	if m, ok := target.node.(*machine.Machine); ok && m.Role == machine.RoleHypervisor {
 		registrationToken, err := h.ensureHypervisorRegistrationToken(ctx, m)
 		if err != nil {
-			return c.JSON(gohttp.StatusInternalServerError, jsonErrorErr(err))
+			return "", err
 		}
 		result = injectHypervisorSetup(result, base, m.Name, registrationToken, target.osFamily)
 	}
@@ -124,7 +130,7 @@ func (h *Handler) PXENocloudUserData(c echo.Context) error {
 	}
 
 	result = withDeployCloudInitDefaults(result, target.completedRootFS)
-	return c.Blob(gohttp.StatusOK, "text/plain; charset=utf-8", []byte(result))
+	return result, nil
 }
 
 func (h *Handler) PXENocloudMetaData(c echo.Context) error {

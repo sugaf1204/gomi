@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/sugaf1204/gomi/internal/cloudinit"
 	"github.com/sugaf1204/gomi/internal/resource"
 	"github.com/sugaf1204/gomi/internal/vm"
 	"gopkg.in/yaml.v3"
@@ -85,6 +86,9 @@ func (h *Handler) resolveCloudInitUserData(ctx context.Context, cloudInitRef str
 			return "", false, nil
 		}
 		return "", false, err
+	}
+	if template.DeliveryMode == cloudinit.DeliveryVMSeed && ctx.Value(vmSeedContextKey{}) != true {
+		return "", false, fmt.Errorf("template requires VM seed delivery")
 	}
 	userData := strings.TrimSpace(template.UserData)
 	if userData == "" {

@@ -1,0 +1,12 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - crd/infrastructure.cluster.x-k8s.io_gomiclusters.yaml
+  - crd/infrastructure.cluster.x-k8s.io_gomimachines.yaml
+  - crd/infrastructure.cluster.x-k8s.io_gomimachinetemplates.yaml
+  - manager.yaml
+labels:
+  - pairs:
+      cluster.x-k8s.io/provider: infrastructure-gomi
+    includeSelectors: false
+    includeTemplates: true

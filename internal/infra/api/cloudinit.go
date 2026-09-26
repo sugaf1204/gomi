@@ -30,6 +30,16 @@ func (s *Server) ListCloudInitTemplates(c echo.Context) error {
 	if err != nil {
 		return c.JSON(gohttp.StatusInternalServerError, jsonErrorErr(err))
 	}
+	user, ok := httputil.UserFromContext(c)
+	if !ok || !user.Role.CanWrite() {
+		for i := range items {
+			if items[i].DeliveryMode == cloudinit.DeliveryVMSeed {
+				items[i].UserData = ""
+				items[i].NetworkConfig = ""
+				items[i].MetadataTemplate = ""
+			}
+		}
+	}
 	p, err := parsePagination(c, len(items))
 	if err != nil {
 		return c.JSON(gohttp.StatusBadRequest, jsonErrorErr(err))
@@ -49,6 +59,12 @@ func (s *Server) GetCloudInitTemplate(c echo.Context) error {
 			return c.JSON(gohttp.StatusNotFound, jsonError("not found"))
 		}
 		return c.JSON(gohttp.StatusInternalServerError, jsonErrorErr(err))
+	}
+	if t.DeliveryMode == cloudinit.DeliveryVMSeed {
+		user, ok := httputil.UserFromContext(c)
+		if !ok || !user.Role.CanWrite() {
+			return c.NoContent(gohttp.StatusForbidden)
+		}
 	}
 	return c.JSON(gohttp.StatusOK, cloudInitTemplateResponse(t))
 }

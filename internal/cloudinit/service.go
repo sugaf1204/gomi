@@ -2,6 +2,8 @@ package cloudinit
 
 import (
 	"context"
+	"errors"
+	"github.com/sugaf1204/gomi/internal/resource"
 	"time"
 )
 
@@ -14,6 +16,13 @@ func NewService(store Store) *Service {
 }
 
 func (s *Service) Create(ctx context.Context, t CloudInitTemplate) (CloudInitTemplate, error) {
+	existing, err := s.store.Get(ctx, t.Name)
+	if err != nil && !errors.Is(err, resource.ErrNotFound) {
+		return CloudInitTemplate{}, err
+	}
+	if err == nil && existing.DeliveryMode == DeliveryVMSeed {
+		t.DeliveryMode = DeliveryVMSeed
+	}
 	now := time.Now().UTC()
 	t.CreatedAt = now
 	t.UpdatedAt = now
@@ -39,6 +48,9 @@ func (s *Service) Update(ctx context.Context, t CloudInitTemplate) (CloudInitTem
 	existing, err := s.store.Get(ctx, t.Name)
 	if err != nil {
 		return CloudInitTemplate{}, err
+	}
+	if existing.DeliveryMode == DeliveryVMSeed {
+		t.DeliveryMode = DeliveryVMSeed
 	}
 	t.CreatedAt = existing.CreatedAt
 	t.UpdatedAt = time.Now().UTC()

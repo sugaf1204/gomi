@@ -13,11 +13,13 @@ import (
 )
 
 type Deployer struct {
-	Hypervisors *hypervisor.Service
-	OSImages    *osimage.Service
-	VMs         *Service
-	PXEBaseURL  string
-	ListenAddr  string
+	// RenderNoCloudSeed is wired by the server; protected data never traverses public HTTP.
+	RenderNoCloudSeed func(context.Context, VirtualMachine, string) (map[string]string, error)
+	Hypervisors       *hypervisor.Service
+	OSImages          *osimage.Service
+	VMs               *Service
+	PXEBaseURL        string
+	ListenAddr        string
 }
 
 func (d *Deployer) Deploy(ctx context.Context, created *VirtualMachine, pxeNoCloudFn func(base string, installType InstallConfigType, mac string) string) error {

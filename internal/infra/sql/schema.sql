@@ -112,6 +112,7 @@ CREATE TABLE IF NOT EXISTS virtual_machines (
 CREATE INDEX IF NOT EXISTS idx_vms_hypervisor ON virtual_machines (hypervisor_ref);
 
 CREATE TABLE IF NOT EXISTS cloud_init_templates (
+    delivery_mode TEXT NOT NULL DEFAULT '',
     name TEXT NOT NULL PRIMARY KEY,
     user_data TEXT NOT NULL DEFAULT '',
     network_config TEXT NOT NULL DEFAULT '',

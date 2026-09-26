@@ -15,6 +15,9 @@ var _ cloudinit.Store = (*CloudInitStore)(nil)
 func (s *CloudInitStore) Upsert(_ context.Context, t cloudinit.CloudInitTemplate) error {
 	s.b.mu.Lock()
 	defer s.b.mu.Unlock()
+	if s.b.cloudInits[t.Name].DeliveryMode == cloudinit.DeliveryVMSeed {
+		t.DeliveryMode = cloudinit.DeliveryVMSeed
+	}
 	s.b.cloudInits[t.Name] = t
 	return nil
 }
