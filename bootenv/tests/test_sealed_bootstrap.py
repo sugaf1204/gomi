@@ -4,6 +4,8 @@ import importlib.util
 from pathlib import Path
 import tempfile
 import unittest
+import yaml
+from jinja2 import Environment, StrictUndefined
 
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ed25519, rsa
@@ -83,6 +85,27 @@ class IdentityTests(unittest.TestCase):
 
 
 class MergeTests(unittest.TestCase):
+    def test_cloud_init_can_render_serialized_embedded_kubeadm_jinja(self):
+        # Real CABPK embeds a multiline kubeadm configuration in write_files.
+        # Default PyYAML serialization wrapped an expression with a backslash,
+        # causing cloud-init to silently ignore the entire bootstrap document.
+        content = ("apiVersion: kubeadm.k8s.io/v1beta4\nnodeRegistration:\n"
+                   "  name: '{{ v1.local_hostname }}'\n  kubeletExtraArgs:\n"
+                   "  - name: provider-id\n    value: gomi:///{{ v1.instance_id }}\n")
+        callback = "# gomi-capi-completion\nnotify /install-complete"
+        config = merger.merge({"runcmd": [callback], "ssh_authorized_keys": ["ssh-ed25519 public"]},
+                              {"write_files": [{"path": "/run/kubeadm.yaml", "content": content}],
+                               "runcmd": ["echo {{ v1['local_hostname'] }}", "x" * 150 + " {{ v1.instance_id }}"]})
+        rendered = Environment(undefined=StrictUndefined).from_string(merger.serialize(config)).render(
+            v1={"local_hostname": "node1", "instance_id": "capi-owner"})
+        result = yaml.safe_load(rendered)
+        kubeadm = yaml.safe_load(result["write_files"][0]["content"])
+        self.assertEqual(kubeadm["nodeRegistration"]["name"], "node1")
+        self.assertEqual(kubeadm["nodeRegistration"]["kubeletExtraArgs"][0]["value"], "gomi:///capi-owner")
+        self.assertEqual(result["runcmd"][0], "echo node1")
+        self.assertEqual(result["ssh_authorized_keys"], ["ssh-ed25519 public"])
+        self.assertEqual(yaml.safe_load(merger.serialize(config)), config)
+
     def test_completion_is_after_bootstrap_and_gomi_setup_survives(self):
         callback = "# gomi-capi-completion\nnotify /install-complete"
         base = {"hostname": "node1", "runcmd": ["network-setup", callback, "wol-setup"],

@@ -18,7 +18,7 @@ func (s *BareMetalStore) CommitDeployment(ctx context.Context, h baremetal.Host,
 			return baremetal.Host{}, baremetal.ErrConflict
 		}
 		next = baremetal.Releasing
-	} else if h.State != baremetal.Claimed {
+	} else if h.State != baremetal.Claimed && h.State != baremetal.Failed && h.State != baremetal.Deploying {
 		return baremetal.Host{}, baremetal.ErrConflict
 	}
 	spec, status, err := marshalMachineColumns(m)

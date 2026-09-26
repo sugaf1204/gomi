@@ -8,6 +8,24 @@ import tempfile
 import yaml
 
 
+class BootstrapDumper(yaml.SafeDumper):
+    """Keep Jinja source intact until cloud-init renders the complete document."""
+
+
+def represent_string(dumper, value):
+    # YAML quoting/line wrapping can insert escapes or double quotes *inside*
+    # Jinja expressions. Cloud-init runs Jinja before parsing the YAML.
+    literal = "\n" in value or any(mark in value for mark in ("{{", "{%", "{#"))
+    return dumper.represent_scalar("tag:yaml.org,2002:str", value, style="|" if literal else None)
+
+
+BootstrapDumper.add_representer(str, represent_string)
+
+
+def serialize(config):
+    return yaml.dump(config, Dumper=BootstrapDumper, sort_keys=False, width=sys.maxsize)
+
+
 def merge(base, bootstrap):
     if not isinstance(base, dict) or not isinstance(bootstrap, dict):
         raise ValueError("cloud-config must be a mapping")
@@ -68,7 +86,7 @@ def main():
         raise ValueError("invalid metadata")
     metadata["instance-id"] = args.owner
     private_write(seed / "meta-data", yaml.safe_dump(metadata))
-    private_write(seed / "user-data", header + yaml.safe_dump(merged, sort_keys=False))
+    private_write(seed / "user-data", header + serialize(merged))
     os.chmod(seed, 0o700)
 
 
