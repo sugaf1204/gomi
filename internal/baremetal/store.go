@@ -37,7 +37,8 @@ type Host struct {
 	Owner      string `json:"owner,omitempty"`
 	State      State  `json:"state"`
 	Revision   int64  `json:"revision"`
-	// AttemptID identifies the one deployment attempt allowed for this claim.
+	// AttemptID fences the current deployment. Explicit failed-attempt recovery
+	// atomically replaces it; callbacks from an older attempt are rejected.
 	AttemptID string `json:"attemptID,omitempty"`
 }
 

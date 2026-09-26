@@ -265,6 +265,7 @@ func NewServer(cfg ServerConfig) *Server {
 	writer.POST("/bare-metal-claims", s.AcquireBareMetalHost)
 	authed.GET("/bare-metal-claims/:owner", s.GetBareMetalClaim)
 	writer.POST("/bare-metal-claims/:owner/deploy", s.DeployBareMetalClaim)
+	admin.POST("/bare-metal-claims/:owner/retry", s.RetryBareMetalClaim)
 	writer.DELETE("/bare-metal-claims/:owner", s.DeleteBareMetalClaim)
 
 	// User routes — admin only.

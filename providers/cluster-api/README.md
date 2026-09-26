@@ -202,6 +202,19 @@ inventory and the enrollment identity. It does not promise forensic erasure of
 old flash blocks. A failed physical deployment retains its claim for recovery;
 there is no automatic endless reinstall loop.
 
+After fixing the cause, an administrator can explicitly retry a **Failed** claim
+with `POST /api/v1/bare-metal-claims/<owner>/retry` and JSON
+`{"attemptID":"<failed attempt ID>"}`. The installer must no longer be active.
+For a broken guest bootstrap still waiting for its timeout, a **Deploying** claim
+can also be retried after the authenticated `image_applied` event confirms curtin
+completed and restored the enrollment keys. Check guest logs before requesting
+this destructive retry; it must not be used to interrupt healthy kubeadm work.
+This preserves the owner, target disk, enrolled key and sealed bootstrap, while
+atomically replacing the attempt fence. Repeated requests for the old attempt
+return 409; read the claim again after an uncertain response. Operator accounts
+cannot invoke recovery. PXE still verifies the enrolled private key before
+wiping; if that key was lost, recover it from the offline backup first.
+
 This is reprovisioning, not adoption of an existing Kubernetes cluster. Back up
 etcd, application data and host identities before enabling the physical pool.
 Three hosts with three control planes have no spare surge capacity: use a CAPI
