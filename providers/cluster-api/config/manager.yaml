@@ -1,0 +1,94 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: capgomi-system
+  labels:
+    cluster.x-k8s.io/provider: infrastructure-gomi
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: capgomi-manager
+  namespace: capgomi-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: capgomi-manager
+rules:
+  - apiGroups: [infrastructure.cluster.x-k8s.io]
+    resources: [gomiclusters, gomimachines, gomimachinetemplates, gomiclusters/status, gomimachines/status, gomiclusters/finalizers, gomimachines/finalizers]
+    verbs: [get, list, watch, update, patch]
+  - apiGroups: [cluster.x-k8s.io]
+    resources: [clusters, machines]
+    verbs: [get, list, watch]
+  - apiGroups: [""]
+    resources: [secrets]
+    verbs: [get, list, watch]
+  - apiGroups: [""]
+    resources: [events]
+    verbs: [create, patch]
+  - apiGroups: [coordination.k8s.io]
+    resources: [leases]
+    verbs: [get, list, watch, create, update, patch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: capgomi-manager
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: capgomi-manager
+subjects:
+  - kind: ServiceAccount
+    name: capgomi-manager
+    namespace: capgomi-system
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: capgomi-controller-manager
+  namespace: capgomi-system
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: capgomi-controller-manager
+  template:
+    metadata:
+      labels:
+        app: capgomi-controller-manager
+    spec:
+      serviceAccountName: capgomi-manager
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: manager
+          image: controller:dev
+          args: [--leader-elect, --metrics-bind-address=0]
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          ports:
+            - containerPort: 8081
+              name: health
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: health
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: health
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              memory: 256Mi

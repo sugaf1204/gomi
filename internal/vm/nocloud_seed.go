@@ -21,7 +21,13 @@ func (d *Deployer) prepareNoCloudSeed(ctx context.Context, storage cloudImageSto
 	if token == "" {
 		return "", fmt.Errorf("primary MAC is required for NoCloud seed")
 	}
-	files, err := fetchNoCloudSeed(ctx, pxeBaseURL, token)
+	var files map[string]string
+	var err error
+	if d.RenderNoCloudSeed != nil {
+		files, err = d.RenderNoCloudSeed(ctx, v, pxeBaseURL)
+	} else {
+		files, err = fetchNoCloudSeed(ctx, pxeBaseURL, token)
+	}
 	if err != nil {
 		return "", err
 	}

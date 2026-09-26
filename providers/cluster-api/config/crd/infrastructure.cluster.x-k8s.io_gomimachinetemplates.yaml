@@ -1,0 +1,124 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.21.0
+  labels:
+    cluster.x-k8s.io/v1beta2: v1alpha1
+  name: gomimachinetemplates.infrastructure.cluster.x-k8s.io
+spec:
+  group: infrastructure.cluster.x-k8s.io
+  names:
+    categories:
+    - cluster-api
+    kind: GomiMachineTemplate
+    listKind: GomiMachineTemplateList
+    plural: gomimachinetemplates
+    singular: gomimachinetemplate
+  scope: Namespaced
+  versions:
+  - name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            properties:
+              template:
+                properties:
+                  spec:
+                    properties:
+                      kind:
+                        default: VirtualMachine
+                        enum:
+                        - VirtualMachine
+                        type: string
+                      virtualMachine:
+                        properties:
+                          hypervisorRef:
+                            type: string
+                          ipAssignment:
+                            enum:
+                            - dhcp
+                            - static
+                            type: string
+                          network:
+                            items:
+                              properties:
+                                bridge:
+                                  type: string
+                                ipAddress:
+                                  type: string
+                                name:
+                                  type: string
+                              required:
+                              - name
+                              type: object
+                            type: array
+                          osImageRef:
+                            description: |-
+                              OSImageRef must reference an image with cloud-init, container runtime,
+                              kubelet and kubeadm installed for the requested Kubernetes version.
+                            minLength: 1
+                            type: string
+                          resources:
+                            properties:
+                              cpuCores:
+                                minimum: 1
+                                type: integer
+                              diskGB:
+                                minimum: 1
+                                type: integer
+                              memoryMB:
+                                format: int64
+                                minimum: 512
+                                type: integer
+                            required:
+                            - cpuCores
+                            - diskGB
+                            - memoryMB
+                            type: object
+                          sshKeyRefs:
+                            items:
+                              type: string
+                            type: array
+                          subnetRef:
+                            type: string
+                        required:
+                        - osImageRef
+                        - resources
+                        type: object
+                    required:
+                    - virtualMachine
+                    type: object
+                required:
+                - spec
+                type: object
+            required:
+            - template
+            type: object
+            x-kubernetes-validations:
+            - message: template is immutable
+              rule: self == oldSelf
+        required:
+        - spec
+        type: object
+    served: true
+    storage: true

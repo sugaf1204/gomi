@@ -29,6 +29,7 @@ type SSHKeyResponse struct {
 }
 
 type CloudInitTemplateResponse struct {
+	DeliveryMode        string    `json:"deliveryMode,omitempty"`
 	Name                string    `json:"name"`
 	CloudInitTemplateID string    `json:"cloudInitTemplateId"`
 	UserData            string    `json:"userData"`
@@ -120,6 +121,7 @@ func cloudInitTemplateResponse(item cloudinit.CloudInitTemplate) CloudInitTempla
 	return CloudInitTemplateResponse{
 		Name:                resourceName("cloudInitTemplates", item.Name),
 		CloudInitTemplateID: item.Name,
+		DeliveryMode:        item.DeliveryMode,
 		UserData:            item.UserData,
 		NetworkConfig:       item.NetworkConfig,
 		MetadataTemplate:    item.MetadataTemplate,

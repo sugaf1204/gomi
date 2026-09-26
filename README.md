@@ -105,6 +105,16 @@ Hypervisors register through a token-based flow. The API exposes helper endpoint
 
 ---
 
+## Kubernetes with Cluster API
+
+An experimental [GOMI Infrastructure Provider](providers/cluster-api/README.md)
+provisions cloud-image VMs through the GOMI REST API. It is a separate Go module
+and controller container under `providers/cluster-api`, targeting the Cluster API
+v1beta2 contract. See its README for prepared-image, networking and management
+cluster prerequisites, supported scope, installation and tests.
+
+---
+
 ## Configuration
 
 The main config file is `/etc/gomi/gomi.yaml`. An annotated example is at [`packages/debian/gomi.yaml`](packages/debian/gomi.yaml).

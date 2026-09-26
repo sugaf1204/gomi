@@ -23,6 +23,24 @@ tags:
   - name: service-accounts
 
 paths:
+  /capabilities:
+    get:
+      summary: Get server capabilities
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      responses:
+        '200':
+          description: Supported server features
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  vmSeedTemplates:
+                    type: boolean
+                    description: Supports protected in-process VM seed delivery.
+
   /setup/status:
     get:
       summary: Get first-run setup status
@@ -2108,6 +2126,14 @@ components:
       properties:
         name:
           type: string
+        deliveryMode:
+          type: string
+          enum: ['', vm-seed]
+          description: >-
+            Empty allows public PXE delivery. vm-seed restricts delivery to
+            in-process VM seed generation during active provisioning. Once set,
+            edits cannot downgrade protection. Protected template content is
+            readable only by operators/admins and is redacted in viewer lists.
         userData:
           type: string
         networkConfig:

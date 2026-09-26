@@ -15,15 +15,16 @@ var _ cloudinit.Store = (*CloudInitStore)(nil)
 
 func (s *CloudInitStore) Upsert(ctx context.Context, t cloudinit.CloudInitTemplate) error {
 	_, err := s.b.exec(ctx, `
-		INSERT INTO cloud_init_templates (name, user_data, network_config, metadata_tmpl, description, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO cloud_init_templates (name, delivery_mode, user_data, network_config, metadata_tmpl, description, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT (name) DO UPDATE SET
+			delivery_mode = CASE WHEN cloud_init_templates.delivery_mode = 'vm-seed' THEN 'vm-seed' ELSE EXCLUDED.delivery_mode END,
 			user_data = EXCLUDED.user_data,
 			network_config = EXCLUDED.network_config,
 			metadata_tmpl = EXCLUDED.metadata_tmpl,
 			description = EXCLUDED.description,
 			updated_at = EXCLUDED.updated_at`,
-		t.Name,
+		t.Name, t.DeliveryMode,
 		t.UserData, t.NetworkConfig,
 		t.MetadataTemplate, t.Description,
 		t.CreatedAt, t.UpdatedAt,
@@ -33,7 +34,7 @@ func (s *CloudInitStore) Upsert(ctx context.Context, t cloudinit.CloudInitTempla
 
 func (s *CloudInitStore) Get(ctx context.Context, name string) (cloudinit.CloudInitTemplate, error) {
 	row := s.b.queryRow(ctx, `
-		SELECT name, user_data, network_config, metadata_tmpl, description, created_at, updated_at
+		SELECT name, delivery_mode, user_data, network_config, metadata_tmpl, description, created_at, updated_at
 		FROM cloud_init_templates WHERE name = ?`,
 		name,
 	)
@@ -46,7 +47,7 @@ func (s *CloudInitStore) Get(ctx context.Context, name string) (cloudinit.CloudI
 
 func (s *CloudInitStore) List(ctx context.Context) ([]cloudinit.CloudInitTemplate, error) {
 	rows, err := s.b.query(ctx,
-		`SELECT name, user_data, network_config, metadata_tmpl, description, created_at, updated_at
+		`SELECT name, delivery_mode, user_data, network_config, metadata_tmpl, description, created_at, updated_at
 		 FROM cloud_init_templates ORDER BY name`)
 	if err != nil {
 		return nil, err
@@ -86,7 +87,7 @@ func scanCloudInitRow(row scanner) (cloudinit.CloudInitTemplate, error) {
 	var t cloudinit.CloudInitTemplate
 
 	err := row.Scan(
-		&t.Name,
+		&t.Name, &t.DeliveryMode,
 		&t.UserData, &t.NetworkConfig,
 		&t.MetadataTemplate, &t.Description,
 		&t.CreatedAt, &t.UpdatedAt,

@@ -1,0 +1,161 @@
+# Prepared cloud image must already contain kubeadm, kubelet and a CRI runtime.
+# GOMI_ENDPOINT is the origin URL; GOMI_TOKEN is an operator service-account token.
+# The endpoint must route to the control plane (an external LB/VIP is not created).
+apiVersion: v1
+kind: Secret
+metadata:
+  name: ${CLUSTER_NAME}-gomi-credentials
+  namespace: ${NAMESPACE}
+  labels:
+    clusterctl.cluster.x-k8s.io/move: ""
+type: Opaque
+stringData:
+  token: ${GOMI_TOKEN}
+---
+apiVersion: cluster.x-k8s.io/v1beta2
+kind: Cluster
+metadata:
+  name: ${CLUSTER_NAME}
+  namespace: ${NAMESPACE}
+spec:
+  clusterNetwork:
+    pods:
+      cidrBlocks: ["192.168.0.0/16"]
+  infrastructureRef:
+    apiGroup: infrastructure.cluster.x-k8s.io
+    kind: GomiCluster
+    name: ${CLUSTER_NAME}
+  controlPlaneRef:
+    apiGroup: controlplane.cluster.x-k8s.io
+    kind: KubeadmControlPlane
+    name: ${CLUSTER_NAME}-control-plane
+---
+apiVersion: infrastructure.cluster.x-k8s.io/v1alpha1
+kind: GomiCluster
+metadata:
+  name: ${CLUSTER_NAME}
+  namespace: ${NAMESPACE}
+spec:
+  server: ${GOMI_ENDPOINT}
+  credentialsRef:
+    name: ${CLUSTER_NAME}-gomi-credentials
+  controlPlaneEndpoint:
+    host: ${CONTROL_PLANE_ENDPOINT}
+    port: 6443
+---
+apiVersion: controlplane.cluster.x-k8s.io/v1beta2
+kind: KubeadmControlPlane
+metadata:
+  name: ${CLUSTER_NAME}-control-plane
+  namespace: ${NAMESPACE}
+spec:
+  replicas: ${CONTROL_PLANE_MACHINE_COUNT:=1}
+  version: ${KUBERNETES_VERSION}
+  machineTemplate:
+    spec:
+      infrastructureRef:
+        apiGroup: infrastructure.cluster.x-k8s.io
+        kind: GomiMachineTemplate
+        name: ${CLUSTER_NAME}-control-plane
+  kubeadmConfigSpec:
+    format: cloud-config
+    initConfiguration:
+      nodeRegistration:
+        name: '{{ v1.local_hostname }}'
+        kubeletExtraArgs:
+          - name: provider-id
+            value: 'gomi:///{{ v1.local_hostname }}'
+    joinConfiguration:
+      nodeRegistration:
+        name: '{{ v1.local_hostname }}'
+        kubeletExtraArgs:
+          - name: provider-id
+            value: 'gomi:///{{ v1.local_hostname }}'
+---
+apiVersion: infrastructure.cluster.x-k8s.io/v1alpha1
+kind: GomiMachineTemplate
+metadata:
+  name: ${CLUSTER_NAME}-control-plane
+  namespace: ${NAMESPACE}
+spec:
+  template:
+    spec:
+      kind: VirtualMachine
+      virtualMachine:
+        hypervisorRef: ${GOMI_HYPERVISOR}
+        osImageRef: ${GOMI_OS_IMAGE}
+        resources:
+          cpuCores: 2
+          memoryMB: 4096
+          diskGB: 30
+        ipAssignment: dhcp
+        network:
+          - name: eth0
+            bridge: ${GOMI_BRIDGE}
+        subnetRef: ${GOMI_SUBNET}
+---
+apiVersion: cluster.x-k8s.io/v1beta2
+kind: MachineDeployment
+metadata:
+  name: ${CLUSTER_NAME}-workers
+  namespace: ${NAMESPACE}
+spec:
+  clusterName: ${CLUSTER_NAME}
+  replicas: ${WORKER_MACHINE_COUNT:=1}
+  selector:
+    matchLabels:
+      pool: ${CLUSTER_NAME}-workers
+  template:
+    metadata:
+      labels:
+        pool: ${CLUSTER_NAME}-workers
+    spec:
+      clusterName: ${CLUSTER_NAME}
+      version: ${KUBERNETES_VERSION}
+      bootstrap:
+        configRef:
+          apiGroup: bootstrap.cluster.x-k8s.io
+          kind: KubeadmConfigTemplate
+          name: ${CLUSTER_NAME}-workers
+      infrastructureRef:
+        apiGroup: infrastructure.cluster.x-k8s.io
+        kind: GomiMachineTemplate
+        name: ${CLUSTER_NAME}-workers
+---
+apiVersion: bootstrap.cluster.x-k8s.io/v1beta2
+kind: KubeadmConfigTemplate
+metadata:
+  name: ${CLUSTER_NAME}-workers
+  namespace: ${NAMESPACE}
+spec:
+  template:
+    spec:
+      format: cloud-config
+      joinConfiguration:
+        nodeRegistration:
+          name: '{{ v1.local_hostname }}'
+          kubeletExtraArgs:
+            - name: provider-id
+              value: 'gomi:///{{ v1.local_hostname }}'
+---
+apiVersion: infrastructure.cluster.x-k8s.io/v1alpha1
+kind: GomiMachineTemplate
+metadata:
+  name: ${CLUSTER_NAME}-workers
+  namespace: ${NAMESPACE}
+spec:
+  template:
+    spec:
+      kind: VirtualMachine
+      virtualMachine:
+        hypervisorRef: ${GOMI_HYPERVISOR}
+        osImageRef: ${GOMI_OS_IMAGE}
+        resources:
+          cpuCores: 2
+          memoryMB: 2048
+          diskGB: 20
+        ipAssignment: dhcp
+        subnetRef: ${GOMI_SUBNET}
+        network:
+          - name: eth0
+            bridge: ${GOMI_BRIDGE}

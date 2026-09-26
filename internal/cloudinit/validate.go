@@ -11,6 +11,9 @@ var (
 )
 
 func ValidateCloudInitTemplate(t CloudInitTemplate) error {
+	if t.DeliveryMode != "" && t.DeliveryMode != DeliveryVMSeed {
+		return errors.New("unsupported cloud-init deliveryMode")
+	}
 	if strings.TrimSpace(t.Name) == "" {
 		return ErrInvalidName
 	}

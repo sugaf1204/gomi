@@ -16,7 +16,41 @@ func runMigrations(db *sql.DB, dialect Dialect) error {
 	if err := dropLegacySSHKeyUsername(db, dialect); err != nil {
 		return fmt.Errorf("drop legacy ssh_keys.username: %w", err)
 	}
-	return nil
+	return addCloudInitDeliveryMode(db, dialect)
+}
+
+func addCloudInitDeliveryMode(db *sql.DB, dialect Dialect) error {
+	if dialect == DialectPostgres {
+		_, err := db.Exec("ALTER TABLE cloud_init_templates ADD COLUMN IF NOT EXISTS delivery_mode TEXT NOT NULL DEFAULT ''")
+		return err
+	}
+	rows, err := db.Query("PRAGMA table_info(cloud_init_templates)")
+	if err != nil {
+		return err
+	}
+	found := false
+	for rows.Next() {
+		var cid, notnull, pk int
+		var name, typ string
+		var defaultValue any
+		if err := rows.Scan(&cid, &name, &typ, &notnull, &defaultValue, &pk); err != nil {
+			rows.Close()
+			return err
+		}
+		if name == "delivery_mode" {
+			found = true
+		}
+	}
+	err = rows.Err()
+	rows.Close()
+	if err != nil {
+		return err
+	}
+	if found {
+		return nil
+	}
+	_, err = db.Exec("ALTER TABLE cloud_init_templates ADD COLUMN delivery_mode TEXT NOT NULL DEFAULT ''")
+	return err
 }
 
 // dropLegacySSHKeyUsername removes the historical NOT NULL `username` column

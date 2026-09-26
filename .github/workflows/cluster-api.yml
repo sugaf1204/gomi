@@ -1,0 +1,45 @@
+name: Cluster API provider
+on:
+  pull_request:
+    paths:
+      - 'providers/cluster-api/**'
+      - 'internal/**'
+      - 'go.mod'
+      - 'go.sum'
+      - '.github/workflows/cluster-api.yml'
+  push:
+    paths:
+      - 'providers/cluster-api/**'
+      - 'internal/**'
+      - 'go.mod'
+      - 'go.sum'
+      - '.github/workflows/cluster-api.yml'
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.x'
+          cache-dependency-path: |
+            providers/cluster-api/go.sum
+            providers/cluster-api/test/integration/go.sum
+      - name: Generate and verify CRDs
+        working-directory: providers/cluster-api
+        run: |
+          make generate
+          git diff --exit-code -- api config/crd
+      - name: Unit, race, vet and build
+        working-directory: providers/cluster-api
+        run: make test build manifests
+      - name: GOMI protected seed and deployment regressions
+        run: go test -race ./internal/cloudinit ./internal/infra/api ./internal/infra/pxehttp ./internal/infra/sql ./internal/infra/memory ./internal/vm
+      - name: Real Kubernetes and GOMI API integration
+        working-directory: providers/cluster-api
+        run: make integration
+      - name: Container build
+        working-directory: providers/cluster-api
+        run: make docker-build

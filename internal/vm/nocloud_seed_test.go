@@ -3,6 +3,7 @@ package vm
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -70,5 +71,34 @@ func TestPrepareNoCloudSeed_RequiresPrimaryMAC(t *testing.T) {
 	}
 	if storage.deletedName != "" || storage.createdName != "" {
 		t.Fatalf("seed volume must not be touched without MAC, deleted=%q created=%q", storage.deletedName, storage.createdName)
+	}
+}
+
+func TestPrepareNoCloudSeedInternalRenderer(t *testing.T) {
+	for _, fail := range []bool{false, true} {
+		t.Run(fmt.Sprint(fail), func(t *testing.T) {
+			storage := &fakeCloudImageStorage{}
+			called := false
+			d := &Deployer{RenderNoCloudSeed: func(ctx context.Context, v VirtualMachine, base string) (map[string]string, error) {
+				called = true
+				if v.Name != "private" {
+					t.Fatal("wrong target")
+				}
+				if fail {
+					return nil, fmt.Errorf("render failed")
+				}
+				return map[string]string{"user-data": "#cloud-config\nprivate-bootstrap-data", "meta-data": "instance-id: private"}, nil
+			}}
+			_, err := d.prepareNoCloudSeed(context.Background(), storage, VirtualMachine{Name: "private", Network: []NetworkInterface{{MAC: "52:54:00:11:22:33"}}}, "invalid-http-base")
+			if !called || (err != nil) != fail {
+				t.Fatalf("renderer result: %v", err)
+			}
+			if fail && storage.createdName != "" {
+				t.Fatal("uploaded seed after rendering error")
+			}
+			if !fail && !bytes.Contains(storage.data, []byte("private-bootstrap-data")) {
+				t.Fatal("seed lost protected data")
+			}
+		})
 	}
 }

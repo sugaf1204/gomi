@@ -1,6 +1,7 @@
 package pxehttp
 
 import (
+	"context"
 	"fmt"
 	"github.com/labstack/echo/v4"
 	"github.com/sugaf1204/gomi/internal/machine"
@@ -15,9 +16,11 @@ import (
 // cloud-init prioritizes this over any baked network config that ships in the image.
 // Always matches by MAC address so the config is NIC-name-agnostic.
 func (h *Handler) PXENocloudNetworkConfig(c echo.Context) error {
-	rawMAC := c.Param("mac")
+	return c.Blob(gohttp.StatusOK, "text/plain; charset=utf-8", []byte(h.renderNoCloudNetworkConfig(c.Request().Context(), c.Param("mac"))))
+}
+
+func (h *Handler) renderNoCloudNetworkConfig(ctx context.Context, rawMAC string) string {
 	mac := normalizeMAC(rawMAC) // always available from the URL
-	ctx := c.Request().Context()
 
 	n := h.findHostByMAC(ctx, rawMAC)
 	if _, ok := n.(*vm.VirtualMachine); ok && isDebianOSFamily(h.resolveOSImageFamily(ctx, n.OSImageVariantRef())) {
@@ -27,8 +30,7 @@ func (h *Handler) PXENocloudNetworkConfig(c echo.Context) error {
 			ip = n.StaticIP()
 			spec = h.resolveSubnetSpec(ctx, n)
 		}
-		return c.Blob(gohttp.StatusOK, "text/plain; charset=utf-8",
-			[]byte(buildCloudInitV1NetworkConfig(mac, ip, spec)))
+		return buildCloudInitV1NetworkConfig(mac, ip, spec)
 	}
 	renderer := h.resolveNetworkConfigRenderer(ctx, n)
 
@@ -44,20 +46,17 @@ func (h *Handler) PXENocloudNetworkConfig(c echo.Context) error {
 			ip = m.IP
 			spec = h.resolveSubnetSpec(ctx, n)
 		}
-		return c.Blob(gohttp.StatusOK, "text/plain; charset=utf-8",
-			[]byte(buildBridgedNetworkConfigWithRenderer(mac, bridgeName, ip, spec, renderer)))
+		return buildBridgedNetworkConfigWithRenderer(mac, bridgeName, ip, spec, renderer)
 	}
 
 	if n != nil && n.GetIPAssignment() == resource.IPAssignmentStatic {
 		if ip := n.StaticIP(); ip != "" {
 			spec := h.resolveSubnetSpec(ctx, n)
-			return c.Blob(gohttp.StatusOK, "text/plain; charset=utf-8",
-				[]byte(buildNetworkConfigWithRenderer(mac, ip, spec, renderer)))
+			return buildNetworkConfigWithRenderer(mac, ip, spec, renderer)
 		}
 	}
 
-	return c.Blob(gohttp.StatusOK, "text/plain; charset=utf-8",
-		[]byte(buildNetworkConfigWithRenderer(mac, "", nil, renderer)))
+	return buildNetworkConfigWithRenderer(mac, "", nil, renderer)
 }
 
 // buildNetworkConfig builds a netplan v2 network-config matched by MAC address.

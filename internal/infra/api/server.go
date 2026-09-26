@@ -194,14 +194,17 @@ func NewServer(cfg ServerConfig) *Server {
 		PXETFTPRoot:      cfg.PXETFTPRoot,
 		ProvisionTimeout: cfg.ProvisionTimeout,
 	})
-	e.GET("/pxe/boot.ipxe", pxeH.PXEBootScript)
-	e.GET("/pxe/preseed.cfg", pxeH.PXEPreseed)
-	e.GET("/pxe/nocloud/:mac/user-data", pxeH.PXENocloudUserData)
-	e.GET("/pxe/nocloud/:mac/meta-data", pxeH.PXENocloudMetaData)
-	e.GET("/pxe/nocloud/:mac/vendor-data", pxeH.PXENocloudVendorData)
-	e.GET("/pxe/nocloud/:mac/network-config", pxeH.PXENocloudNetworkConfig)
+	if cfg.VMDeployer != nil {
+		cfg.VMDeployer.RenderNoCloudSeed = pxeH.RenderVMSeed
+	}
+	e.GET("/pxe/boot.ipxe", pxeH.PXEBootScript, pxeH.PublicBootData)
+	e.GET("/pxe/preseed.cfg", pxeH.PXEPreseed, pxeH.PublicBootData)
+	e.GET("/pxe/nocloud/:mac/user-data", pxeH.PXENocloudUserData, pxeH.PublicBootData)
+	e.GET("/pxe/nocloud/:mac/meta-data", pxeH.PXENocloudMetaData, pxeH.PublicBootData)
+	e.GET("/pxe/nocloud/:mac/vendor-data", pxeH.PXENocloudVendorData, pxeH.PublicBootData)
+	e.GET("/pxe/nocloud/:mac/network-config", pxeH.PXENocloudNetworkConfig, pxeH.PublicBootData)
 	e.POST("/pxe/inventory", pxeH.PXEInventory)
-	e.GET("/pxe/curtin-config", pxeH.PXECurtinConfig)
+	e.GET("/pxe/curtin-config", pxeH.PXECurtinConfig, pxeH.PublicBootData)
 	e.POST("/pxe/deploy-events", pxeH.PXEDeployEvents)
 	e.POST("/pxe/install-complete", pxeH.PXEInstallComplete)
 	e.GET("/pxe/install-complete", pxeH.PXEInstallComplete)
@@ -210,6 +213,9 @@ func NewServer(cfg ServerConfig) *Server {
 	e.GET("/pxe/files/*", pxeH.PXEFile)
 
 	authed := v1.Group("", s.AuthMiddleware())
+	authed.GET("/capabilities", func(c echo.Context) error {
+		return c.JSON(gohttp.StatusOK, map[string]bool{"vmSeedTemplates": true})
+	})
 	authed.POST("/auth/logout", s.Logout)
 	authed.GET("/me", s.Me)
 	authed.POST("/me/password", s.ChangeMyPassword)
