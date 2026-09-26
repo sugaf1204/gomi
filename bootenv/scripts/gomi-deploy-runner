@@ -387,7 +387,12 @@ else
     fail "curtin install failed" "$(tail -n 120 /tmp/curtin-install.log 2>/dev/null || true)"
   fi
   post_timing runner.curtin_install "ran curtin install"
-  post_event image_applied "curtin install completed"
+  if [ -d /run/gomi-sealed-bootstrap/identity ]; then
+    sync
+    gomi-ack-restoration "$event_url"
+  else
+    post_event image_applied "curtin install completed"
+  fi
 fi
 
 sync

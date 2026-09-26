@@ -24,6 +24,7 @@ rootfs="$work/rootfs"
 test -d "$rootfs" || { echo "mkosi did not create $rootfs" >&2; exit 1; }
 
 install_into_rootfs() {
+  sudo install -D -m 0755 "$root/scripts/gomi-ack-restoration" "$rootfs/usr/local/sbin/gomi-ack-restoration"
   sudo install -D -m 0755 "$root/scripts/gomi-deploy-runner" "$rootfs/usr/local/sbin/gomi-deploy-runner"
   sudo install -D -m 0755 "$root/scripts/gomi-unseal-bootstrap" "$rootfs/usr/local/sbin/gomi-unseal-bootstrap"
   sudo install -D -m 0755 "$root/scripts/gomi-preserve-identity" "$rootfs/usr/local/sbin/gomi-preserve-identity"

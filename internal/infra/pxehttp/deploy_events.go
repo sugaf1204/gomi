@@ -39,7 +39,10 @@ func (h *Handler) PXEDeployEvents(c echo.Context) error {
 	}
 	queryAttemptID := strings.TrimSpace(c.QueryParam("attempt_id"))
 	ctx := c.Request().Context()
-	target, err := h.requireProvisioningMachine(ctx, token)
+	target, err := h.findMachineByProvisionToken(ctx, token)
+	if err == nil && (target == nil || target.Provision == nil) {
+		err = resource.ErrNotFound
+	}
 	if err != nil {
 		status := gohttp.StatusInternalServerError
 		if err == resource.ErrNotFound {
@@ -91,8 +94,11 @@ func (h *Handler) PXEDeployEvents(c echo.Context) error {
 	if err := validateAttemptParam(target, queryAttemptID); err != nil {
 		return c.JSON(gohttp.StatusConflict, jsonErrorErr(err))
 	}
+	if !target.Provision.Active && (eventType != deployEventImageApplied || target.SealedBootstrap == nil || target.SealedBootstrap.Owner == "") {
+		return c.JSON(gohttp.StatusConflict, jsonError("provisioning attempt is inactive"))
+	}
 	now := time.Now().UTC()
-	if err := h.updateProvisionProgress(ctx, target.Name, func(m *machine.Machine) {
+	if err := h.updateProvisionEvent(ctx, target, eventType, func(m *machine.Machine) {
 		if m.Provision == nil {
 			m.Provision = &machine.ProvisionProgress{}
 		}

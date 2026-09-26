@@ -200,7 +200,10 @@ Once curtin reports `image_applied`, deletion can cancel an unfinished kubeadm
 bootstrap. Failed or timed-out deployments require the same authenticated
 `image_applied` evidence: without it, cleanup and retry return 409 and preserve
 the installer RAM, which may hold the only remaining identity copy. Recover the
-installer and finish restoring the identity before rebooting. Deletion starts an OS reset without CABPK
+installer and finish restoring the identity before rebooting. The sealed installer
+retries its restoration event until GOMI acknowledges persistence, then reboots.
+The same token and attempt may record only this evidence after timeout; this
+does not reactivate or complete a failed deployment. Deletion starts an OS reset without CABPK
 data and keeps the finalizer until the reset completes. It preserves hardware
 inventory and the enrollment identity. It does not promise forensic erasure of
 old flash blocks. A failed physical deployment retains its claim for recovery;
