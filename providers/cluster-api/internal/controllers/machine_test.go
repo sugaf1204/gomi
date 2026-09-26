@@ -127,7 +127,7 @@ func TestPausedCluster(t *testing.T) {
 func TestUnsupportedKind(t *testing.T) {
 	f := setup(t)
 	m := f.get()
-	m.Spec.Kind = "BareMetal"
+	m.Spec.Kind = "Unknown"
 	f.update(m)
 	f.ok()
 	if len(f.requests) != 0 || f.get().Status.Conditions[0].Reason != "UnsupportedKind" {

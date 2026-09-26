@@ -11,6 +11,7 @@ import (
 	"github.com/labstack/echo/v4/middleware"
 
 	"github.com/sugaf1204/gomi/internal/auth"
+	"github.com/sugaf1204/gomi/internal/baremetal"
 	"github.com/sugaf1204/gomi/internal/bootenv"
 	"github.com/sugaf1204/gomi/internal/cloudinit"
 	"github.com/sugaf1204/gomi/internal/discovery"
@@ -28,6 +29,7 @@ import (
 )
 
 type Server struct {
+	bareMetal        baremetal.Store
 	echo             *echo.Echo
 	machines         *machine.Service
 	powerExecutor    PowerExecutor
@@ -82,6 +84,7 @@ func NewAuthService(store auth.Store, sessionTTL time.Duration) *AuthService {
 }
 
 type ServerConfig struct {
+	BareMetal        baremetal.Store
 	Machines         *machine.Service
 	PowerExecutor    PowerExecutor
 	Subnets          subnet.Store
@@ -123,6 +126,7 @@ func NewServer(cfg ServerConfig) *Server {
 	e.Use(middleware.CORS())
 
 	s := &Server{
+		bareMetal:        cfg.BareMetal,
 		echo:             e,
 		machines:         cfg.Machines,
 		powerExecutor:    cfg.PowerExecutor,
@@ -214,7 +218,7 @@ func NewServer(cfg ServerConfig) *Server {
 
 	authed := v1.Group("", s.AuthMiddleware())
 	authed.GET("/capabilities", func(c echo.Context) error {
-		return c.JSON(gohttp.StatusOK, map[string]bool{"vmSeedTemplates": true})
+		return c.JSON(gohttp.StatusOK, map[string]bool{"vmSeedTemplates": true, "bareMetalSealedBootstrap": s.bareMetal != nil})
 	})
 	authed.POST("/auth/logout", s.Logout)
 	authed.GET("/me", s.Me)
@@ -234,10 +238,10 @@ func NewServer(cfg ServerConfig) *Server {
 	authed.GET("/machines/:name/vnc", s.VNCProxy)
 	writer.POST("/machines", s.CreateMachine)
 	writer.POST("/machines/discover", s.DiscoverMachine)
-	writer.DELETE("/machines/:name", s.DeleteMachine)
-	writer.POST("/machines/*", s.DispatchMachineCustomMethod)
-	writer.PATCH("/machines/:name/settings", s.UpdateMachineSettings)
-	writer.PATCH("/machines/:name/network", s.UpdateMachineNetwork)
+	writer.DELETE("/machines/:name", s.DeleteMachine, s.protectAllocatedMachine)
+	writer.POST("/machines/*", s.DispatchMachineCustomMethod, s.protectAllocatedMachine)
+	writer.PATCH("/machines/:name/settings", s.UpdateMachineSettings, s.protectAllocatedMachine)
+	writer.PATCH("/machines/:name/network", s.UpdateMachineNetwork, s.protectAllocatedMachine)
 
 	// Audit events — all authenticated users can read.
 	authed.GET("/audit-events", s.ListAuditEvents)
@@ -254,6 +258,14 @@ func NewServer(cfg ServerConfig) *Server {
 	authed.GET("/ssh-keys/:name", s.GetSSHKey)
 	admin.POST("/ssh-keys", s.CreateSSHKey)
 	admin.DELETE("/ssh-keys/:name", s.DeleteSSHKey)
+
+	// Bare-metal inventory enrollment is an explicit administrator action.
+	admin.PUT("/bare-metal-hosts/:name", s.RegisterBareMetalHost)
+	authed.GET("/bare-metal-hosts/:name", s.GetBareMetalHost)
+	writer.POST("/bare-metal-claims", s.AcquireBareMetalHost)
+	authed.GET("/bare-metal-claims/:owner", s.GetBareMetalClaim)
+	writer.POST("/bare-metal-claims/:owner/deploy", s.DeployBareMetalClaim)
+	writer.DELETE("/bare-metal-claims/:owner", s.DeleteBareMetalClaim)
 
 	// User routes — admin only.
 	admin.POST("/users", s.CreateUser)

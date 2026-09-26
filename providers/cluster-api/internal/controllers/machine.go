@@ -58,8 +58,8 @@ func (r *MachineReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 	if !infra.DeletionTimestamp.IsZero() {
 		return r.remove(ctx, api, &infra)
 	}
-	if infra.Spec.Kind != "" && infra.Spec.Kind != "VirtualMachine" {
-		return r.report(ctx, &infra, false, "UnsupportedKind", "Only VirtualMachine is supported; bare-metal allocation and release are not implemented", nil)
+	if infra.Spec.Kind != "" && infra.Spec.Kind != "VirtualMachine" && infra.Spec.Kind != "BareMetal" {
+		return r.report(ctx, &infra, false, "UnsupportedKind", "Unsupported machine kind", nil)
 	}
 	// Commit identity and finalizer before ANY external writes. Identity belongs in
 	// spec because status and Kubernetes UIDs do not survive clusterctl move.
@@ -73,6 +73,12 @@ func (r *MachineReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 			return retry, err
 		}
 		return retry, nil
+	}
+	if infra.Spec.Kind == "BareMetal" {
+		return r.reconcileBareMetal(ctx, api, &infra, &machine)
+	}
+	if infra.Spec.VirtualMachine == nil || infra.Spec.BareMetal != nil {
+		return r.report(ctx, &infra, false, "InvalidSpec", "VirtualMachine configuration is required", nil)
 	}
 	id := infra.Spec.InstanceID
 	existing, err := api.GetVM(ctx, id)
@@ -101,7 +107,7 @@ func (r *MachineReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 	if err := ensureTemplate(ctx, api, id, data); err != nil {
 		return r.report(ctx, &infra, false, "BootstrapFailed", "Cannot persist owned bootstrap template", err)
 	}
-	if err := api.CreateVM(ctx, id, infra.Spec.VirtualMachine); err != nil && !gomi.IsStatus(err, 409) {
+	if err := api.CreateVM(ctx, id, *infra.Spec.VirtualMachine); err != nil && !gomi.IsStatus(err, 409) {
 		return r.report(ctx, &infra, false, "ProvisioningFailed", "GOMI VM creation failed; retry will read the stable instance ID", err)
 	}
 	// A timeout or conflict may mean another reconcile already created the VM.

@@ -130,6 +130,9 @@ func (h *Handler) renderNoCloudUserData(ctx context.Context, rawMAC, base string
 	}
 
 	result = withDeployCloudInitDefaults(result, target.completedRootFS)
+	if m, ok := target.node.(*machine.Machine); ok && m.SealedBootstrap != nil && !m.SealedBootstrap.Cleanup {
+		return markSealedCompletion(result)
+	}
 	return result, nil
 }
 

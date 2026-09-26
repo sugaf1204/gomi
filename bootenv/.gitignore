@@ -1,3 +1,4 @@
 /.cache/
 /dist/
 *.log
+__pycache__/

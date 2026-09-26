@@ -1,0 +1,80 @@
+#!/usr/bin/env python3
+"""Combine decrypted CABPK data with GOMI's OS/network/completion seed locally."""
+import argparse
+import os
+from pathlib import Path
+import sys
+import tempfile
+import yaml
+
+
+def merge(base, bootstrap):
+    if not isinstance(base, dict) or not isinstance(bootstrap, dict):
+        raise ValueError("cloud-config must be a mapping")
+    base_commands = base.get("runcmd", [])
+    commands = bootstrap.get("runcmd", [])
+    if not isinstance(base_commands, list) or not isinstance(commands, list):
+        raise ValueError("invalid cloud-config commands")
+    completion = [command for command in base_commands
+                  if isinstance(command, str) and command.startswith("# gomi-capi-completion\n")]
+    if len(completion) != 1:
+        raise ValueError("missing unique GOMI completion callback")
+    base_commands = [command for command in base_commands if command != completion[0]]
+    merged = dict(base)
+    for key, value in bootstrap.items():
+        if key == "runcmd":
+            continue
+        if key in merged and isinstance(merged[key], list) and isinstance(value, list):
+            merged[key] = merged[key] + value
+        else:
+            merged[key] = value
+    merged["runcmd"] = (base_commands + commands
+                         + ["test -f /run/cluster-api/bootstrap-success.complete || exit 1"]
+                         + completion)
+    merged["ssh_deletekeys"] = False
+    return merged
+
+
+def private_write(path, value):
+    temporary = None
+    try:
+        with tempfile.NamedTemporaryFile(dir=path.parent, prefix=".gomi-seed-", delete=False) as stream:
+            temporary = stream.name
+            os.fchmod(stream.fileno(), 0o600)
+            stream.write(value.encode())
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, path)
+        temporary = None
+    finally:
+        if temporary is not None:
+            os.unlink(temporary)
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--bootstrap", required=True)
+    parser.add_argument("--seed", required=True)
+    parser.add_argument("--owner", required=True)
+    args = parser.parse_args()
+    source = Path(args.bootstrap).read_text()
+    header = "## template: jinja\n#cloud-config\n" if source.startswith("## template: jinja") else "#cloud-config\n"
+    if not source.lstrip().startswith(("#cloud-config\n", "## template: jinja\n#cloud-config\n")):
+        raise ValueError("unsupported bootstrap format")
+    seed = Path(args.seed)
+    merged = merge(yaml.safe_load((seed / "user-data").read_text()), yaml.safe_load(source))
+    metadata = yaml.safe_load((seed / "meta-data").read_text())
+    if not isinstance(metadata, dict) or not args.owner.startswith("capi-"):
+        raise ValueError("invalid metadata")
+    metadata["instance-id"] = args.owner
+    private_write(seed / "meta-data", yaml.safe_dump(metadata))
+    private_write(seed / "user-data", header + yaml.safe_dump(merged, sort_keys=False))
+    os.chmod(seed, 0o700)
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except Exception:
+        print("cannot assemble sealed bare-metal bootstrap", file=sys.stderr)
+        sys.exit(1)

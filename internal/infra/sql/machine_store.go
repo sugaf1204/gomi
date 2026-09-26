@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/sugaf1204/gomi/internal/baremetal"
 	"github.com/sugaf1204/gomi/internal/machine"
 	"github.com/sugaf1204/gomi/internal/power"
 	"github.com/sugaf1204/gomi/internal/resource"
@@ -45,17 +46,19 @@ func (s *MachineStore) notify() {
 
 // machineSpecJSON is the internal JSON shape stored in the spec column.
 type machineSpecJSON struct {
-	Power         power.PowerConfig        `json:"power"`
-	Network       machine.NetworkConfig    `json:"network"`
-	OSPreset      machine.OSPreset         `json:"osPreset"`
-	CloudInitRef  string                   `json:"cloudInitRef,omitempty"`
-	CloudInitRefs []string                 `json:"cloudInitRefs,omitempty"`
-	IPAssignment  machine.IPAssignmentMode `json:"ipAssignment,omitempty"`
-	SubnetRef     string                   `json:"subnetRef,omitempty"`
-	Role          machine.Role             `json:"role,omitempty"`
-	BridgeName    string                   `json:"bridgeName,omitempty"`
-	SSHKeyRefs    []string                 `json:"sshKeyRefs,omitempty"`
-	LoginUser     *machine.LoginUserSpec   `json:"loginUser,omitempty"`
+	SealedBootstrap *machine.SealedBootstrap `json:"sealedBootstrap,omitempty"`
+	TargetDisk      string                   `json:"targetDisk,omitempty"`
+	Power           power.PowerConfig        `json:"power"`
+	Network         machine.NetworkConfig    `json:"network"`
+	OSPreset        machine.OSPreset         `json:"osPreset"`
+	CloudInitRef    string                   `json:"cloudInitRef,omitempty"`
+	CloudInitRefs   []string                 `json:"cloudInitRefs,omitempty"`
+	IPAssignment    machine.IPAssignmentMode `json:"ipAssignment,omitempty"`
+	SubnetRef       string                   `json:"subnetRef,omitempty"`
+	Role            machine.Role             `json:"role,omitempty"`
+	BridgeName      string                   `json:"bridgeName,omitempty"`
+	SSHKeyRefs      []string                 `json:"sshKeyRefs,omitempty"`
+	LoginUser       *machine.LoginUserSpec   `json:"loginUser,omitempty"`
 }
 
 // machineStatusJSON is the internal JSON shape stored in the status column.
@@ -73,17 +76,19 @@ type machineStatusJSON struct {
 // upsert and insert-only write paths.
 func marshalMachineColumns(m machine.Machine) (specJSON, statusJSON string, err error) {
 	specJSON, err = marshalJSON(machineSpecJSON{
-		Power:         m.Power,
-		Network:       m.Network,
-		OSPreset:      m.OSPreset,
-		CloudInitRef:  m.CloudInitRef,
-		CloudInitRefs: m.CloudInitRefs,
-		IPAssignment:  m.IPAssignment,
-		SubnetRef:     m.SubnetRef,
-		Role:          m.Role,
-		BridgeName:    m.BridgeName,
-		SSHKeyRefs:    m.SSHKeyRefs,
-		LoginUser:     m.LoginUser,
+		SealedBootstrap: m.SealedBootstrap,
+		TargetDisk:      m.TargetDisk,
+		Power:           m.Power,
+		Network:         m.Network,
+		OSPreset:        m.OSPreset,
+		CloudInitRef:    m.CloudInitRef,
+		CloudInitRefs:   m.CloudInitRefs,
+		IPAssignment:    m.IPAssignment,
+		SubnetRef:       m.SubnetRef,
+		Role:            m.Role,
+		BridgeName:      m.BridgeName,
+		SSHKeyRefs:      m.SSHKeyRefs,
+		LoginUser:       m.LoginUser,
 	})
 	if err != nil {
 		return "", "", err
@@ -109,7 +114,11 @@ func (s *MachineStore) Upsert(ctx context.Context, m machine.Machine) error {
 		return err
 	}
 
-	_, err = s.b.exec(ctx, `
+	attemptID := ""
+	if m.Provision != nil {
+		attemptID = m.Provision.AttemptID
+	}
+	result, err := s.b.exec(ctx, `
 		INSERT INTO machines (name, hostname, mac, ip, arch, firmware, spec, status, created_at, updated_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT (name) DO UPDATE SET
@@ -120,14 +129,22 @@ func (s *MachineStore) Upsert(ctx context.Context, m machine.Machine) error {
 			firmware = EXCLUDED.firmware,
 			spec = EXCLUDED.spec,
 			status = EXCLUDED.status,
-			updated_at = EXCLUDED.updated_at`,
+			updated_at = EXCLUDED.updated_at
+ WHERE NOT EXISTS (SELECT 1 FROM bare_metal_hosts WHERE name=EXCLUDED.name AND owner IS NOT NULL AND attempt_id <> ?)`,
 		m.Name,
 		m.Hostname, m.MAC, m.IP,
 		string(m.Arch), string(m.Firmware),
 		specJSON, statusJSON,
-		m.CreatedAt, m.UpdatedAt,
+		m.CreatedAt, m.UpdatedAt, attemptID,
 	)
 	if err == nil {
+		count, e := result.RowsAffected()
+		if e != nil {
+			return e
+		}
+		if count != 1 {
+			return baremetal.ErrConflict
+		}
 		s.notify()
 	}
 	return err
@@ -382,6 +399,8 @@ func scanMachineRow(row scanner) (machine.Machine, error) {
 	if err := json.Unmarshal([]byte(specJSON), &spec); err != nil {
 		return m, err
 	}
+	m.SealedBootstrap = spec.SealedBootstrap
+	m.TargetDisk = spec.TargetDisk
 	m.Power = spec.Power
 	m.Network = spec.Network
 	m.OSPreset = spec.OSPreset

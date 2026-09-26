@@ -137,3 +137,16 @@ CREATE TABLE IF NOT EXISTS dhcp_leases (
     pxe_client INTEGER NOT NULL DEFAULT 0,
     leased_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+
+-- Physical inventory is retained while allocation is independently fenced.
+CREATE TABLE IF NOT EXISTS bare_metal_hosts (
+    name TEXT PRIMARY KEY REFERENCES machines(name),
+    pool TEXT NOT NULL,
+    public_key TEXT NOT NULL,
+    target_disk TEXT NOT NULL,
+    owner TEXT UNIQUE,
+    state TEXT NOT NULL,
+    revision BIGINT NOT NULL DEFAULT 1,
+    attempt_id TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_bare_metal_hosts_pool ON bare_metal_hosts(pool, state);

@@ -263,3 +263,13 @@ func auditEventWhere(machineName string) (string, []any) {
 	}
 	return " WHERE " + strings.Join(conditions, " AND "), args
 }
+
+// InsertServiceAccount never rotates an existing account as a side effect of
+// local unattended bootstrap. Interactive API rotation retains its own behavior.
+func (s *AuthStore) InsertServiceAccount(ctx context.Context, account auth.ServiceAccount) error {
+	_, err := s.b.exec(ctx, `INSERT INTO service_accounts (name,token_hash,role,created_at,last_used_token) VALUES (?,?,?,?, '')`, account.Name, account.TokenHash, account.Role, account.CreatedAt)
+	if isUniqueViolation(err) {
+		return resource.ErrAlreadyExists
+	}
+	return err
+}
