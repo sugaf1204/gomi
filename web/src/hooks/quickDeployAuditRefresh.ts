@@ -7,7 +7,6 @@ import type { View } from '../app-types'
 //
 // Returns the machine filter to refetch with, or null when the current view
 // does not show a feed the new VM's event belongs to:
-//   - overview never fetches audit at all
 //   - machines scopes its feed to the selected machine, and the new VM is not it
 // An active machine filter is preserved: refetching unfiltered would replace a
 // filtered timeline with every machine's events.

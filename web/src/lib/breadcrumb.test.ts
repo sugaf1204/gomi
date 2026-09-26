@@ -2,19 +2,15 @@ import { describe, expect, it } from 'vitest'
 import { buildBreadcrumb } from './breadcrumb'
 
 describe('buildBreadcrumb', () => {
-  it('renders a single current segment for overview', () => {
-    expect(buildBreadcrumb('overview')).toEqual([{ label: 'overview', kind: 'current' }])
-  })
-
-  it('places fleet views under the fleet ancestor', () => {
+  it('places machine views under the compute ancestor', () => {
     expect(buildBreadcrumb('machines')).toEqual([
-      { label: 'fleet', kind: 'ancestor' },
+      { label: 'compute', kind: 'ancestor' },
       { label: 'machines', kind: 'current' },
     ])
   })
 
-  it('groups catalog and network views under their own ancestors', () => {
-    expect(buildBreadcrumb('os-images')[0]).toEqual({ label: 'catalog', kind: 'ancestor' })
+  it('groups image and network resources under their sidebar ancestors', () => {
+    expect(buildBreadcrumb('os-images')[0]).toEqual({ label: 'image', kind: 'ancestor' })
     expect(buildBreadcrumb('dns-records')[0]).toEqual({ label: 'network', kind: 'ancestor' })
   })
 
@@ -32,7 +28,7 @@ describe('buildBreadcrumb', () => {
 
   it('covers every view in the hierarchy', () => {
     const views = [
-      'overview', 'machines', 'virtual-machines', 'hypervisors', 'os-images',
+      'machines', 'virtual-machines', 'hypervisors', 'os-images',
       'cloud-init', 'network', 'dns-records', 'activity', 'users', 'settings',
     ] as const
     for (const view of views) {

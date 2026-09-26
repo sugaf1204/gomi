@@ -1,5 +1,5 @@
 import { useMemo } from 'react'
-import type { ActivityItem, ActivitySummary, ActivityType, MachineSettingsDraft, MachineStats } from '../app-types'
+import type { ActivityItem, ActivitySummary, ActivityType, MachineSettingsDraft } from '../app-types'
 import type { AuditEvent, Machine, Subnet } from '../types'
 
 type Params = {
@@ -80,25 +80,6 @@ export function useAppDerivedData({
     return JSON.stringify(selected.power) !== JSON.stringify(machineSettingsDraft.power)
   }, [selected, machineSettingsDraft.power])
 
-  const machineStats = useMemo<MachineStats>(() => {
-    let ready = 0
-    let provisioning = 0
-    let attention = 0
-
-    for (const machine of machines) {
-      const phase = machine.phase.toLowerCase()
-      if (phase === 'ready') {
-        ready++
-      } else if (phase === 'provisioning') {
-        provisioning++
-      } else {
-        attention++
-      }
-    }
-
-    return { ready, provisioning, attention }
-  }, [machines])
-
   const filteredMachines = useMemo(() => {
     const query = machineFilter.trim().toLowerCase()
     if (!query) return machines
@@ -117,7 +98,6 @@ export function useAppDerivedData({
     filteredActivityItems,
     activitySummary,
     machineSettingsDirty,
-    machineStats,
     filteredMachines
   }
 }

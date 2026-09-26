@@ -122,7 +122,7 @@ function groupByPhase(machines: Machine[]): Map<string, Bucket<Machine>> {
 }
 
 /**
- * Groups machines under header rows for the fleet list. The unassigned
+ * Groups machines under header rows for the machine list. The unassigned
  * bucket (machines with no matching subnet/hypervisor) always sorts last;
  * every other group sorts by title, case-insensitively. Machines keep their
  * incoming relative order within a group.

@@ -18,14 +18,14 @@ describe('quickDeployAuditRefreshTarget', () => {
   })
 
   // The machines view scopes its feed to the selected machine, and a freshly
-  // created VM is never that machine; the overview never fetches audit at all.
-  it.each(['overview', 'machines', 'virtual-machines'] as const)('skips the refetch on the %s view', (view) => {
+  // created VM is never that machine.
+  it.each(['machines', 'virtual-machines'] as const)('skips the refetch on the %s view', (view) => {
     expect(quickDeployAuditRefreshTarget(view, '')).toBeNull()
   })
 
   it('skips every view that does not render the activity feed', () => {
     const views: View[] = [
-      'overview', 'machines', 'hypervisors', 'virtual-machines', 'network',
+      'machines', 'hypervisors', 'virtual-machines', 'network',
       'dns-records', 'cloud-init', 'os-images', 'users', 'settings'
     ]
     for (const view of views) {

@@ -65,7 +65,7 @@ function Toolbar({
         onChange={(event) => onVMFilterChange(event.target.value)}
         className="flex-1 min-w-0 border border-line py-[6px] px-2 font-mono text-[11.5px]"
       />
-      <button className="shrink-0 py-[6px] px-2 text-[11.5px]" onClick={onOpenCreateDialog}>Add</button>
+      <button className="shrink-0 py-[6px] px-2 text-[11.5px]" onClick={onOpenCreateDialog}>Add VM</button>
     </div>
   )
 }

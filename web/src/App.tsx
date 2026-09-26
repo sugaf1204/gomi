@@ -1,16 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { GuardedAction } from './app-types'
 import { api } from './api'
-import { supportsDeploymentTarget } from './lib/osImages'
 import { AppWorkspaceShell } from './components/layout/AppWorkspaceShell'
-import { VMQuickDeploySettings } from './components/layout/VMQuickDeploySettings'
 import { CommandPalette } from './components/layout/CommandPalette'
 import { buildPaletteEntries, type PaletteEntry } from './lib/palette'
 import { ToastRegion, type ToastItem } from './components/ui/ToastRegion'
 import { AuthView } from './components/views/AuthView'
 import { useAppDataState } from './hooks/useAppDataState'
-import { quickDeployAuditRefreshTarget } from './hooks/quickDeployAuditRefresh'
-import { useVMQuickDeploy } from './hooks/useVMQuickDeploy'
 import { useAppDerivedData } from './hooks/useAppDerivedData'
 import { useSelectionSyncEffects } from './hooks/useAppEffects'
 import { useAuthHandlers, useMachineActionHandlers, useSubnetHandlers } from './hooks/useAppHandlers'
@@ -242,7 +238,6 @@ export default function App() {
     filteredActivityItems,
     activitySummary,
     machineSettingsDirty,
-    machineStats,
     filteredMachines
   } = useAppDerivedData({
     machines,
@@ -296,26 +291,6 @@ export default function App() {
     refreshAll
   })
 
-  const vmOSImages = useMemo(() => osImages.filter((img) => supportsDeploymentTarget(img, 'vm')), [osImages])
-
-  // Rebuilt every render on purpose: useVMQuickDeploy holds this in a ref it
-  // reassigns each render, so the deploy reads the view and filter as they are
-  // when it finishes rather than when it started.
-  const refreshQuickDeployAudit = async () => {
-    const target = quickDeployAuditRefreshTarget(view, activityMachineFilter)
-    if (!target) return
-    await refreshAudit(target.machineName)
-  }
-
-  const quickDeploy = useVMQuickDeploy({
-    token,
-    virtualMachines,
-    vmOSImages,
-    onVirtualMachineUpsert: upsertVirtualMachine,
-    refreshAll,
-    refreshAuditIfVisible: refreshQuickDeployAudit
-  })
-
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
@@ -342,7 +317,6 @@ export default function App() {
   }
 
   const workspaceContentProps = useWorkspaceContentProps({
-    quickDeploy,
     refreshAll,
     lastSyncedAt,
     dataLoading: !hasLoadedOnce && state === 'loading',
@@ -358,7 +332,6 @@ export default function App() {
     dhcpLeases,
     dnsRecords,
     dnsRecordsError,
-    systemInfo,
     me,
     theme,
     setTheme,
@@ -367,8 +340,6 @@ export default function App() {
     setAppearance,
     groupBy,
     setGroupBy,
-    onJump: (view, target) => jumpTo({ id: '', label: target, kind: 'nav', view, target }),
-    machineStats,
     machineFilter,
     setMachineFilter,
     filteredMachines,
@@ -427,15 +398,6 @@ export default function App() {
         sidebar={{
           view,
           onViewChange: setView,
-          counts: {
-            machines: machines.length,
-            virtualMachines: virtualMachines.length,
-            hypervisors: hypervisors.length,
-            subnets: subnets.length,
-            osImages: osImages.length,
-            cloudInits: cloudInits.length,
-            dnsRecords: dnsRecords.length
-          },
           environmentLabel: systemInfo?.hostname,
           username: me?.username,
           role: me?.role,
@@ -469,15 +431,6 @@ export default function App() {
           onCancel: closeConfirm,
           onConfirm: () => void submitConfirm()
         }}
-      />
-      <VMQuickDeploySettings
-        quickDeploy={quickDeploy}
-        hypervisors={hypervisors}
-        osImages={osImages}
-        cloudInits={cloudInits}
-        sshKeys={sshKeys}
-        subnets={subnets}
-        onRefresh={refreshAll}
       />
       <CommandPalette
         open={paletteOpen}

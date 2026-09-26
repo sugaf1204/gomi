@@ -7,7 +7,6 @@ import { HypervisorsView, type HypervisorsViewProps } from '../views/Hypervisors
 import { MachinesView, type MachinesViewProps } from '../views/MachinesView'
 import { NetworkView, type NetworkViewProps } from '../views/NetworkView'
 import { OSImagesView, type OSImagesViewProps } from '../views/OSImagesView'
-import { OverviewView, type OverviewViewProps } from '../views/OverviewView'
 import { SettingsView, type SettingsViewProps } from '../views/SettingsView'
 import { UsersView, type UsersViewProps } from '../views/UsersView'
 import { VirtualMachinesView, type VirtualMachinesViewProps } from '../views/VirtualMachinesView'
@@ -16,7 +15,6 @@ import { WorkspaceHeader, type WorkspaceHeaderProps } from './WorkspaceHeader'
 export type WorkspaceContentProps = {
   view: View
   header: WorkspaceHeaderProps
-  overview: OverviewViewProps
   machines: MachinesViewProps
   hypervisors: HypervisorsViewProps
   virtualMachines: VirtualMachinesViewProps
@@ -32,7 +30,6 @@ export type WorkspaceContentProps = {
 export function WorkspaceContent({
   view,
   header,
-  overview,
   machines,
   hypervisors,
   virtualMachines,
@@ -53,7 +50,6 @@ export function WorkspaceContent({
       <WorkspaceHeader {...header} />
 
       <div className={clsx('min-h-0', selfLayout ? 'overflow-hidden' : 'overflow-y-auto p-[20px_22px] max-sm:p-[0.8rem]')}>
-        {view === 'overview' && <OverviewView {...overview} />}
         {view === 'machines' && <MachinesView {...machines} />}
         {view === 'hypervisors' && <HypervisorsView {...hypervisors} />}
         {view === 'virtual-machines' && <VirtualMachinesView {...virtualMachines} />}

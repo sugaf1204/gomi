@@ -3,8 +3,6 @@ import type { View } from '../app-types'
 export type NavItem = {
   view: View
   label: string
-  /** Which count, if any, the rail shows right-aligned on this row. */
-  count?: 'machines' | 'virtualMachines' | 'hypervisors' | 'subnets' | 'osImages' | 'cloudInits' | 'dnsRecords'
 }
 
 export type NavGroup = {
@@ -12,31 +10,28 @@ export type NavGroup = {
   items: NavItem[]
 }
 
-/** Sits alone above the labelled groups. */
-export const PRIMARY_ITEM: NavItem = { view: 'overview', label: 'Overview' }
-
 /** The three daily-use tiers of the rail. */
 export const NAV_GROUPS: NavGroup[] = [
   {
-    heading: 'FLEET',
+    heading: 'COMPUTE',
     items: [
-      { view: 'machines', label: 'Machines', count: 'machines' },
-      { view: 'virtual-machines', label: 'Virtual Machines', count: 'virtualMachines' },
-      { view: 'hypervisors', label: 'Hypervisors', count: 'hypervisors' },
+      { view: 'machines', label: 'Machines' },
+      { view: 'virtual-machines', label: 'Virtual Machines' },
+      { view: 'hypervisors', label: 'Hypervisors' },
     ],
   },
   {
-    heading: 'CATALOG',
+    heading: 'IMAGE',
     items: [
-      { view: 'os-images', label: 'OS Images', count: 'osImages' },
-      { view: 'cloud-init', label: 'Cloud-Init', count: 'cloudInits' },
+      { view: 'os-images', label: 'OS Images' },
+      { view: 'cloud-init', label: 'Cloud-Init' },
     ],
   },
   {
     heading: 'NETWORK',
     items: [
-      { view: 'network', label: 'Subnets', count: 'subnets' },
-      { view: 'dns-records', label: 'DNS Records', count: 'dnsRecords' },
+      { view: 'network', label: 'Subnets' },
+      { view: 'dns-records', label: 'DNS Records' },
     ],
   },
 ]
@@ -57,5 +52,5 @@ export function isSystemView(view: View): boolean {
 
 /** Every destination, flattened — used by the jump-to palette. */
 export function allNavItems(): NavItem[] {
-  return [PRIMARY_ITEM, ...NAV_GROUPS.flatMap((group) => group.items), ...SYSTEM_ITEMS]
+  return [...NAV_GROUPS.flatMap((group) => group.items), ...SYSTEM_ITEMS]
 }

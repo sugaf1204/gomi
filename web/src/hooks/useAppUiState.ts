@@ -3,7 +3,7 @@ import type { ActivityType, Appearance, GroupBy, AuthFormState, ConfirmDialogSta
 import type { PowerConfig } from '../types'
 import { usePersistentStringState } from './usePersistentStringState'
 
-const views: Set<string> = new Set(['overview', 'machines', 'hypervisors', 'virtual-machines', 'activity', 'network', 'dns-records', 'cloud-init', 'os-images', 'users', 'settings'])
+const views: Set<string> = new Set(['machines', 'hypervisors', 'virtual-machines', 'activity', 'network', 'dns-records', 'cloud-init', 'os-images', 'users', 'settings'])
 const themes: Set<string> = new Set(['default', 'rounded'])
 const appearances: Set<string> = new Set(['light', 'dark'])
 const MACHINE_SELECTION_STORAGE_KEY = 'gomi.machines.selected'
@@ -21,11 +21,11 @@ function normalizePathname(pathname: string): string {
 function parsePathname(pathname: string): { view: View, selectedVirtualMachineRoute: string } {
   const normalized = normalizePathname(pathname)
   if (normalized === '/') {
-    return { view: 'overview', selectedVirtualMachineRoute: '' }
+    return { view: 'machines', selectedVirtualMachineRoute: '' }
   }
 
   const [head = '', tail = ''] = normalized.split('/').filter(Boolean)
-  const view = views.has(head) ? (head as View) : 'overview'
+  const view = views.has(head) ? (head as View) : 'machines'
   if (view === VIRTUAL_MACHINES_PATH_SEGMENT) {
     try {
       return { view, selectedVirtualMachineRoute: decodeURIComponent(tail) }
@@ -93,7 +93,7 @@ export function useAppUiState() {
   const [paletteOpen, setPaletteOpen] = useState(false)
   const [groupByRaw, setGroupByRaw] = usePersistentStringState(GROUP_BY_STORAGE_KEY)
   const groupBy: GroupBy = groupByValues.has(groupByRaw) ? (groupByRaw as GroupBy) : 'subnet'
-  const [machineTab, setMachineTab] = useState<MachineTab>('overview')
+  const [machineTab, setMachineTab] = useState<MachineTab>('deploy')
   const [confirmDialog, setConfirmDialog] = useState<ConfirmDialogState>(initialConfirmDialog)
 
   function setView(v: View) {
@@ -191,7 +191,7 @@ export function useAppUiState() {
   function resetUiAfterLogout() {
     setSelectedMachine('')
     setSelectedSubnet('')
-    setView('overview')
+    setView('machines')
     setSelectedVirtualMachineRouteState('')
     setAccountExpanded(false)
     setMachineFilter('')
@@ -202,7 +202,7 @@ export function useAppUiState() {
     setMachineSettingsDraft(initialMachineSettingsDraft)
     setMachineSettingsSaving(false)
     setInlineEditField(null)
-    setMachineTab('overview')
+    setMachineTab('deploy')
     setConfirmDialog(initialConfirmDialog)
   }
 

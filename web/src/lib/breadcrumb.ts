@@ -7,16 +7,14 @@ export type Crumb = {
   kind: CrumbKind
 }
 
-// Each view's place in the Fleet Rail hierarchy: the rail groups views under
-// FLEET / CATALOG / NETWORK, and the breadcrumb shows that same parentage so
-// the current object's position is always visible.
+// Breadcrumbs mirror the sidebar's COMPUTE / IMAGE / NETWORK hierarchy so the
+// current object's location remains consistent across navigation surfaces.
 const VIEW_PATHS: Record<View, string[]> = {
-  overview: ['overview'],
-  machines: ['fleet', 'machines'],
-  'virtual-machines': ['fleet', 'virtual machines'],
-  hypervisors: ['fleet', 'hypervisors'],
-  'os-images': ['catalog', 'os images'],
-  'cloud-init': ['catalog', 'cloud-init'],
+  machines: ['compute', 'machines'],
+  'virtual-machines': ['compute', 'virtual machines'],
+  hypervisors: ['compute', 'hypervisors'],
+  'os-images': ['image', 'os images'],
+  'cloud-init': ['image', 'cloud-init'],
   network: ['network', 'subnets'],
   'dns-records': ['network', 'dns records'],
   activity: ['system', 'activity'],

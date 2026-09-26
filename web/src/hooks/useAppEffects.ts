@@ -91,13 +91,6 @@ export function useRefreshEffects({
 
   useEffect(() => {
     if (!token) return
-    if (view === 'overview') {
-      // The overview renders only aggregate counts; it never displays audit
-      // events, so skip fetching them here. Fetching the full activity feed
-      // (all pages) on the default landing view added many list round-trips
-      // for data that is never shown.
-      return
-    }
     if (view === 'machines') {
       if (selectedMachine) {
         void refreshAudit(selectedMachine)

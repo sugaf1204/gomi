@@ -93,7 +93,7 @@ function MachineHeader({
   const actions: Array<{ value: MachinePrimaryAction, label: string }> = [
     { value: 'power-on', label: 'Power On' },
     { value: 'power-off', label: 'Power Off' },
-    { value: 'redeploy', label: 'Redeploy' },
+    ...(multiSelectActive ? [{ value: 'redeploy' as const, label: 'Redeploy OS' }] : []),
     { value: 'delete', label: 'Delete' }
   ]
 
@@ -114,12 +114,14 @@ function MachineHeader({
         <div className="flex justify-end items-center flex-wrap gap-[6px]" ref={actionsMenuRef}>
           {!multiSelectActive && selectedMachine && (
             <>
+              <button className="bg-brand border-brand-strong text-white py-[7px] px-[11px] text-[12px] font-medium" onClick={() => runPrimaryAction('redeploy')}>
+                {selectedMachine.provision ? 'Redeploy OS' : 'Deploy OS'}
+              </button>
               <button className="py-[7px] px-[11px] text-[12px] font-medium" onClick={() => onOpenConsole(selectedMachine.name)}>Console</button>
-              <button className="py-[7px] px-[11px] text-[12px] font-medium" onClick={() => runPrimaryAction('redeploy')}>Redeploy</button>
             </>
           )}
           <div className="relative">
-            <button className="bg-brand border-brand-strong text-white py-[7px] px-[11px] text-[12px] font-medium" disabled={selectedMachines.size === 0 && !selectedMachine} onClick={() => setActionsMenuOpen((current) => !current)}>Actions ▾</button>
+            <button className="py-[7px] px-[11px] text-[12px] font-medium" disabled={selectedMachines.size === 0 && !selectedMachine} onClick={() => setActionsMenuOpen((current) => !current)}>Actions ▾</button>
             {actionsMenuOpen && (
               <div className="absolute right-0 mt-1 min-w-[180px] bg-panel border border-line shadow-[0_10px_24px_rgba(52,43,34,0.16)] z-10">
                 {actions.map((item) => (

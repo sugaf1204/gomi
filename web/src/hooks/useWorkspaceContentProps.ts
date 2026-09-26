@@ -1,10 +1,9 @@
 import type { FormEvent } from 'react'
-import type { ActivitySummary, ActivityType, Appearance, GroupBy, MachineStats, MachineTab, Theme, View } from '../app-types'
+import type { ActivitySummary, ActivityType, Appearance, GroupBy, MachineTab, Theme, View } from '../app-types'
 import type { ActivityItem, GuardedAction, SubnetFormState } from '../app-types'
 import type { WorkspaceContentProps } from '../components/layout/WorkspaceContent'
 import { useRelativeTime } from './useRelativeTime'
-import type { AuditEvent, CloudInitTemplate, DHCPLease, DNSRecord, Hypervisor, Machine, Me, OSImage, PowerConfig, SSHKey, Subnet, SystemInfo, VirtualMachine } from '../types'
-import type { VMQuickDeploy } from './useVMQuickDeploy'
+import type { AuditEvent, CloudInitTemplate, DHCPLease, DNSRecord, Hypervisor, Machine, Me, OSImage, PowerConfig, SSHKey, Subnet, VirtualMachine } from '../types'
 
 // The breadcrumb's trailing object segment: whichever selection the current
 // view actually shows. Views without a selectable object contribute nothing.
@@ -27,7 +26,6 @@ function headerSelectedObject(
 }
 
 type Params = {
-  quickDeploy: VMQuickDeploy
   refreshAll: () => Promise<void>
   lastSyncedAt: string
   dataLoading: boolean
@@ -43,7 +41,6 @@ type Params = {
   dhcpLeases: DHCPLease[]
   dnsRecords: DNSRecord[]
   dnsRecordsError: string
-  systemInfo: SystemInfo | null
   me: Me | null
   theme: Theme
   setTheme: (theme: Theme) => void
@@ -52,8 +49,6 @@ type Params = {
   setAppearance: (appearance: Appearance) => void
   groupBy: GroupBy
   setGroupBy: (groupBy: GroupBy) => void
-  onJump: (view: View, target: string) => void
-  machineStats: MachineStats
   machineFilter: string
   setMachineFilter: (value: string) => void
   filteredMachines: Machine[]
@@ -94,7 +89,6 @@ type Params = {
 type Result = Omit<WorkspaceContentProps, 'view'>
 
 export function useWorkspaceContentProps({
-  quickDeploy,
   refreshAll,
   lastSyncedAt,
   dataLoading,
@@ -110,11 +104,9 @@ export function useWorkspaceContentProps({
   dhcpLeases,
   dnsRecords,
   dnsRecordsError,
-  systemInfo,
   me,
   theme,
   setTheme,
-  machineStats,
   machineFilter,
   setMachineFilter,
   filteredMachines,
@@ -154,8 +146,7 @@ export function useWorkspaceContentProps({
   appearance,
   setAppearance,
   groupBy,
-  setGroupBy,
-  onJump
+  setGroupBy
 }: Params): Result {
   const syncedAgo = useRelativeTime(lastSyncedAt)
 
@@ -165,23 +156,7 @@ export function useWorkspaceContentProps({
       selectedObject: headerSelectedObject(view, selectedMachine, selectedVirtualMachineRoute, selectedSubnet),
       syncedLabel: syncedAgo ? `synced ${syncedAgo}` : undefined,
       appearance,
-      onAppearanceChange: setAppearance,
-      quickDeploying: quickDeploy.deploying,
-      onNewVM: () => void quickDeploy.deploy(),
-      onOpenVMSettings: quickDeploy.openSettings
-    },
-    overview: {
-      systemInfo,
-      machines,
-      virtualMachines,
-      machineStats,
-      vmStats: {
-        running: virtualMachines.filter((vm) => vm.phase === 'Running').length,
-        stopped: virtualMachines.filter((vm) => vm.phase === 'Stopped').length,
-        error: virtualMachines.filter((vm) => vm.phase === 'Error').length,
-        missing: virtualMachines.filter((vm) => vm.phase === 'Missing').length
-      },
-      onJump
+      onAppearanceChange: setAppearance
     },
     machines: {
       machineFilter,
