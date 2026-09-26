@@ -1,3 +1,13 @@
+gomi (0.0.33) unstable; urgency=medium
+
+  * Add an experimental Cluster API infrastructure provider for cloud-image VMs.
+  * Protect bootstrap data with in-process VM seed delivery and persistent
+    template access restrictions.
+  * Restore provisioned state after clusterctl move independently of VM power.
+  * Make machines the primary UI workspace.
+
+ -- sugaf1204 <sugaf1204@example.invalid>  Sat, 26 Sep 2026 22:49:33 +0900
+
 gomi (0.0.32) unstable; urgency=medium
 
   * Fix VM domain not persisting, which silently dropped VMs from embedded

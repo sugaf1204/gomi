@@ -43,3 +43,48 @@ jobs:
       - name: Container build
         working-directory: providers/cluster-api
         run: make docker-build
+      - name: Package provider release
+        if: startsWith(github.ref, 'refs/tags/v')
+        working-directory: providers/cluster-api
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          image="capgomi:${TAG}"
+          docker tag capgomi:dev "$image"
+          docker run --rm "$image" --help
+          make manifests IMG="$image"
+          docker save "$image" | gzip > "dist/cluster-api-provider-gomi_${TAG}_linux_amd64.tar.gz"
+          cp README.md dist/provider-README.md
+          cd dist
+          sha256sum infrastructure-components.yaml metadata.yaml cluster-template.yaml provider-README.md cluster-api-provider-gomi_*.tar.gz > provider-checksums.txt
+      - name: Upload provider release artifact
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: actions/upload-artifact@v4
+        with:
+          name: cluster-api-provider
+          path: providers/cluster-api/dist/
+          if-no-files-found: error
+          retention-days: 1
+  publish:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: cluster-api-provider
+          path: dist
+      - name: Publish provider assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          if ! gh release view "$TAG" >/dev/null 2>&1; then
+            gh release create "$TAG" --verify-tag --generate-notes || gh release view "$TAG" >/dev/null
+          fi
+          gh release upload "$TAG" dist/* --clobber

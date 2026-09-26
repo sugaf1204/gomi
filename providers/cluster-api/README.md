@@ -129,6 +129,25 @@ is gone. Missing VMs with saved provider IDs are reported rather than recreated.
 
 ## Releases
 
+GOMI `v*` releases include an amd64 Docker image archive, provider manifests,
+metadata, sample and `provider-checksums.txt`. The manifest uses `capgomi:<tag>`;
+there is no public container registry image. Import the archive into every
+management-cluster node's container runtime (for kind, use `kind load image-archive`),
+or load, tag and push it to your registry and update the Deployment image before
+installation. Loading into Docker on your workstation alone does not make the
+image available to a remote Kubernetes cluster.
+
+```sh
+TAG=v0.0.33
+gh release download "$TAG" --repo sugaf1204/gomi --pattern 'cluster-api-provider-gomi_*' --pattern 'provider-checksums.txt' --pattern '*.yaml' --pattern 'provider-README.md'
+sha256sum -c provider-checksums.txt
+docker load -i "cluster-api-provider-gomi_${TAG}_linux_amd64.tar.gz"
+# Example for a local kind management cluster:
+kind load docker-image "capgomi:${TAG}" --name <management-cluster>
+kubectl apply -f infrastructure-components.yaml
+```
+
+
 `make manifests IMG=...` outputs components, metadata and cluster-template YAML
 under `dist/`. Publish these together on a SemVer GitHub release. Initial metadata
 maps 0.0.x to v1beta2; update it for additional minor release series. For published
