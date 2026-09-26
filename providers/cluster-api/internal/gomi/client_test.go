@@ -30,6 +30,23 @@ func TestErrorRedaction(t *testing.T) {
 		t.Fatalf("unsafe error: %v", err)
 	}
 }
+
+func TestTokenFromPrivateFile(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer gomi_sa_test" {
+			t.Error("file token was not normalized")
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer srv.Close()
+	c, err := New(srv.URL, "gomi_sa_test\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.GetVM(context.Background(), "missing"); !IsStatus(err, http.StatusNotFound) {
+		t.Fatalf("token file did not produce a valid HTTP request: %v", err)
+	}
+}
 func TestRedirectRefused(t *testing.T) {
 	called := false
 	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { called = true }))
