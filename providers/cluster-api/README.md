@@ -181,7 +181,11 @@ keys and join tokens are not served as public PXE user-data. Enrollment encrypti
 protects confidentiality; it does not authenticate unsigned PXE boot code. Keep the
 provisioning network trusted and isolate it from untrusted clients.
 
-Only Ubuntu, Debian and Fedora SquashFS deployment paths are currently accepted.
+Only amd64 Ubuntu, Debian and Fedora SquashFS deployment paths with ext4 or XFS
+target roots are currently accepted. Missing/mismatched image architecture and
+btrfs target roots are rejected before deployment, so later identity preservation
+and cleanup remain supported. Manual-power and hypervisor-role hosts cannot be
+enrolled.
 The image and/or bootstrap commands must install Kubernetes/CRI prerequisites for
 the selected OS/version. The provider does not turn an arbitrary image into a
 Kubernetes node automatically. Use `gomi:///{{ v1.instance_id }}` for kubelet's

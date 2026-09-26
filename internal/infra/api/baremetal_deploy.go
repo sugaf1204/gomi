@@ -10,8 +10,6 @@ import (
 	"github.com/sugaf1204/gomi/internal/baremetal"
 	"github.com/sugaf1204/gomi/internal/infra/httputil"
 	"github.com/sugaf1204/gomi/internal/machine"
-	"github.com/sugaf1204/gomi/internal/osimage"
-	"github.com/sugaf1204/gomi/internal/power"
 )
 
 func (s *Server) DeployBareMetalClaim(c echo.Context) error {
@@ -45,20 +43,15 @@ func (s *Server) DeployBareMetalClaim(c echo.Context) error {
 		}
 		return bareMetalError(c, baremetal.ErrConflict)
 	}
-	if m.Role == machine.RoleHypervisor || m.Power.Type == power.PowerTypeManual {
-		return c.JSON(http.StatusBadRequest, jsonError("automated bare-metal deployment requires a dedicated host with power control"))
-	}
 	if s.osimages == nil {
 		return c.NoContent(http.StatusServiceUnavailable)
 	}
 	img, err := s.osimages.Get(ctx, req.OSImageRef)
-	if err != nil || !img.Ready || osimage.EffectiveImageFormat(img) != osimage.FormatSquashFS || !osimage.SupportsDeploymentTarget(img, osimage.DeploymentTargetBareMetal) {
-		return c.JSON(http.StatusBadRequest, jsonError("a ready bare-metal SquashFS image is required"))
+	if err != nil {
+		return c.JSON(http.StatusBadRequest, jsonError("OS image not found"))
 	}
-	switch img.OSFamily {
-	case "ubuntu", "debian", "fedora":
-	default:
-		return c.JSON(http.StatusBadRequest, jsonError("unsupported bare-metal OS family"))
+	if err := baremetal.ValidateImage(m, img); err != nil {
+		return c.JSON(http.StatusBadRequest, jsonErrorErr(err))
 	}
 	original := m
 	m.TargetDisk = h.TargetDisk

@@ -49,6 +49,9 @@ func (s *Server) RegisterBareMetalHost(c echo.Context) error {
 	if err != nil {
 		return c.JSON(http.StatusInternalServerError, jsonError("cannot read machine"))
 	}
+	if err := baremetal.ValidateHost(m); err != nil {
+		return c.JSON(http.StatusBadRequest, jsonErrorErr(err))
+	}
 	if m.Provision != nil && m.Provision.Active {
 		return c.JSON(http.StatusConflict, jsonError("machine is provisioning"))
 	}

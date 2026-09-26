@@ -1250,7 +1250,7 @@ paths:
     put:
       tags: [bare-metal]
       summary: Enroll a physical host in an allocation pool (admin only)
-      description: Insert-only enrollment. Repeating the same pool/key preserves any active claim. Registered hosts reject ordinary machine mutation APIs.
+      description: Insert-only enrollment of dedicated amd64 hosts with BIOS/UEFI metadata and automated power control. Repeating the same pool/key preserves any active claim. Registered hosts reject ordinary machine mutation APIs.
       security: [{bearerAuth: []}]
       requestBody:
         required: true
@@ -1351,7 +1351,7 @@ paths:
     post:
       tags: [bare-metal]
       summary: Commit a sealed physical OS deployment (operator or admin)
-      description: Atomically persists the attempt and claim before power cycling. Retrying identical data never starts another installation. Requires a supported SquashFS image and an enrolled key present on the target disk.
+      description: Atomically persists the attempt and claim before power cycling. Retrying identical data never starts another installation. Requires an architecture-matching Ubuntu, Debian or Fedora SquashFS image with an ext4 or XFS target root and an enrolled key present on the target disk.
       security: [{bearerAuth: []}]
       requestBody:
         required: true
