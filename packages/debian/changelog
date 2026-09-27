@@ -1,3 +1,10 @@
+gomi (0.0.39) unstable; urgency=medium
+
+  * Deploy sealed Cluster API BareMetal machines from released QCOW2 images.
+  * Hand completed x86_64 UEFI hosts directly to GRUB for local disk boot.
+
+ -- sugaf1204 <sugaf1204@example.invalid>  Sun, 27 Sep 2026 13:40:00 +0900
+
 gomi (0.0.38) unstable; urgency=medium
 
   * Preserve RAM-held BareMetal identities after failed disk installation.
