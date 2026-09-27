@@ -140,6 +140,7 @@ func TestPXENocloudUserData_MachineWoLShutdownAgent(t *testing.T) {
 	body := rec.Body.String()
 	for _, want := range []string{
 		"/etc/systemd/system/gomi-wol-daemon.service",
+		"/etc/systemd/network/10-gomi-wol.link",
 		"/etc/gomi/wol-daemon.env",
 		"/usr/local/sbin/gomi-install-wol-daemon",
 		"gomi-wol-daemon-linux-${arch}",
@@ -151,6 +152,10 @@ func TestPXENocloudUserData_MachineWoLShutdownAgent(t *testing.T) {
 		"GOMI_SERVER_URL=\"http://192.168.2.254:8080\"",
 		"GOMI_MACHINE_NAME=\"bm-wol\"",
 		"ExecStart=/usr/local/bin/gomi-wol-daemon --env-file /etc/gomi/wol-daemon.env",
+		"PermanentMACAddress=52:54:00:44:55:66",
+		"WakeOnLan=magic",
+		`[ "$(cat "$iface_path/address")" = "52:54:00:44:55:66" ] || continue`,
+		`ethtool -s "${iface_path##*/}" wol g`,
 		"systemctl enable --now gomi-wol-daemon.service",
 	} {
 		if !strings.Contains(body, want) {
