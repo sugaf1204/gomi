@@ -1,3 +1,9 @@
+gomi (0.0.40) unstable; urgency=medium
+
+  * Keep Wake-on-LAN enabled across physical-machine deployment and reboot.
+
+ -- sugaf1204 <sugaf1204@example.invalid>  Sun, 27 Sep 2026 21:05:00 +0900
+
 gomi (0.0.39) unstable; urgency=medium
 
   * Deploy sealed Cluster API BareMetal machines from released QCOW2 images.
