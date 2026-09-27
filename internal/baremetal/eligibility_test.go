@@ -51,3 +51,17 @@ func TestImageEligibilityPreservesFutureCleanup(t *testing.T) {
 		}
 	}
 }
+
+func TestImageEligibilityAcceptsReleasedBareMetalQCOW2(t *testing.T) {
+	img := osimage.OSImage{
+		Arch: "amd64", OSFamily: "ubuntu", Format: osimage.FormatQCOW2,
+		Variant: osimage.VariantBareMetal, Ready: true,
+		Manifest: &osimage.Manifest{Root: osimage.RootArtifact{
+			Format: osimage.FormatQCOW2, Path: "root.qcow2",
+			RootPartition: osimage.Partition{Number: 1, Filesystem: "ext4"},
+		}},
+	}
+	if err := ValidateImage(eligibleHost(), img); err != nil {
+		t.Fatalf("rejected released bare-metal QCOW2 image: %v", err)
+	}
+}

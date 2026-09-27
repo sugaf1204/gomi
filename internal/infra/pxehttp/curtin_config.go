@@ -2,6 +2,7 @@ package pxehttp
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"github.com/labstack/echo/v4"
@@ -192,9 +193,6 @@ func (h *Handler) buildCurtinInstallConfig(ctx context.Context, c echo.Context, 
 }
 
 func (h *Handler) buildDiskImageDeployResponse(base, token, attemptID string, m *machine.Machine, img osimage.OSImage, info *hwinfo.HardwareInfo) (*diskImageDeployResponse, error) {
-	if m.SealedBootstrap != nil {
-		return nil, fmt.Errorf("sealed bare-metal bootstrap requires a SquashFS rootfs artifact")
-	}
 	if !img.Ready {
 		return nil, fmt.Errorf("os image %q is not ready", img.Name)
 	}
@@ -226,6 +224,21 @@ func (h *Handler) buildDiskImageDeployResponse(base, token, attemptID string, m 
 		TargetDisk:          selectedDisk.Path,
 		RootPartitionNumber: img.Manifest.Root.RootPartition.Number,
 		SeedURL:             fmt.Sprintf("%s/nocloud/%s", strings.TrimRight(base, "/"), macToken(m.MAC)),
+	}
+	if seed := m.SealedBootstrap; seed != nil {
+		if !fingerprintPattern.MatchString(seed.KeyFingerprint) || !claimOwnerPattern.MatchString(seed.Owner) {
+			return nil, fmt.Errorf("invalid enrolled bootstrap identity")
+		}
+		if !seed.Cleanup && len(seed.Envelope) == 0 {
+			return nil, fmt.Errorf("sealed bootstrap envelope is required")
+		}
+		deploy.SealedBootstrap = &diskImageSealedBootstrap{
+			Host:           m.Name,
+			Owner:          seed.Owner,
+			KeyFingerprint: seed.KeyFingerprint,
+			Envelope:       base64.StdEncoding.EncodeToString(seed.Envelope),
+			Cleanup:        seed.Cleanup,
+		}
 	}
 	if img.Manifest.Root.EFIPartition != nil {
 		deploy.EFIPartitionNumber = img.Manifest.Root.EFIPartition.Number

@@ -93,6 +93,9 @@ func TestBareMetalRetryRequiresFailedAttemptAndAdmin(t *testing.T) {
 			if err = b.OSImages().Upsert(ctx, osimage.OSImage{Name: "image", Arch: "amd64", OSFamily: "ubuntu", Format: osimage.FormatSquashFS, Variant: osimage.VariantBareMetal, Ready: true, Manifest: &osimage.Manifest{Root: osimage.RootArtifact{Format: osimage.FormatSquashFS, Path: "rootfs.squashfs"}}}); err != nil {
 				t.Fatal(err)
 			}
+			if err = b.OSImages().Upsert(ctx, osimage.OSImage{Name: "replacement", Arch: "amd64", OSFamily: "ubuntu", OSVersion: "24.04", Format: osimage.FormatSquashFS, Variant: osimage.VariantBareMetal, Ready: true, Manifest: &osimage.Manifest{Root: osimage.RootArtifact{Format: osimage.FormatSquashFS, Path: "rootfs.squashfs"}}}); err != nil {
+				t.Fatal(err)
+			}
 			createUser(t, b.Auth(), "actor", "password", tc.role)
 			token := createSession(t, b.Auth(), "actor")
 			e := infraapi.NewServer(infraapi.ServerConfig{Machines: machine.NewService(b.Machines()), OSImages: osimage.NewService(b.OSImages()), AuthStore: b.Auth(), AuthService: infraapi.NewAuthService(b.Auth(), time.Hour), BareMetal: s}).Echo()
@@ -101,7 +104,12 @@ func TestBareMetalRetryRequiresFailedAttemptAndAdmin(t *testing.T) {
 			if deleting {
 				method, route = http.MethodDelete, "/api/v1/bare-metal-claims/capi-owner"
 			}
-			rec := doRequest(e, method, route, map[string]string{"attemptID": tc.attempt}, token)
+			request := map[string]any{"attemptID": tc.attempt}
+			if tc.name == "post-install" {
+				request["osImageRef"] = "replacement"
+				request["powerCycle"] = false
+			}
+			rec := doRequest(e, method, route, request, token)
 			requireStatus(t, rec, tc.want)
 			updated, err := s.FindOwner(ctx, h.Owner)
 			if err != nil {
@@ -121,6 +129,9 @@ func TestBareMetalRetryRequiresFailedAttemptAndAdmin(t *testing.T) {
 				}
 				if saved.TargetDisk != m.TargetDisk || (!deleting && string(saved.SealedBootstrap.Envelope) != string(m.SealedBootstrap.Envelope)) || (deleting && (!saved.SealedBootstrap.Cleanup || (len(saved.SealedBootstrap.Envelope) != 0 && string(saved.SealedBootstrap.Envelope) != "null"))) {
 					t.Fatal("retry changed enrollment inputs")
+				}
+				if tc.name == "post-install" && (saved.OSPreset.ImageRef != "replacement" || saved.OSPreset.Version != "24.04") {
+					t.Fatalf("retry did not switch to requested image: %+v", saved.OSPreset)
 				}
 				if deleting {
 					requireStatus(t, doRequest(e, http.MethodDelete, "/api/v1/bare-metal-claims/capi-owner", nil, token), http.StatusAccepted)

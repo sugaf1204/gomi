@@ -2,6 +2,7 @@ package pxehttp
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"github.com/labstack/echo/v4"
 	apiinventory "github.com/sugaf1204/gomi/api/inventory"
@@ -223,6 +224,11 @@ func TestPXEInventory_QCOW2ImageReturnsDiskImageDeployPlan(t *testing.T) {
 			AttemptID:       "attempt-qcow2-inventory",
 			CompletionToken: "token-qcow2-inventory",
 		},
+		SealedBootstrap: &machine.SealedBootstrap{
+			Owner:          "capi-owner",
+			KeyFingerprint: strings.Repeat("a", 64),
+			Envelope:       json.RawMessage(`{"sealed":"ciphertext"}`),
+		},
 		CreatedAt: now,
 		UpdatedAt: now,
 	}
@@ -287,6 +293,14 @@ func TestPXEInventory_QCOW2ImageReturnsDiskImageDeployPlan(t *testing.T) {
 	}
 	if deploy["seedUrl"] != "http://192.168.2.254:8080/pxe/nocloud/525400aabb05" {
 		t.Fatalf("unexpected seed URL: %#v", deploy["seedUrl"])
+	}
+	sealed, ok := deploy["sealedBootstrap"].(map[string]any)
+	if !ok || sealed["host"] != target.Name || sealed["owner"] != "capi-owner" || sealed["keyFingerprint"] != strings.Repeat("a", 64) {
+		t.Fatalf("missing sealed bootstrap identity: %#v", sealed)
+	}
+	decoded, err := base64.StdEncoding.DecodeString(sealed["envelope"].(string))
+	if err != nil || string(decoded) != `{"sealed":"ciphertext"}` {
+		t.Fatalf("unexpected sealed envelope: %q err=%v", decoded, err)
 	}
 }
 

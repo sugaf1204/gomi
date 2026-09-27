@@ -387,7 +387,7 @@ func normalizeBootConfig(c BootConfig) BootConfig {
 		c.UEFIBootFile = "ipxe.efi"
 	}
 	if strings.TrimSpace(c.UEFILocalBootFile) == "" {
-		c.UEFILocalBootFile = "ipxe.efi"
+		c.UEFILocalBootFile = "grubnetx64.efi"
 	}
 	return c
 }

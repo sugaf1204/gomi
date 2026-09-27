@@ -37,7 +37,7 @@ func renderPXELocalBootScript(_ string) string {
 	return `#!ipxe
 iseq ${platform} efi && goto local_efi || goto local_bios
 :local_efi
-exit
+exit 1
 :local_bios
 sanboot --no-describe --drive 0x80 || exit
 `

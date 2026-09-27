@@ -1,6 +1,7 @@
 package api
 
 import (
+	"fmt"
 	"net/http"
 
 	"github.com/labstack/echo/v4"
@@ -18,7 +19,9 @@ func (s *Server) RetryBareMetalClaim(c echo.Context) error {
 		return c.NoContent(http.StatusServiceUnavailable)
 	}
 	var req struct {
-		AttemptID string `json:"attemptID"`
+		AttemptID  string `json:"attemptID"`
+		OSImageRef string `json:"osImageRef,omitempty"`
+		PowerCycle *bool  `json:"powerCycle,omitempty"`
 	}
 	if err := c.Bind(&req); err != nil || req.AttemptID == "" {
 		return c.JSON(http.StatusBadRequest, jsonError("the failed attemptID is required"))
@@ -46,7 +49,11 @@ func (s *Server) RetryBareMetalClaim(c echo.Context) error {
 	if (!failed && !postInstall) || m.Provision.Artifacts["imageApplied"] != "true" {
 		return bareMetalError(c, baremetal.ErrConflict)
 	}
-	img, err := s.osimages.Get(ctx, m.OSPreset.ImageRef)
+	imageRef := m.OSPreset.ImageRef
+	if req.OSImageRef != "" {
+		imageRef = resourceID("osImages", req.OSImageRef)
+	}
+	img, err := s.osimages.Get(ctx, imageRef)
 	if err != nil {
 		return c.JSON(http.StatusBadRequest, jsonError("OS image not found"))
 	}
@@ -54,6 +61,11 @@ func (s *Server) RetryBareMetalClaim(c echo.Context) error {
 		return c.JSON(http.StatusBadRequest, jsonErrorErr(err))
 	}
 	original := m
+	m.OSPreset = machine.OSPreset{
+		Family:   machine.OSType(img.OSFamily),
+		Version:  img.OSVersion,
+		ImageRef: img.Name,
+	}
 	actor, _ := httputil.UserFromContext(c)
 	m, err = machine.PrepareReinstall(m, actor.Username, nil, s.provisionTimeout)
 	if err != nil {
@@ -63,7 +75,10 @@ func (s *Server) RetryBareMetalClaim(c echo.Context) error {
 	if err != nil {
 		return bareMetalError(c, err)
 	}
-	httputil.CreateAudit(c, s.authStore, h.Name, "retry-bare-metal-claim", "success", "administrator retried a failed sealed deployment", map[string]string{"owner": h.Owner, "previousAttemptID": req.AttemptID, "attemptID": h.AttemptID})
-	s.startRedeployPowerCycle(original, m, original.IP)
+	powerCycle := req.PowerCycle == nil || *req.PowerCycle
+	httputil.CreateAudit(c, s.authStore, h.Name, "retry-bare-metal-claim", "success", "administrator retried a failed sealed deployment", map[string]string{"owner": h.Owner, "previousAttemptID": req.AttemptID, "attemptID": h.AttemptID, "powerCycle": fmt.Sprintf("%t", powerCycle)})
+	if powerCycle {
+		s.startRedeployPowerCycle(original, m, original.IP)
+	}
 	return c.JSON(http.StatusAccepted, h)
 }
