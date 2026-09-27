@@ -126,7 +126,8 @@ func TestPXEBootScriptRecordsLocalBootMarkerAfterImageApplied(t *testing.T) {
 
 	h := &Handler{machines: machineSvc}
 	body := fetchPXEBootScript(t, h, target.MAC).Body.String()
-	if !strings.Contains(body, "iseq ${platform} efi && goto local_efi || goto local_bios") {
+	if !strings.Contains(body, "iseq ${platform} efi && goto local_efi || goto local_bios") ||
+		!strings.Contains(body, ":local_efi\nexit 1\n") {
 		t.Fatalf("expected local boot script after image_applied, got: %s", body)
 	}
 	fetchPXEBootScript(t, h, target.MAC)

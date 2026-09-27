@@ -30,14 +30,23 @@ type inventoryResponse struct {
 }
 
 type diskImageDeployResponse struct {
-	ImageURL            string `json:"imageUrl"`
-	Format              string `json:"format"`
-	OSFamily            string `json:"osFamily,omitempty"`
-	OSVersion           string `json:"osVersion,omitempty"`
-	TargetDisk          string `json:"targetDisk"`
-	RootPartitionNumber int    `json:"rootPartitionNumber"`
-	EFIPartitionNumber  int    `json:"efiPartitionNumber,omitempty"`
-	SeedURL             string `json:"seedUrl"`
+	ImageURL            string                    `json:"imageUrl"`
+	Format              string                    `json:"format"`
+	OSFamily            string                    `json:"osFamily,omitempty"`
+	OSVersion           string                    `json:"osVersion,omitempty"`
+	TargetDisk          string                    `json:"targetDisk"`
+	RootPartitionNumber int                       `json:"rootPartitionNumber"`
+	EFIPartitionNumber  int                       `json:"efiPartitionNumber,omitempty"`
+	SeedURL             string                    `json:"seedUrl"`
+	SealedBootstrap     *diskImageSealedBootstrap `json:"sealedBootstrap,omitempty"`
+}
+
+type diskImageSealedBootstrap struct {
+	Host           string `json:"host"`
+	Owner          string `json:"owner"`
+	KeyFingerprint string `json:"keyFingerprint"`
+	Envelope       string `json:"envelope,omitempty"`
+	Cleanup        bool   `json:"cleanup,omitempty"`
 }
 
 type installCompleteVMResponse struct {

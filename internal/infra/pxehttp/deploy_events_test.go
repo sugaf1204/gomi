@@ -166,7 +166,7 @@ func TestPXEDeployEvents_ImageAppliedLocalBootsAndConfiguresBIOSBootOrder(t *tes
 	}
 	body := bootRec.Body.String()
 	if !strings.Contains(body, "iseq ${platform} efi && goto local_efi || goto local_bios") ||
-		!strings.Contains(body, ":local_efi\nexit\n") {
+		!strings.Contains(body, ":local_efi\nexit 1\n") {
 		t.Fatalf("expected UEFI local boot to exit back to firmware after image_applied, got: %s", body)
 	}
 	if strings.Contains(body, "BOOTX64.EFI") {

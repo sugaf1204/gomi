@@ -33,8 +33,9 @@ func ValidateImage(m machine.Machine, img osimage.OSImage) error {
 	if img.Arch == "" || img.Arch != string(m.Arch) || (img.Manifest != nil && img.Manifest.Arch != "" && img.Manifest.Arch != img.Arch) {
 		return fmt.Errorf("bare-metal image architecture must match the enrolled host")
 	}
-	if !img.Ready || osimage.EffectiveImageFormat(img) != osimage.FormatSquashFS || !osimage.SupportsDeploymentTarget(img, osimage.DeploymentTargetBareMetal) {
-		return fmt.Errorf("a ready bare-metal SquashFS image is required")
+	format := osimage.EffectiveImageFormat(img)
+	if !img.Ready || (format != osimage.FormatSquashFS && format != osimage.FormatQCOW2) || !osimage.SupportsDeploymentTarget(img, osimage.DeploymentTargetBareMetal) {
+		return fmt.Errorf("a ready bare-metal SquashFS or QCOW2 image is required")
 	}
 	switch img.OSFamily {
 	case "ubuntu", "debian", "fedora":

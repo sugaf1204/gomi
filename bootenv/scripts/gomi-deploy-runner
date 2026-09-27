@@ -300,6 +300,10 @@ if [ "$deploy_mode" = "disk-image" ]; then
   target_disk="$(jq -r '.diskImageDeploy.targetDisk // empty' "$response_file")"
   root_part="$(jq -r '.diskImageDeploy.rootPartitionNumber // 0' "$response_file")"
   seed_url="$(jq -r '.diskImageDeploy.seedUrl // empty' "$response_file")"
+  sealed_host="$(jq -r '.diskImageDeploy.sealedBootstrap.host // empty' "$response_file")"
+  sealed_owner="$(jq -r '.diskImageDeploy.sealedBootstrap.owner // empty' "$response_file")"
+  sealed_fingerprint="$(jq -r '.diskImageDeploy.sealedBootstrap.keyFingerprint // empty' "$response_file")"
+  sealed_cleanup="$(jq -r '.diskImageDeploy.sealedBootstrap.cleanup // false' "$response_file")"
   [ "$image_format" = "qcow2" ] || fail "unsupported disk image format: $image_format"
   [ -n "$image_url" ] || fail "disk image URL is required"
   [ -b "$target_disk" ] || fail "target disk is not a block device: $target_disk"
@@ -313,6 +317,16 @@ if [ "$deploy_mode" = "disk-image" ]; then
   virtual_size="$(printf '%s\n' "$image_info" | jq -r '.["virtual-size"] // 0')"
   target_size="$(blockdev --getsize64 "$target_disk")"
   [ "$virtual_size" -le "$target_size" ] || fail "qcow2 virtual size exceeds target disk"
+  if [ -n "$sealed_owner" ]; then
+    sealed_stage=/run/gomi-sealed-bootstrap
+    install -d -m 700 "$sealed_stage"
+    gomi-preserve-identity --disk "$target_disk" --fingerprint "$sealed_fingerprint" --output "$sealed_stage/identity" || fail "enrolled identity preservation failed"
+    if [ "$sealed_cleanup" != true ]; then
+      jq -r '.diskImageDeploy.sealedBootstrap.envelope' "$response_file" | base64 -d >"$sealed_stage/envelope.json" || fail "sealed bootstrap envelope decode failed"
+      gomi-unseal-bootstrap --key "$sealed_stage/identity/ssh_host_rsa_key" --host "$sealed_host" --owner "$sealed_owner" --input "$sealed_stage/envelope.json" --output "$sealed_stage/bootstrap.yaml" || fail "sealed bootstrap decrypt failed"
+    fi
+    post_timing runner.preserve_identity "preserved enrolled identity"
+  fi
   post_event progress "invalidating target disk boot metadata"
   invalidate_target_disk_boot_metadata "$target_disk" || fail "target disk boot metadata invalidation failed"
   post_timing runner.invalidate_target_disk "invalidated target disk boot metadata"
@@ -344,6 +358,16 @@ if [ "$deploy_mode" = "disk-image" ]; then
   for file in user-data meta-data vendor-data network-config; do
     curl -fsS -o "$seed_dir/$file" "$seed_url/$file" || fail "failed to fetch NoCloud $file"
   done
+  if [ -n "$sealed_owner" ]; then
+    install -d -m 755 /mnt/gomi-target/etc/ssh
+    for key in "$sealed_stage"/identity/ssh_host_*_key; do
+      install -m 600 "$key" "/mnt/gomi-target/etc/ssh/$(basename "$key")"
+      install -m 644 "$key.pub" "/mnt/gomi-target/etc/ssh/$(basename "$key").pub"
+    done
+    if [ "$sealed_cleanup" != true ]; then
+      gomi-merge-bootstrap --bootstrap "$sealed_stage/bootstrap.yaml" --seed "$seed_dir" --owner "$sealed_owner" || fail "sealed bootstrap merge failed"
+    fi
+  fi
   {
     cat <<'EOF'
 datasource_list: [ NoCloud, None ]
@@ -374,7 +398,12 @@ EOF
   umount "$target_mount"
   target_mount=""
   post_timing runner.inject_seed "injected NoCloud seed"
-  post_event image_applied "disk image written"
+  if [ -n "$sealed_owner" ]; then
+    sync
+    gomi-ack-restoration "$event_url"
+  else
+    post_event image_applied "disk image written"
+  fi
 else
   curtin_url="$(jq -r '.curtinConfigUrl // empty' "$response_file")"
   [ -n "$curtin_url" ] || fail "inventory response missing curtinConfigUrl"

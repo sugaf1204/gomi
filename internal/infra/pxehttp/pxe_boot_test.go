@@ -222,7 +222,7 @@ func TestPXEBootScript_LocalBootWhenVMNotProvisioning(t *testing.T) {
 	}
 	body := rec.Body.String()
 	if !strings.Contains(body, "iseq ${platform} efi && goto local_efi || goto local_bios") ||
-		!strings.Contains(body, ":local_efi\nexit\n") {
+		!strings.Contains(body, ":local_efi\nexit 1\n") {
 		t.Fatalf("expected UEFI local boot to exit back to firmware, got: %s", body)
 	}
 	if strings.Contains(body, "BOOTX64.EFI") {
@@ -255,7 +255,7 @@ func TestPXEBootScript_LocalBootWhenNoProvisioningTarget(t *testing.T) {
 	}
 	body := rec.Body.String()
 	if !strings.Contains(body, "iseq ${platform} efi && goto local_efi || goto local_bios") ||
-		!strings.Contains(body, ":local_efi\nexit\n") {
+		!strings.Contains(body, ":local_efi\nexit 1\n") {
 		t.Fatalf("expected UEFI local boot to exit back to firmware, got: %s", body)
 	}
 	if strings.Contains(body, "BOOTX64.EFI") {
@@ -368,7 +368,7 @@ func TestPXEBootScript_CurtinForUbuntuVMUsesLocalBootScript(t *testing.T) {
 
 	body := rec.Body.String()
 	if !strings.Contains(body, "iseq ${platform} efi && goto local_efi || goto local_bios") ||
-		!strings.Contains(body, ":local_efi\nexit\n") {
+		!strings.Contains(body, ":local_efi\nexit 1\n") {
 		t.Fatalf("expected UEFI local boot to exit back to firmware for curtin, got: %s", body)
 	}
 	if strings.Contains(body, "BOOTX64.EFI") {
