@@ -38,6 +38,30 @@ func registerHost(t *testing.T, b *infrasql.Backend, name, pool string) baremeta
 	}
 	return h
 }
+func TestBareMetalPoolUpdateRequiresAvailableHostAndCurrentRevision(t *testing.T) {
+	ctx := context.Background()
+	b := physicalBackend(t, filepath.Join(t.TempDir(), "gomi.db"))
+	s := b.BareMetal()
+	h := registerHost(t, b, "node1", "cluster02")
+
+	updated, err := s.UpdatePool(ctx, h.Name, "cilium-cluster", h.Revision)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.Pool != "cilium-cluster" || updated.Revision != h.Revision+1 {
+		t.Fatalf("unexpected update: %#v", updated)
+	}
+	if _, err = s.UpdatePool(ctx, h.Name, "stale", h.Revision); !errors.Is(err, baremetal.ErrConflict) {
+		t.Fatalf("stale revision accepted: %v", err)
+	}
+	claimed, err := s.Acquire(ctx, updated.Pool, "capi-owner")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.UpdatePool(ctx, h.Name, "other", claimed.Revision); !errors.Is(err, baremetal.ErrConflict) {
+		t.Fatalf("allocated host moved pools: %v", err)
+	}
+}
 func TestBareMetalClaimLifecycle(t *testing.T) {
 	ctx := context.Background()
 	b := physicalBackend(t, filepath.Join(t.TempDir(), "gomi.db"))

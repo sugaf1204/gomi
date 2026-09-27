@@ -51,6 +51,18 @@ func (s *BareMetalStore) Register(ctx context.Context, name, pool, publicKey, ta
 	}
 	return h, err
 }
+func (s *BareMetalStore) UpdatePool(ctx context.Context, name, pool string, revision int64) (baremetal.Host, error) {
+	if err := baremetal.ValidateRegistration(name, pool); err != nil || revision <= 0 {
+		return baremetal.Host{}, baremetal.ErrConflict
+	}
+	updated, err := scanHost(s.b.queryRow(ctx, `UPDATE bare_metal_hosts SET pool=?,revision=revision+1
+ WHERE name=? AND revision=? AND owner IS NULL AND state='Available' RETURNING `+hostColumns,
+		pool, name, revision))
+	if errors.Is(err, baremetal.ErrNotFound) {
+		err = baremetal.ErrConflict
+	}
+	return updated, err
+}
 func (s *BareMetalStore) Acquire(ctx context.Context, pool, owner string) (baremetal.Host, error) {
 	if err := baremetal.ValidateAcquire(pool, owner); err != nil {
 		return baremetal.Host{}, err

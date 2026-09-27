@@ -1275,6 +1275,30 @@ paths:
         '403': {description: Administrator role required}
         '404': {description: Physical machine not registered in GOMI}
         '409': {description: Conflicting enrollment or active provisioning}
+    patch:
+      tags: [bare-metal]
+      summary: Move an available physical host to another allocation pool (admin only)
+      description: Uses optimistic concurrency and only updates an unowned host in Available state. The current revision is required so an administrator cannot overwrite a concurrent claim.
+      security: [{bearerAuth: []}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [pool, revision]
+              properties:
+                pool: {type: string, minLength: 1}
+                revision: {type: integer, format: int64, minimum: 1}
+      responses:
+        '200':
+          description: Updated host
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/BareMetalHost'}
+        '400': {description: Invalid pool or revision}
+        '403': {description: Administrator role required}
+        '409': {description: Host is allocated or the revision is stale}
     get:
       tags: [bare-metal]
       summary: Read physical host allocation state

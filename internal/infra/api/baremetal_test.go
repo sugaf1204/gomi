@@ -72,6 +72,21 @@ func TestBareMetalAPIEnrollmentAndServiceAccount(t *testing.T) {
 	requireStatus(t, rec, http.StatusConflict)
 	rec = doRequest(e, http.MethodPut, "/api/v1/bare-metal-hosts/node1", map[string]any{"pool": "k8scluster02", "publicKey": string(key), "targetDisk": "/dev/nvme0n1"}, admin)
 	requireStatus(t, rec, http.StatusOK)
+	enrolled := parseBody(t, rec)
+	revision := int64(enrolled["revision"].(float64))
+	rec = doRequest(e, http.MethodPatch, "/api/v1/bare-metal-hosts/node1", map[string]any{"pool": "cilium-cluster", "revision": revision}, token)
+	requireStatus(t, rec, http.StatusForbidden)
+	rec = doRequest(e, http.MethodPatch, "/api/v1/bare-metal-hosts/node1", map[string]any{"pool": "cilium-cluster", "revision": revision}, admin)
+	requireStatus(t, rec, http.StatusOK)
+	updated := parseBody(t, rec)
+	if updated["pool"] != "cilium-cluster" {
+		t.Fatalf("pool was not updated: %v", updated)
+	}
+	rec = doRequest(e, http.MethodPatch, "/api/v1/bare-metal-hosts/node1", map[string]any{"pool": "stale", "revision": revision}, admin)
+	requireStatus(t, rec, http.StatusConflict)
+	revision = int64(updated["revision"].(float64))
+	rec = doRequest(e, http.MethodPatch, "/api/v1/bare-metal-hosts/node1", map[string]any{"pool": "k8scluster02", "revision": revision}, admin)
+	requireStatus(t, rec, http.StatusOK)
 	for i := 0; i < 2; i++ {
 		rec = doRequest(e, http.MethodPost, "/api/v1/bare-metal-claims", map[string]any{"pool": "k8scluster02", "owner": "capi-test"}, token)
 		requireStatus(t, rec, http.StatusOK)
