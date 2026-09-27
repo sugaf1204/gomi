@@ -2,10 +2,12 @@ package pxehttp
 
 import (
 	"fmt"
+	"net"
+	"strings"
+
 	"github.com/sugaf1204/gomi/internal/machine"
 	"github.com/sugaf1204/gomi/internal/power"
 	"gopkg.in/yaml.v3"
-	"strings"
 )
 
 const targetWoLShutdownService = `[Unit]
@@ -31,6 +33,11 @@ func injectWoLShutdownAgent(cloudConfig, pxeBaseURL string, m *machine.Machine) 
 	if strings.TrimSpace(wol.HMACSecret) == "" || strings.TrimSpace(wol.Token) == "" {
 		return cloudConfig
 	}
+	wakeMAC, err := net.ParseMAC(wol.WakeMAC)
+	if err != nil {
+		return cloudConfig
+	}
+	wakeAddress := wakeMAC.String()
 
 	trimmed := strings.TrimSpace(cloudConfig)
 	if trimmed == "" {
@@ -72,13 +79,17 @@ func injectWoLShutdownAgent(cloudConfig, pxeBaseURL string, m *machine.Machine) 
 		"permissions": "0600",
 		"content":     env.String(),
 	}, map[string]any{
+		"path":        "/etc/systemd/network/10-gomi-wol.link",
+		"permissions": "0644",
+		"content":     targetWoLLink(wakeAddress),
+	}, map[string]any{
 		"path":        "/etc/systemd/system/gomi-wol-daemon.service",
 		"permissions": "0644",
 		"content":     targetWoLShutdownService,
 	}, map[string]any{
 		"path":        "/usr/local/sbin/gomi-install-wol-daemon",
 		"permissions": "0755",
-		"content":     buildWoLShutdownInstallerScript(filesBase),
+		"content":     buildWoLShutdownInstallerScript(filesBase, wakeAddress),
 	})
 	cfg["write_files"] = writeFiles
 
@@ -96,7 +107,16 @@ func injectWoLShutdownAgent(cloudConfig, pxeBaseURL string, m *machine.Machine) 
 	return rendered
 }
 
-func buildWoLShutdownInstallerScript(filesBase string) string {
+func targetWoLLink(wakeMAC string) string {
+	return fmt.Sprintf(`[Match]
+PermanentMACAddress=%s
+
+[Link]
+WakeOnLan=magic
+`, strings.ToLower(strings.TrimSpace(wakeMAC)))
+}
+
+func buildWoLShutdownInstallerScript(filesBase, wakeMAC string) string {
 	base := strings.TrimRight(filesBase, "/")
 	return fmt.Sprintf(`#!/bin/sh
 set -eu
@@ -129,9 +149,16 @@ else
 fi
 
 install -m 0755 "$tmp" /usr/local/bin/gomi-wol-daemon
+if command -v ethtool >/dev/null 2>&1; then
+    for iface_path in /sys/class/net/*; do
+        [ "$(cat "$iface_path/address")" = "%s" ] || continue
+        ethtool -s "${iface_path##*/}" wol g
+        break
+    done
+fi
 systemctl daemon-reload
 systemctl enable --now gomi-wol-daemon.service
-`, base)
+	`, base, strings.ToLower(strings.TrimSpace(wakeMAC)))
 }
 
 func systemdEnvLine(key, value string) string {
