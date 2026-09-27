@@ -72,6 +72,27 @@ func (s *Server) GetBareMetalHost(c echo.Context) error {
 	}
 	return c.JSON(http.StatusOK, h)
 }
+func (s *Server) UpdateBareMetalHostPool(c echo.Context) error {
+	if s.bareMetal == nil {
+		return c.NoContent(http.StatusServiceUnavailable)
+	}
+	var req struct {
+		Pool     string `json:"pool"`
+		Revision int64  `json:"revision"`
+	}
+	if err := c.Bind(&req); err != nil {
+		return c.JSON(http.StatusBadRequest, jsonError("invalid body"))
+	}
+	if err := baremetal.ValidateRegistration(c.Param("name"), req.Pool); err != nil || req.Revision <= 0 {
+		return c.JSON(http.StatusBadRequest, jsonError("pool and a positive revision are required"))
+	}
+	h, err := s.bareMetal.UpdatePool(c.Request().Context(), c.Param("name"), req.Pool, req.Revision)
+	if err != nil {
+		return bareMetalError(c, err)
+	}
+	httputil.CreateAudit(c, s.authStore, h.Name, "update-bare-metal-host-pool", "success", "host pool updated", map[string]string{"pool": h.Pool})
+	return c.JSON(http.StatusOK, h)
+}
 func (s *Server) GetBareMetalClaim(c echo.Context) error {
 	if s.bareMetal == nil {
 		return c.NoContent(http.StatusServiceUnavailable)

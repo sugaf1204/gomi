@@ -46,6 +46,7 @@ type Host struct {
 // Register is insert-only: re-registering a host never resets an active claim.
 type Store interface {
 	Register(context.Context, string, string, string, string) (Host, error)
+	UpdatePool(context.Context, string, string, int64) (Host, error)
 	Get(context.Context, string) (Host, error)
 	FindOwner(context.Context, string) (Host, error)
 	Acquire(context.Context, string, string) (Host, error)

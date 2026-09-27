@@ -1,3 +1,10 @@
+gomi (0.0.41) unstable; urgency=medium
+
+  * Allow administrators to reassign available bare-metal hosts between pools
+    with revision fencing while preserving active CAPI ownership.
+
+ -- sugaf1204 <sugaf1204@example.invalid>  Mon, 28 Sep 2026 01:26:56 +0900
+
 gomi (0.0.40) unstable; urgency=medium
 
   * Keep Wake-on-LAN enabled across physical-machine deployment and reboot.
