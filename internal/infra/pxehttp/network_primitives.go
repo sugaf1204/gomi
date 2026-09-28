@@ -17,6 +17,7 @@ type netplanConfig struct {
 
 type netplanNIC struct {
 	Match       *netplanMatch       `yaml:"match,omitempty"`
+	SetName     string              `yaml:"set-name,omitempty"`
 	WakeOnLAN   bool                `yaml:"wakeonlan,omitempty"`
 	DHCP4       bool                `yaml:"dhcp4"`
 	DHCP6       bool                `yaml:"dhcp6,omitempty"`
@@ -116,8 +117,13 @@ func defaultRoute(gateway string) []netplanRoute {
 }
 
 func buildDirectNetplanConfig(mac, ip string, prefixLen int, gateway string, nameservers []string, dhcp bool, renderer string) netplanConfig {
+	return buildNamedDirectNetplanConfig(mac, ip, prefixLen, gateway, nameservers, dhcp, renderer, "")
+}
+
+func buildNamedDirectNetplanConfig(mac, ip string, prefixLen int, gateway string, nameservers []string, dhcp bool, renderer, interfaceName string) netplanConfig {
 	nic := netplanNIC{
 		Match:     macMatch(mac),
+		SetName:   strings.TrimSpace(interfaceName),
 		WakeOnLAN: strings.TrimSpace(mac) != "",
 		DHCP4:     dhcp,
 		DHCP6:     false,

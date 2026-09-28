@@ -85,6 +85,17 @@ class IdentityTests(unittest.TestCase):
 
 
 class MergeTests(unittest.TestCase):
+    def test_metadata_keeps_gomi_network_facts_for_cloud_init_jinja(self):
+        result = merger.merge_metadata({
+            "instance-id": "gomi-host",
+            "local-hostname": "node1",
+            "gomi_ipv4": "192.168.2.101",
+            "gomi_uplink": "gomi-uplink",
+        }, "capi-owner")
+        self.assertEqual(result["instance-id"], "capi-owner")
+        self.assertEqual(result["gomi_ipv4"], "192.168.2.101")
+        self.assertEqual(result["gomi_uplink"], "gomi-uplink")
+
     def test_cloud_init_can_render_serialized_embedded_kubeadm_jinja(self):
         # Real CABPK embeds a multiline kubeadm configuration in write_files.
         # Default PyYAML serialization wrapped an expression with a backslash,

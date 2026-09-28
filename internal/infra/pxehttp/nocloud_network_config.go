@@ -52,8 +52,14 @@ func (h *Handler) renderNoCloudNetworkConfig(ctx context.Context, rawMAC string)
 	if n != nil && n.GetIPAssignment() == resource.IPAssignmentStatic {
 		if ip := n.StaticIP(); ip != "" {
 			spec := h.resolveSubnetSpec(ctx, n)
+			if m, ok := n.(*machine.Machine); ok && isCAPIProvisioning(m) {
+				return buildNamedNetworkConfigWithRenderer(mac, ip, spec, renderer, capiUplinkName)
+			}
 			return buildNetworkConfigWithRenderer(mac, ip, spec, renderer)
 		}
+	}
+	if m, ok := n.(*machine.Machine); ok && isCAPIProvisioning(m) {
+		return buildNamedNetworkConfigWithRenderer(mac, "", nil, renderer, capiUplinkName)
 	}
 
 	return buildNetworkConfigWithRenderer(mac, "", nil, renderer)
@@ -66,7 +72,13 @@ func buildNetworkConfig(mac, ip string, spec *subnet.SubnetSpec) string {
 }
 
 func buildNetworkConfigWithRenderer(mac, ip string, spec *subnet.SubnetSpec, renderer string) string {
-	return marshalYAMLString(buildDirectNetplanConfig(
+	return buildNamedNetworkConfigWithRenderer(mac, ip, spec, renderer, "")
+}
+
+const capiUplinkName = "gomi-uplink"
+
+func buildNamedNetworkConfigWithRenderer(mac, ip string, spec *subnet.SubnetSpec, renderer, interfaceName string) string {
+	return marshalYAMLString(buildNamedDirectNetplanConfig(
 		mac,
 		ip,
 		subnetPrefixLen(spec),
@@ -74,7 +86,13 @@ func buildNetworkConfigWithRenderer(mac, ip string, spec *subnet.SubnetSpec, ren
 		subnetNameServers(spec),
 		ip == "",
 		renderer,
+		interfaceName,
 	))
+}
+
+func isCAPIProvisioning(m *machine.Machine) bool {
+	return m != nil && m.SealedBootstrap != nil &&
+		!m.SealedBootstrap.Cleanup && strings.HasPrefix(m.SealedBootstrap.Owner, "capi-")
 }
 
 type cloudInitV1NetworkConfig struct {
