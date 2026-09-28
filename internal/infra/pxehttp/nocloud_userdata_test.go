@@ -478,3 +478,36 @@ func TestPXENocloudMetaData_UsesVMName(t *testing.T) {
 		t.Fatalf("expected gomi-pxe metadata hostname to be replaced, got: %s", body)
 	}
 }
+
+func TestPXENocloudMetaData_CAPIMachinePublishesDeclarativeNetworkFacts(t *testing.T) {
+	backend := memory.New()
+	machineSvc := machine.NewService(backend.Machines())
+	now := time.Now().UTC()
+	target := machine.Machine{
+		Name: "node-capi", Hostname: "node-capi", MAC: "52:54:00:12:34:57",
+		IP: "192.168.2.157", Arch: "amd64", Firmware: machine.FirmwareUEFI,
+		SealedBootstrap: &machine.SealedBootstrap{Owner: "capi-owner"},
+		CreatedAt:       now, UpdatedAt: now,
+	}
+	if err := backend.Machines().Upsert(context.Background(), target); err != nil {
+		t.Fatalf("upsert machine: %v", err)
+	}
+
+	e := echo.New()
+	req := httptest.NewRequest(http.MethodGet, "/pxe/nocloud/525400123457/meta-data", nil)
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+	c.SetParamNames("mac")
+	c.SetParamValues("525400123457")
+
+	h := &Handler{machines: machineSvc}
+	if err := h.PXENocloudMetaData(c); err != nil {
+		t.Fatalf("PXENocloudMetaData: %v", err)
+	}
+	body := rec.Body.String()
+	for _, want := range []string{"gomi_ipv4: 192.168.2.157", "gomi_uplink: gomi-uplink"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("expected metadata %q, got:\n%s", want, body)
+		}
+	}
+}

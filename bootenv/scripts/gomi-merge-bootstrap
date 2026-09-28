@@ -83,6 +83,14 @@ def private_write(path, value):
             os.unlink(temporary)
 
 
+def merge_metadata(metadata, owner):
+    if not isinstance(metadata, dict) or not owner.startswith("capi-"):
+        raise ValueError("invalid metadata")
+    result = dict(metadata)
+    result["instance-id"] = owner
+    return result
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--bootstrap", required=True)
@@ -95,10 +103,7 @@ def main():
         raise ValueError("unsupported bootstrap format")
     seed = Path(args.seed)
     merged = merge(yaml.safe_load((seed / "user-data").read_text()), yaml.safe_load(source))
-    metadata = yaml.safe_load((seed / "meta-data").read_text())
-    if not isinstance(metadata, dict) or not args.owner.startswith("capi-"):
-        raise ValueError("invalid metadata")
-    metadata["instance-id"] = args.owner
+    metadata = merge_metadata(yaml.safe_load((seed / "meta-data").read_text()), args.owner)
     private_write(seed / "meta-data", yaml.safe_dump(metadata))
     private_write(seed / "user-data", header + serialize(merged, jinja=source.startswith("## template: jinja")))
     os.chmod(seed, 0o700)

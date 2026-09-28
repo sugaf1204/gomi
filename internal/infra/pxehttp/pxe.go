@@ -7,6 +7,7 @@ import (
 	"github.com/sugaf1204/gomi/internal/machine"
 	"github.com/sugaf1204/gomi/internal/node"
 	"github.com/sugaf1204/gomi/internal/vm"
+	"net"
 	gohttp "net/http"
 	"strings"
 )
@@ -141,13 +142,20 @@ func (h *Handler) PXENocloudMetaData(c echo.Context) error {
 	ctx := c.Request().Context()
 	hostname := "gomi-pxe"
 
+	var target node.Node
 	if n := h.findHostByMAC(ctx, rawMAC); n != nil {
+		target = n
 		if name := sanitizeHostnameForLinux(n.NodeDisplayName()); name != "" {
 			hostname = name
 		}
 	}
 
 	body := fmt.Sprintf("instance-id: gomi-%s\nlocal-hostname: %s\n", macToken(rawMAC), hostname)
+	if m, ok := target.(*machine.Machine); ok && isCAPIProvisioning(m) {
+		if ip := net.ParseIP(strings.TrimSpace(m.IP)); ip != nil && ip.To4() != nil {
+			body += fmt.Sprintf("gomi_ipv4: %s\ngomi_uplink: %s\n", ip.String(), capiUplinkName)
+		}
+	}
 	return c.Blob(gohttp.StatusOK, "text/plain; charset=utf-8", []byte(body))
 }
 

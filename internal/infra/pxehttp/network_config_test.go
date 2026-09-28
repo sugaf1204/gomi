@@ -45,6 +45,37 @@ func TestPXENocloudNetworkConfig_DHCP(t *testing.T) {
 	}
 }
 
+func TestPXENocloudNetworkConfig_CAPIMachineUsesStableUplinkName(t *testing.T) {
+	backend := memory.New()
+	machineSvc := machine.NewService(backend.Machines())
+	now := time.Now().UTC()
+	target := machine.Machine{
+		Name: "capi-node", Hostname: "capi-node", MAC: "52:54:00:44:00:54",
+		IP: "192.168.2.154", IPAssignment: machine.IPAssignmentModeStatic,
+		Arch: "amd64", Firmware: machine.FirmwareUEFI,
+		SealedBootstrap: &machine.SealedBootstrap{Owner: "capi-owner"},
+		CreatedAt:       now, UpdatedAt: now,
+	}
+	if err := backend.Machines().Upsert(context.Background(), target); err != nil {
+		t.Fatalf("upsert machine: %v", err)
+	}
+
+	e := echo.New()
+	req := httptest.NewRequest(http.MethodGet, "/pxe/nocloud/525400440054/network-config", nil)
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+	c.SetParamNames("mac")
+	c.SetParamValues("525400440054")
+
+	h := &Handler{machines: machineSvc}
+	if err := h.PXENocloudNetworkConfig(c); err != nil {
+		t.Fatalf("PXENocloudNetworkConfig: %v", err)
+	}
+	if body := rec.Body.String(); !strings.Contains(body, "set-name: gomi-uplink") {
+		t.Fatalf("expected stable CAPI uplink name, got:\n%s", body)
+	}
+}
+
 func TestPXENocloudNetworkConfig_FedoraMachineStaticUsesNetworkdRenderer(t *testing.T) {
 	backend := memory.New()
 	machineSvc := machine.NewService(backend.Machines())

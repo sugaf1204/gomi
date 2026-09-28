@@ -50,6 +50,16 @@ func TestBuildNetworkConfig_Static(t *testing.T) {
 	}
 }
 
+func TestBuildNamedNetworkConfig_Static(t *testing.T) {
+	spec := &subnet.SubnetSpec{CIDR: "192.168.2.0/24", DefaultGateway: "192.168.2.1"}
+	got := buildNamedNetworkConfigWithRenderer(
+		"84:47:09:1f:1c:d6", "192.168.2.100", spec, networkConfigRendererNetworkd, capiUplinkName,
+	)
+	if !strings.Contains(got, "set-name: gomi-uplink") {
+		t.Fatalf("expected stable CAPI uplink name, got:\n%s", got)
+	}
+}
+
 func TestBuildBridgedNetworkConfig_Static(t *testing.T) {
 	spec := &subnet.SubnetSpec{
 		CIDR:           "192.168.2.0/24",
