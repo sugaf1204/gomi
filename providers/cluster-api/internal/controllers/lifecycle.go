@@ -28,6 +28,37 @@ func ensureTemplate(ctx context.Context, api *gomi.Client, id, data string) erro
 	}
 	return api.CreateTemplate(ctx, gomi.Template{Name: id, UserData: data, Description: ownership(id), DeliveryMode: "vm-seed"})
 }
+
+func ensureProvisioningTemplate(ctx context.Context, api *gomi.Client, id, data string) error {
+	if err := api.RequireBareMetalProvisioningTemplates(ctx); err != nil {
+		return err
+	}
+	existing, err := api.GetTemplate(ctx, id)
+	if err == nil {
+		if existing.Description != ownership(id) || existing.UserData != data || existing.DeliveryMode != "" {
+			return fmt.Errorf("provisioning template ownership or content conflict")
+		}
+		return nil
+	}
+	if !gomi.IsStatus(err, 404) {
+		return err
+	}
+	return api.CreateTemplate(ctx, gomi.Template{Name: id, UserData: data, Description: ownership(id)})
+}
+
+func removeOwnedTemplate(ctx context.Context, api *gomi.Client, id, purpose string) error {
+	t, err := api.GetTemplate(ctx, id)
+	if err != nil {
+		if gomi.IsStatus(err, 404) {
+			return nil
+		}
+		return err
+	}
+	if t.Description != ownership(id) {
+		return fmt.Errorf("refusing to delete %s template with conflicting ownership", purpose)
+	}
+	return api.DeleteTemplate(ctx, id)
+}
 func (r *MachineReconciler) remove(ctx context.Context, api *gomi.Client, infra *infrav1.GomiMachine) (ctrl.Result, error) {
 	if infra.Spec.Kind == "BareMetal" {
 		return r.removeBareMetal(ctx, api, infra)
@@ -53,17 +84,8 @@ func (r *MachineReconciler) remove(ctx context.Context, api *gomi.Client, infra 
 				return retry, err
 			}
 		}
-		t, err := api.GetTemplate(ctx, id)
-		if err != nil && !gomi.IsStatus(err, 404) {
+		if err := removeOwnedTemplate(ctx, api, id, "bootstrap"); err != nil {
 			return retry, err
-		}
-		if err == nil {
-			if t.Description != ownership(id) {
-				return retry, fmt.Errorf("refusing to delete bootstrap template with conflicting ownership")
-			}
-			if err := api.DeleteTemplate(ctx, id); err != nil {
-				return retry, err
-			}
 		}
 	}
 	before := infra.DeepCopy()

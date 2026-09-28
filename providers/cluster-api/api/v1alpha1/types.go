@@ -90,14 +90,27 @@ type VirtualMachineSpec struct {
 	SSHKeyRefs   []string `json:"sshKeyRefs,omitempty"`
 }
 
+// ConfigMapKeyReference selects one key from an immutable ConfigMap in the
+// GomiMachine namespace.
+type ConfigMapKeyReference struct {
+	// +kubebuilder:validation:MinLength=1
+	Name string `json:"name"`
+	// +kubebuilder:validation:MinLength=1
+	Key string `json:"key"`
+}
+
 // BareMetalSpec selects a pool enrolled explicitly through the GOMI API.
 type BareMetalSpec struct {
 	// +kubebuilder:validation:MinLength=1
 	Pool string `json:"pool"`
-	// OSImageRef must be a prepared SquashFS image with cloud-init, kubeadm,
-	// kubelet and the container runtime installed.
+	// OSImageRef must be a prepared bare-metal image with cloud-init. Kubernetes
+	// node packages may be installed by CloudInitConfigRef.
 	// +kubebuilder:validation:MinLength=1
 	OSImageRef string `json:"osImageRef"`
+	// CloudInitConfigRef references declarative, non-secret OS preparation data.
+	// GOMI applies it before CABPK's sealed kubeadm bootstrap. The ConfigMap must
+	// be immutable so a moved Machine can verify the same provisioning input.
+	CloudInitConfigRef *ConfigMapKeyReference `json:"cloudInitConfigRef,omitempty"`
 }
 
 // +kubebuilder:validation:XValidation:rule="!has(oldSelf.instanceID) || has(self.instanceID)",message="instanceID cannot be removed"

@@ -23,7 +23,7 @@ rules:
     resources: [clusters, machines]
     verbs: [get, list, watch]
   - apiGroups: [""]
-    resources: [secrets]
+    resources: [secrets, configmaps]
     verbs: [get, list, watch]
   - apiGroups: [""]
     resources: [events]

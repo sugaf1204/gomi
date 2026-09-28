@@ -186,11 +186,20 @@ target roots are currently accepted. Missing/mismatched image architecture and
 btrfs target roots are rejected before deployment, so later identity preservation
 and cleanup remain supported. Manual-power and hypervisor-role hosts cannot be
 enrolled.
-The image and/or bootstrap commands must install Kubernetes/CRI prerequisites for
-the selected OS/version. The provider does not turn an arbitrary image into a
-Kubernetes node automatically. Use `gomi:///{{ v1.instance_id }}` for kubelet's
-provider ID: physical metadata retains the host name but its instance ID is the
-stable CAPI claim ID.
+Kubernetes/CRI prerequisites can be declared in an immutable same-namespace
+ConfigMap and selected with `bareMetal.cloudInitConfigRef.name` and `.key`. The
+provider validates cloud-config YAML, rejects top-level `bootcmd` and `runcmd`,
+creates one ownership-checked ordinary GOMI cloud-init template per Machine, and
+deletes it only after the physical claim has been released. GOMI applies this
+OS-preparation data before merging the encrypted CABPK data. This keeps package
+sources, packages and files out of `preKubeadmCommands` without exposing CABPK
+credentials. The GOMI server must additionally report
+`bareMetalProvisioningTemplates: true`.
+
+The image or referenced declarative cloud-init must supply Kubernetes and CRI
+prerequisites for the selected OS/version. Use
+`gomi:///{{ v1.instance_id }}` for kubelet's provider ID: physical metadata retains
+the host name but its instance ID is the stable CAPI claim ID.
 
 Pool acquisition and deployment commit are atomic in GOMI's SQL store. A repeat or
 lost response observes the existing claim instead of starting another install.
