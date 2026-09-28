@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -13,6 +14,7 @@ import (
 )
 
 type redeployPowerCycleExecutor struct {
+	mu          sync.Mutex
 	calls       chan power.Action
 	infos       chan power.MachineInfo
 	statusInfos chan power.MachineInfo
@@ -41,7 +43,15 @@ func (e *redeployPowerCycleExecutor) Execute(_ context.Context, mi power.Machine
 
 func (e *redeployPowerCycleExecutor) CheckStatus(_ context.Context, mi power.MachineInfo) (power.PowerState, error) {
 	e.statusInfos <- mi
+	e.mu.Lock()
+	defer e.mu.Unlock()
 	return e.statusState, nil
+}
+
+func (e *redeployPowerCycleExecutor) setStatus(state power.PowerState) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.statusState = state
 }
 
 func (e *redeployPowerCycleExecutor) ConfigureBootOrder(_ context.Context, _ power.MachineInfo, _ power.BootOrder) error {
@@ -118,9 +128,41 @@ func TestStartRedeployPowerCycle_WaitsBeforeWoLPowerOn(t *testing.T) {
 	if got := waitRedeployPowerAction(t, exec.calls); got != power.ActionPowerOn {
 		t.Fatalf("expected second power action power-on, got %s", got)
 	}
+	exec.setStatus(power.PowerStateRunning)
+	waitMachinePowerOnConfirmed(t, srv.machines, m.Name)
 	if elapsed := time.Since(started); elapsed < minSettle {
 		t.Fatalf("expected WoL power-on after at least %s, got %s", minSettle, elapsed)
 	}
+}
+
+func TestStartRedeployPowerCycle_RetriesWoLUntilRunning(t *testing.T) {
+	srv, m, exec := newRedeployPowerCycleTestServer(t)
+	m.Power = power.PowerConfig{
+		Type: power.PowerTypeWoL,
+		WoL: &power.WoLConfig{
+			WakeMAC:        m.MAC,
+			BroadcastIP:    "255.255.255.255",
+			Port:           9,
+			ShutdownTarget: m.IP,
+			HMACSecret:     "secret",
+			Token:          "token",
+		},
+	}
+	mustUpsertMachine(t, srv.machines, m)
+	withRedeployPowerCycleTiming(t, 500*time.Millisecond, 30*time.Millisecond, 5*time.Millisecond, 0)
+
+	srv.startRedeployPowerCycle(m, m, "")
+	if got := waitRedeployPowerAction(t, exec.calls); got != power.ActionPowerOff {
+		t.Fatalf("expected first power action power-off, got %s", got)
+	}
+	if got := waitRedeployPowerAction(t, exec.calls); got != power.ActionPowerOn {
+		t.Fatalf("expected first power-on attempt, got %s", got)
+	}
+	if got := waitRedeployPowerAction(t, exec.calls); got != power.ActionPowerOn {
+		t.Fatalf("expected Wake-on-LAN retry, got %s", got)
+	}
+	exec.setStatus(power.PowerStateRunning)
+	waitMachinePowerOnConfirmed(t, srv.machines, m.Name)
 }
 
 func TestStartRedeployPowerCycle_PowerOffUsesPreviousWoLCredentials(t *testing.T) {
@@ -157,6 +199,8 @@ func TestStartRedeployPowerCycle_PowerOffUsesPreviousWoLCredentials(t *testing.T
 	if got := waitRedeployPowerAction(t, exec.calls); got != power.ActionPowerOn {
 		t.Fatalf("expected second power action power-on, got %s", got)
 	}
+	exec.setStatus(power.PowerStateRunning)
+	waitMachinePowerOnConfirmed(t, srv.machines, after.Name)
 	info = waitRedeployPowerInfo(t, exec.infos)
 	if info.Power.WoL == nil || info.Power.WoL.HMACSecret != "new-secret" || info.Power.WoL.Token != "new-token" {
 		t.Fatalf("expected power-on to use new WoL credentials, got %+v", info.Power.WoL)
@@ -189,6 +233,11 @@ func TestStartRedeployPowerCycle_UsesShutdownTargetForWoLStatusWhenIPIsEmpty(t *
 	if info.IP != "node-test-shutdown.local" {
 		t.Fatalf("expected status probe to use shutdownTarget, got %q", info.IP)
 	}
+	if got := waitRedeployPowerAction(t, exec.calls); got != power.ActionPowerOn {
+		t.Fatalf("expected second power action power-on, got %s", got)
+	}
+	exec.setStatus(power.PowerStateRunning)
+	waitMachinePowerOnConfirmed(t, srv.machines, m.Name)
 }
 
 func newRedeployPowerCycleTestServer(t *testing.T) (*Server, machine.Machine, *redeployPowerCycleExecutor) {
@@ -279,6 +328,24 @@ func waitMachineLastError(t *testing.T, svc *machine.Service, name string) strin
 			t.Fatalf("timed out waiting for LastError on %s", name)
 		}
 		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+func waitMachinePowerOnConfirmed(t *testing.T, svc *machine.Service, name string) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		stored, err := svc.Get(context.Background(), name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if stored.LastPowerAction == string(power.ActionPowerOn) && stored.LastError == "" {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("timed out waiting for confirmed Wake-on-LAN power-on")
+		}
+		time.Sleep(5 * time.Millisecond)
 	}
 }
 
