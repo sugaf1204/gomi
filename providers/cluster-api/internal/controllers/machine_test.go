@@ -153,14 +153,24 @@ func TestBootstrapValidation(t *testing.T) {
 }
 
 func TestDeclarativeCloudInitValidation(t *testing.T) {
-	valid := "#cloud-config\npackages: [kubelet]\nwrite_files:\n- path: /etc/example\n  content: value\n"
+	valid := "#cloud-config\npackages: [kubelet]\nwrite_files:\n- path: /etc/example\n  content: value\nbootcmd:\n- [modprobe, overlay]\n- [modprobe, br_netfilter]\n- [sysctl, -w, net.ipv4.ip_forward=1]\n- [sysctl, -w, net.bridge.bridge-nf-call-iptables=1]\n- [sysctl, -w, net.bridge.bridge-nf-call-ip6tables=1]\n"
 	if err := validateDeclarativeCloudInit(valid); err != nil {
 		t.Fatalf("valid declarative config rejected: %v", err)
 	}
-	for _, key := range []string{"bootcmd", "runcmd"} {
-		if err := validateDeclarativeCloudInit("#cloud-config\n" + key + ": [echo no]\n"); err == nil {
-			t.Fatalf("imperative %s accepted", key)
-		}
+	invalid := map[string]string{
+		"runcmd":         "runcmd: [echo no]",
+		"string command": "bootcmd: [modprobe overlay]",
+		"shell":          "bootcmd: [[sh, -c, modprobe overlay]]",
+		"unknown module": "bootcmd: [[modprobe, arbitrary]]",
+		"unknown sysctl": "bootcmd: [[sysctl, -w, kernel.core_pattern=pipe]]",
+		"empty":          "bootcmd: []",
+	}
+	for name, value := range invalid {
+		t.Run(name, func(t *testing.T) {
+			if err := validateDeclarativeCloudInit("#cloud-config\n" + value + "\n"); err == nil {
+				t.Fatalf("imperative configuration accepted: %s", value)
+			}
+		})
 	}
 }
 
