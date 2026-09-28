@@ -1,3 +1,10 @@
+gomi (0.0.44) unstable; urgency=medium
+
+  * Verify Wake-on-LAN redeploy power-on state and retry until the physical
+    machine is actually running.
+
+ -- sugaf1204 <sugaf1204@example.invalid>  Tue, 29 Sep 2026 01:10:00 +0900
+
 gomi (0.0.43) unstable; urgency=medium
 
   * Allow validated argv-form cloud-init boot commands for Kubernetes kernel

@@ -79,7 +79,7 @@ func (s *Server) executePowerAction(ctx context.Context, mi power.MachineInfo, a
 }
 
 var (
-	redeployPowerCycleTimeout        = 75 * time.Second
+	redeployPowerCycleTimeout        = 3 * time.Minute
 	redeployPowerOffSettleTimeout    = 30 * time.Second
 	redeployPowerOffPollInterval     = 2 * time.Second
 	redeployWoLPowerOffMinimumSettle = 15 * time.Second
@@ -121,13 +121,31 @@ func (s *Server) startRedeployPowerCycle(before, after machine.Machine, fallback
 			return
 		}
 
-		if err := s.powerExecutor.Execute(ctx, powerOnInfo, power.ActionPowerOn); err != nil {
+		if err := s.powerOnRedeployMachine(ctx, powerOnInfo); err != nil {
 			s.recordMachinePowerAction(after.Name, power.ActionPowerOn, stringPtr(err.Error()))
 			log.Printf("redeploy power-cycle: machine=%s power-on failed: %v", after.Name, err)
 			return
 		}
 		s.recordMachinePowerAction(after.Name, power.ActionPowerOn, nil)
 	}()
+}
+
+func (s *Server) powerOnRedeployMachine(ctx context.Context, info power.MachineInfo) error {
+	for {
+		if err := s.powerExecutor.Execute(ctx, info, power.ActionPowerOn); err != nil {
+			return err
+		}
+		if info.Power.Type != power.PowerTypeWoL {
+			return nil
+		}
+		if s.waitForMachinePowerState(ctx, info, power.PowerStateRunning, redeployPowerOffSettleTimeout) {
+			return nil
+		}
+		if err := ctx.Err(); err != nil {
+			return fmt.Errorf("machine did not report running after Wake-on-LAN retries: %w", err)
+		}
+		log.Printf("redeploy power-cycle: machine=%s still stopped after Wake-on-LAN; retrying", info.Name)
+	}
 }
 
 func machinePowerInfo(m machine.Machine, fallbackIP string) power.MachineInfo {
