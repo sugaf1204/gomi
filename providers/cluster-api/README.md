@@ -188,12 +188,17 @@ and cleanup remain supported. Manual-power and hypervisor-role hosts cannot be
 enrolled.
 Kubernetes/CRI prerequisites can be declared in an immutable same-namespace
 ConfigMap and selected with `bareMetal.cloudInitConfigRef.name` and `.key`. The
-provider validates cloud-config YAML, rejects top-level `bootcmd` and `runcmd`,
+provider validates cloud-config YAML and rejects top-level `runcmd`. `bootcmd`
+is accepted only as argv lists for the fixed Kubernetes prerequisites
+`modprobe overlay`, `modprobe br_netfilter`, and the required forwarding/bridge
+`sysctl -w` settings; strings, shells and arbitrary commands are rejected. It
 creates one ownership-checked ordinary GOMI cloud-init template per Machine, and
 deletes it only after the physical claim has been released. GOMI applies this
-OS-preparation data before merging the encrypted CABPK data. This keeps package
-sources, packages and files out of `preKubeadmCommands` without exposing CABPK
-credentials. The GOMI server must additionally report
+OS-preparation data before merging the encrypted CABPK data. Package sources,
+packages and files use cloud-init's typed fields; there is no generated or
+embedded shell script. The narrowly accepted argv commands only activate the
+declared module and sysctl state during the first boot. CABPK credentials remain
+confidential. The GOMI server must additionally report
 `bareMetalProvisioningTemplates: true`.
 
 The image or referenced declarative cloud-init must supply Kubernetes and CRI

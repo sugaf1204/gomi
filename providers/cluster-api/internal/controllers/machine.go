@@ -3,7 +3,6 @@ package controllers
 import (
 	"context"
 	"fmt"
-	"sigs.k8s.io/yaml"
 	"strings"
 
 	infrav1 "github.com/sugaf1204/gomi/providers/cluster-api/api/v1alpha1"
@@ -14,6 +13,7 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+	"sigs.k8s.io/yaml"
 )
 
 type MachineReconciler struct{ client.Client }
@@ -193,9 +193,48 @@ func validateDeclarativeCloudInit(data string) error {
 	if err := yaml.Unmarshal([]byte(s), &config); err != nil {
 		return fmt.Errorf("provisioning config must be valid cloud-config YAML")
 	}
-	for _, key := range []string{"bootcmd", "runcmd"} {
-		if _, exists := config[key]; exists {
-			return fmt.Errorf("provisioning config must be declarative; %s is not allowed", key)
+	if _, exists := config["runcmd"]; exists {
+		return fmt.Errorf("provisioning config must be declarative; runcmd is not allowed")
+	}
+	if commands, exists := config["bootcmd"]; exists {
+		if err := validateNodePreparationCommands(commands); err != nil {
+			return fmt.Errorf("provisioning config bootcmd %w", err)
+		}
+	}
+	return nil
+}
+
+var allowedNodePreparationCommands = map[string]struct{}{
+	"modprobe\x00overlay":                                   {},
+	"modprobe\x00br_netfilter":                              {},
+	"sysctl\x00-w\x00net.ipv4.ip_forward=1":                 {},
+	"sysctl\x00-w\x00net.bridge.bridge-nf-call-iptables=1":  {},
+	"sysctl\x00-w\x00net.bridge.bridge-nf-call-ip6tables=1": {},
+}
+
+// validateNodePreparationCommands permits only argv-form commands required to
+// make persisted Kubernetes kernel settings effective during the first boot.
+// String commands and shell interpreters remain forbidden.
+func validateNodePreparationCommands(value any) error {
+	commands, ok := value.([]any)
+	if !ok || len(commands) == 0 {
+		return fmt.Errorf("must be a non-empty list of argv lists")
+	}
+	for i, raw := range commands {
+		items, ok := raw.([]any)
+		if !ok || len(items) == 0 {
+			return fmt.Errorf("entry %d must be an argv list", i)
+		}
+		argv := make([]string, len(items))
+		for j, item := range items {
+			argument, ok := item.(string)
+			if !ok || argument == "" {
+				return fmt.Errorf("entry %d argument %d must be a non-empty string", i, j)
+			}
+			argv[j] = argument
+		}
+		if _, ok := allowedNodePreparationCommands[strings.Join(argv, "\x00")]; !ok {
+			return fmt.Errorf("entry %d is not an allowed Kubernetes node preparation command", i)
 		}
 	}
 	return nil
