@@ -180,3 +180,23 @@ func validateBootstrap(data, format string) error {
 	}
 	return nil
 }
+
+func validateDeclarativeCloudInit(data string) error {
+	if err := validateBootstrap(data, "cloud-config"); err != nil {
+		return fmt.Errorf("provisioning config %w", err)
+	}
+	s := strings.TrimSpace(data)
+	if strings.HasPrefix(s, "## template: jinja") {
+		s = strings.TrimSpace(strings.TrimPrefix(s, "## template: jinja"))
+	}
+	var config map[string]any
+	if err := yaml.Unmarshal([]byte(s), &config); err != nil {
+		return fmt.Errorf("provisioning config must be valid cloud-config YAML")
+	}
+	for _, key := range []string{"bootcmd", "runcmd"} {
+		if _, exists := config[key]; exists {
+			return fmt.Errorf("provisioning config must be declarative; %s is not allowed", key)
+		}
+	}
+	return nil
+}

@@ -218,7 +218,7 @@ func NewServer(cfg ServerConfig) *Server {
 
 	authed := v1.Group("", s.AuthMiddleware())
 	authed.GET("/capabilities", func(c echo.Context) error {
-		return c.JSON(gohttp.StatusOK, map[string]bool{"vmSeedTemplates": true, "bareMetalSealedBootstrap": s.bareMetal != nil})
+		return c.JSON(gohttp.StatusOK, map[string]bool{"vmSeedTemplates": true, "bareMetalSealedBootstrap": s.bareMetal != nil, "bareMetalProvisioningTemplates": s.bareMetal != nil && s.cloudInits != nil})
 	})
 	authed.POST("/auth/logout", s.Logout)
 	authed.GET("/me", s.Me)

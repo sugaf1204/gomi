@@ -5,6 +5,7 @@ import (
 	infrav1 "github.com/sugaf1204/gomi/providers/cluster-api/api/v1alpha1"
 	"github.com/sugaf1204/gomi/providers/cluster-api/internal/gomi"
 	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 	"testing"
@@ -151,6 +152,42 @@ func TestBootstrapValidation(t *testing.T) {
 	}
 }
 
+func TestDeclarativeCloudInitValidation(t *testing.T) {
+	valid := "#cloud-config\npackages: [kubelet]\nwrite_files:\n- path: /etc/example\n  content: value\n"
+	if err := validateDeclarativeCloudInit(valid); err != nil {
+		t.Fatalf("valid declarative config rejected: %v", err)
+	}
+	for _, key := range []string{"bootcmd", "runcmd"} {
+		if err := validateDeclarativeCloudInit("#cloud-config\n" + key + ": [echo no]\n"); err == nil {
+			t.Fatalf("imperative %s accepted", key)
+		}
+	}
+}
+
+func TestBareMetalCloudInitRequiresImmutableConfigMap(t *testing.T) {
+	f := setup(t)
+	immutable := true
+	config := &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{Namespace: "test", Name: "node-packages"},
+		Immutable:  &immutable,
+		Data:       map[string]string{"user-data": "#cloud-config\npackages: [kubelet]\n"},
+	}
+	if err := f.r.Create(context.Background(), config); err != nil {
+		t.Fatal(err)
+	}
+	got, err := f.r.bareMetalCloudInit(context.Background(), "test", &infrav1.ConfigMapKeyReference{Name: config.Name, Key: "user-data"})
+	if err != nil || got != config.Data["user-data"] {
+		t.Fatalf("cloud-init was not resolved: %q, %v", got, err)
+	}
+	mutable := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Namespace: "test", Name: "mutable"}, Data: config.Data}
+	if err := f.r.Create(context.Background(), mutable); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.r.bareMetalCloudInit(context.Background(), "test", &infrav1.ConfigMapKeyReference{Name: mutable.Name, Key: "user-data"}); err == nil {
+		t.Fatal("mutable provisioning config accepted")
+	}
+}
+
 func TestBootstrapPending(t *testing.T) {
 	f := setup(t)
 	f.ok()
@@ -171,6 +208,28 @@ func TestTemplateConflict(t *testing.T) {
 	f.template = &gomi.Template{Description: "foreign", UserData: "secret"}
 	if f.step() == nil || f.creates != 0 || f.templateCreates != 0 {
 		t.Fatal("overwrote foreign template")
+	}
+}
+
+func TestProvisioningTemplateOwnershipAndIdempotency(t *testing.T) {
+	f := setup(t)
+	api, err := gomi.New(f.serverURL(), "test-token")
+	if err != nil {
+		t.Fatal(err)
+	}
+	data := "#cloud-config\npackages: [kubelet]\n"
+	if err := ensureProvisioningTemplate(context.Background(), api, "capi-machine-uid", data); err != nil {
+		t.Fatal(err)
+	}
+	if f.templateCreates != 1 || f.template == nil || f.template.DeliveryMode != "" || f.template.UserData != data {
+		t.Fatalf("ordinary provisioning template not created: %+v", f.template)
+	}
+	if err := ensureProvisioningTemplate(context.Background(), api, "capi-machine-uid", data); err != nil || f.templateCreates != 1 {
+		t.Fatalf("idempotent ensure failed: creates=%d err=%v", f.templateCreates, err)
+	}
+	f.template.UserData = "changed"
+	if err := ensureProvisioningTemplate(context.Background(), api, "capi-machine-uid", data); err == nil {
+		t.Fatal("changed provisioning template was adopted")
 	}
 }
 func TestVMRunningIsNotBootstrapCompletion(t *testing.T) {

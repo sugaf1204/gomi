@@ -45,10 +45,26 @@ spec:
                 description: BareMetalSpec selects a pool enrolled explicitly through
                   the GOMI API.
                 properties:
+                  cloudInitConfigRef:
+                    description: |-
+                      CloudInitConfigRef references declarative, non-secret OS preparation data.
+                      GOMI applies it before CABPK's sealed kubeadm bootstrap. The ConfigMap must
+                      be immutable so a moved Machine can verify the same provisioning input.
+                    properties:
+                      key:
+                        minLength: 1
+                        type: string
+                      name:
+                        minLength: 1
+                        type: string
+                    required:
+                    - key
+                    - name
+                    type: object
                   osImageRef:
                     description: |-
-                      OSImageRef must be a prepared SquashFS image with cloud-init, kubeadm,
-                      kubelet and the container runtime installed.
+                      OSImageRef must be a prepared bare-metal image with cloud-init. Kubernetes
+                      node packages may be installed by CloudInitConfigRef.
                     minLength: 1
                     type: string
                   pool:

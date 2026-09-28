@@ -44,6 +44,9 @@ paths:
                   bareMetalSealedBootstrap:
                     type: boolean
                     description: Supports enrolled physical host claims and sealed bootstrap delivery.
+                  bareMetalProvisioningTemplates:
+                    type: boolean
+                    description: Supports ordinary cloud-init templates during sealed bare-metal deployment.
 
   /setup/status:
     get:
@@ -1375,7 +1378,7 @@ paths:
     post:
       tags: [bare-metal]
       summary: Commit a sealed physical OS deployment (operator or admin)
-      description: Atomically persists the attempt and claim before power cycling. Retrying identical data never starts another installation. Requires an architecture-matching Ubuntu, Debian or Fedora SquashFS image with an ext4 or XFS target root and an enrolled key present on the target disk.
+      description: Atomically persists the attempt and claim before power cycling. Retrying identical data never starts another installation. An optional ordinary cloud-init template is applied before the sealed bootstrap. Requires an architecture-matching Ubuntu, Debian or Fedora SquashFS image with an ext4 or XFS target root and an enrolled key present on the target disk.
       security: [{bearerAuth: []}]
       requestBody:
         required: true
@@ -1386,6 +1389,9 @@ paths:
               required: [osImageRef, envelope]
               properties:
                 osImageRef: {type: string}
+                cloudInitRef:
+                  type: string
+                  description: Optional ordinary cloud-init template name used for declarative OS preparation.
                 envelope: {$ref: '#/components/schemas/SealedBootstrapEnvelope'}
       responses:
         '202':

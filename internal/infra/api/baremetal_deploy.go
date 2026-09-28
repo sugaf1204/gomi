@@ -10,6 +10,7 @@ import (
 	"github.com/sugaf1204/gomi/internal/baremetal"
 	"github.com/sugaf1204/gomi/internal/infra/httputil"
 	"github.com/sugaf1204/gomi/internal/machine"
+	"github.com/sugaf1204/gomi/internal/resource"
 )
 
 func (s *Server) DeployBareMetalClaim(c echo.Context) error {
@@ -22,8 +23,9 @@ func (s *Server) DeployBareMetalClaim(c echo.Context) error {
 		return bareMetalError(c, err)
 	}
 	var req struct {
-		OSImageRef string          `json:"osImageRef"`
-		Envelope   json.RawMessage `json:"envelope"`
+		OSImageRef   string          `json:"osImageRef"`
+		CloudInitRef string          `json:"cloudInitRef,omitempty"`
+		Envelope     json.RawMessage `json:"envelope"`
 	}
 	// Ciphertext can be a few MiB; bound decoding before allocating a payload.
 	c.Request().Body = http.MaxBytesReader(c.Response(), c.Request().Body, 6<<20)
@@ -33,12 +35,25 @@ func (s *Server) DeployBareMetalClaim(c echo.Context) error {
 	if err := baremetal.ValidateEnvelope(req.Envelope, h); err != nil {
 		return c.JSON(http.StatusBadRequest, jsonErrorErr(err))
 	}
+	cloudInitRef := resourceID("cloudInitTemplates", req.CloudInitRef)
+	if cloudInitRef != "" {
+		if s.cloudInits == nil {
+			return c.NoContent(http.StatusServiceUnavailable)
+		}
+		template, err := s.cloudInits.Get(ctx, cloudInitRef)
+		if errors.Is(err, resource.ErrNotFound) || (err == nil && template.DeliveryMode != "") {
+			return c.JSON(http.StatusBadRequest, jsonError("ordinary cloud-init template not found"))
+		}
+		if err != nil {
+			return c.JSON(http.StatusServiceUnavailable, jsonError("cloud-init template lookup failed"))
+		}
+	}
 	m, err := s.machines.Get(ctx, h.Name)
 	if err != nil {
 		return bareMetalError(c, err)
 	}
 	if h.State != baremetal.Claimed {
-		if (h.State == baremetal.Deploying || h.State == baremetal.Ready) && m.SealedBootstrap != nil && m.SealedBootstrap.Owner == h.Owner && bytes.Equal(m.SealedBootstrap.Envelope, req.Envelope) && m.OSPreset.ImageRef == req.OSImageRef {
+		if (h.State == baremetal.Deploying || h.State == baremetal.Ready) && m.SealedBootstrap != nil && m.SealedBootstrap.Owner == h.Owner && bytes.Equal(m.SealedBootstrap.Envelope, req.Envelope) && m.OSPreset.ImageRef == req.OSImageRef && resource.ResolveCloudInitRef(m.LastDeployedCloudInitRef, m.CloudInitRef, m.CloudInitRefs) == cloudInitRef {
 			return c.JSON(http.StatusAccepted, h)
 		}
 		return bareMetalError(c, baremetal.ErrConflict)
@@ -59,6 +74,10 @@ func (s *Server) DeployBareMetalClaim(c echo.Context) error {
 	m.CloudInitRef = ""
 	m.CloudInitRefs = nil
 	m.LastDeployedCloudInitRef = ""
+	if cloudInitRef != "" {
+		m.CloudInitRefs = []string{cloudInitRef}
+		m.LastDeployedCloudInitRef = cloudInitRef
+	}
 	fingerprint, _ := baremetal.EnrollmentFingerprint(h.PublicKey)
 	m.SealedBootstrap = &machine.SealedBootstrap{Owner: h.Owner, KeyFingerprint: fingerprint, Envelope: req.Envelope}
 	actor, _ := httputil.UserFromContext(c)

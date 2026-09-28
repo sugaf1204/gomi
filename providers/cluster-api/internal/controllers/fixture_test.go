@@ -29,12 +29,14 @@ type fixture struct {
 	failDelete, failGet, lostCreateResponse bool
 	unsupportedSeed                         bool
 	requests                                []string
+	url                                     string
 }
 
 func setup(t *testing.T) *fixture {
 	t.Helper()
 	f := &fixture{t: t, key: types.NamespacedName{Namespace: "test", Name: "machine"}}
 	server := httptest.NewServer(http.HandlerFunc(f.serve))
+	f.url = server.URL
 	t.Cleanup(server.Close)
 	scheme := runtime.NewScheme()
 	_ = corev1.AddToScheme(scheme)
@@ -65,7 +67,7 @@ func (f *fixture) serve(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(404)
 			return
 		}
-		_ = json.NewEncoder(w).Encode(map[string]bool{"vmSeedTemplates": true})
+		_ = json.NewEncoder(w).Encode(map[string]bool{"vmSeedTemplates": true, "bareMetalProvisioningTemplates": true})
 	case "GET /api/v1/virtual-machines/capi-machine-uid":
 		if f.failGet {
 			w.WriteHeader(503)
@@ -122,6 +124,7 @@ func (f *fixture) serve(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(500)
 	}
 }
+func (f *fixture) serverURL() string { return f.url }
 func (f *fixture) step() error {
 	_, err := f.r.Reconcile(context.Background(), ctrl.Request{NamespacedName: f.key})
 	return err
