@@ -1,3 +1,10 @@
+gomi (0.0.48) unstable; urgency=high
+
+  * Build the UEFI local-boot GRUB image with its normal configuration
+    embedded, removing the second TFTP fetch that was unreliable on node1.
+
+ -- sugaf1204 <sugaf1204@example.invalid>  Tue, 29 Sep 2026 17:05:00 +0900
+
 gomi (0.0.47) unstable; urgency=high
 
   * Revert the v0.0.46 UEFI DHCP fallback change and restore the previously
