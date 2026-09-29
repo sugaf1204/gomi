@@ -176,7 +176,14 @@ func (s *Server) protectAllocatedMachine(next echo.HandlerFunc) echo.HandlerFunc
 		}
 		name := c.Param("name")
 		if name == "" {
-			name, _, _ = strings.Cut(c.Param("*"), ":")
+			var method string
+			name, method, _ = strings.Cut(c.Param("*"), ":")
+			// Power actions do not alter the enrolled host, claim owner,
+			// deployment attempt, or sealed bootstrap. Operators must still be
+			// able to control an enrolled machine from the ordinary console.
+			if method == "powerOn" || method == "powerOff" {
+				return next(c)
+			}
 		}
 		_, err := s.bareMetal.Get(c.Request().Context(), name)
 		if errors.Is(err, baremetal.ErrNotFound) {
