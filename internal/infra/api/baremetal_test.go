@@ -17,6 +17,23 @@ import (
 	"github.com/sugaf1204/gomi/internal/power"
 )
 
+type bareMetalPowerExecutor struct {
+	actions []power.Action
+}
+
+func (e *bareMetalPowerExecutor) Execute(_ context.Context, _ power.MachineInfo, action power.Action) error {
+	e.actions = append(e.actions, action)
+	return nil
+}
+
+func (e *bareMetalPowerExecutor) CheckStatus(context.Context, power.MachineInfo) (power.PowerState, error) {
+	return power.PowerStateUnknown, nil
+}
+
+func (e *bareMetalPowerExecutor) ConfigureBootOrder(context.Context, power.MachineInfo, power.BootOrder) error {
+	return nil
+}
+
 func TestBareMetalAPIEnrollmentAndServiceAccount(t *testing.T) {
 	ctx := context.Background()
 	key, err := os.ReadFile("../../baremetal/testdata/host-public.pem")
@@ -38,7 +55,8 @@ func TestBareMetalAPIEnrollmentAndServiceAccount(t *testing.T) {
 	}
 	createUser(t, b.Auth(), "admin", "password", auth.RoleAdmin)
 	admin := createSession(t, b.Auth(), "admin")
-	e := infraapi.NewServer(infraapi.ServerConfig{Machines: ms, AuthStore: b.Auth(), AuthService: infraapi.NewAuthService(b.Auth(), time.Hour), BareMetal: b.BareMetal()}).Echo()
+	powerExecutor := &bareMetalPowerExecutor{}
+	e := infraapi.NewServer(infraapi.ServerConfig{Machines: ms, PowerExecutor: powerExecutor, AuthStore: b.Auth(), AuthService: infraapi.NewAuthService(b.Auth(), time.Hour), BareMetal: b.BareMetal()}).Echo()
 	for _, name := range []string{"manual", "hypervisor", "arm64"} {
 		m, err := b.Machines().Get(ctx, "node1")
 		if err != nil {
@@ -99,14 +117,25 @@ func TestBareMetalAPIEnrollmentAndServiceAccount(t *testing.T) {
 	requireStatus(t, rec, http.StatusOK)
 	for _, route := range []struct{ method, path string }{
 		{http.MethodPost, "/api/v1/machines/node1:redeploy"},
-		{http.MethodPost, "/api/v1/machines/node1:powerOff"},
-		{http.MethodPost, "/api/v1/machines/node1:powerOn"},
 		{http.MethodPatch, "/api/v1/machines/node1/network"},
 		{http.MethodPatch, "/api/v1/machines/node1/settings"},
 		{http.MethodDelete, "/api/v1/machines/node1"},
 	} {
 		rec = doRequest(e, route.method, route.path, nil, admin)
 		requireStatus(t, rec, http.StatusConflict)
+	}
+	for _, route := range []struct {
+		path   string
+		action power.Action
+	}{
+		{path: "/api/v1/machines/node1:powerOff", action: power.ActionPowerOff},
+		{path: "/api/v1/machines/node1:powerOn", action: power.ActionPowerOn},
+	} {
+		rec = doRequest(e, http.MethodPost, route.path, nil, admin)
+		requireStatus(t, rec, http.StatusOK)
+		if got := powerExecutor.actions[len(powerExecutor.actions)-1]; got != route.action {
+			t.Fatalf("expected %s, got %s", route.action, got)
+		}
 	}
 	rec = doRequest(e, http.MethodPost, "/api/v1/service-accounts", map[string]any{"name": "reader", "role": "viewer"}, admin)
 	requireStatus(t, rec, http.StatusCreated)
