@@ -334,11 +334,15 @@ func (s *Server) handleFull(req *dhcpv4.DHCPv4, spec subnet.SubnetSpec, boot Boo
 		}
 	}
 
-	// PXE boot info if the client is a PXE client
+	bootFile := ""
+	// PXE boot info if the client is a PXE client. A completed UEFI host gets
+	// an ordinary DHCP lease without PXE options so firmware advances to disk.
 	if registered && isPXEClient(req) {
 		arch := clientArch(req)
-		bootFile := selectBootFile(req, arch, boot, localBoot)
-		modifiers = append(modifiers, withBootInfo(s.serverIP, bootFile))
+		bootFile = selectBootFile(req, arch, boot, localBoot)
+		if bootFile != "" {
+			modifiers = append(modifiers, withBootInfo(s.serverIP, bootFile))
+		}
 	}
 
 	resp, err := dhcpv4.NewReplyFromRequest(req, modifiers...)
@@ -347,7 +351,7 @@ func (s *Server) handleFull(req *dhcpv4.DHCPv4, spec subnet.SubnetSpec, boot Boo
 	}
 
 	log.Printf("dhcp: %s %s -> %s mac=%s registered=%v pxe=%v ipxe=%v localboot=%v arch=%v boot=%q",
-		s.mode, respType, assignedIP, req.ClientHWAddr, registered, isPXEClient(req), isIPXEClient(req), localBoot, clientArch(req), selectBootFile(req, clientArch(req), boot, localBoot))
+		s.mode, respType, assignedIP, req.ClientHWAddr, registered, isPXEClient(req), isIPXEClient(req), localBoot, clientArch(req), bootFile)
 	return resp, nil
 }
 
@@ -355,6 +359,10 @@ func (s *Server) handleFull(req *dhcpv4.DHCPv4, spec subnet.SubnetSpec, boot Boo
 // Non-PXE and unregistered clients are silently ignored.
 func (s *Server) handleProxy(req *dhcpv4.DHCPv4, boot BootConfig, registered, localBoot bool) (*dhcpv4.DHCPv4, error) {
 	if !registered || !isPXEClient(req) {
+		return nil, nil
+	}
+	bootFile := selectBootFile(req, clientArch(req), boot, localBoot)
+	if bootFile == "" {
 		return nil, nil
 	}
 
@@ -367,7 +375,7 @@ func (s *Server) handleProxy(req *dhcpv4.DHCPv4, boot BootConfig, registered, lo
 		dhcpv4.WithMessageType(respType),
 		dhcpv4.WithServerIP(s.serverIP),
 		dhcpv4.WithOption(dhcpv4.OptServerIdentifier(s.serverIP)),
-		withBootInfo(s.serverIP, selectBootFile(req, clientArch(req), boot, localBoot)),
+		withBootInfo(s.serverIP, bootFile),
 	}
 
 	resp, err := dhcpv4.NewReplyFromRequest(req, modifiers...)
@@ -375,7 +383,7 @@ func (s *Server) handleProxy(req *dhcpv4.DHCPv4, boot BootConfig, registered, lo
 		return nil, err
 	}
 
-	log.Printf("dhcp: proxy %s mac=%s arch=%v ipxe=%v localboot=%v boot=%q", respType, req.ClientHWAddr, clientArch(req), isIPXEClient(req), localBoot, selectBootFile(req, clientArch(req), boot, localBoot))
+	log.Printf("dhcp: proxy %s mac=%s arch=%v ipxe=%v localboot=%v boot=%q", respType, req.ClientHWAddr, clientArch(req), isIPXEClient(req), localBoot, bootFile)
 	return resp, nil
 }
 
@@ -385,9 +393,6 @@ func normalizeBootConfig(c BootConfig) BootConfig {
 	}
 	if strings.TrimSpace(c.UEFIBootFile) == "" {
 		c.UEFIBootFile = "ipxe.efi"
-	}
-	if strings.TrimSpace(c.UEFILocalBootFile) == "" {
-		c.UEFILocalBootFile = "grubnetx64.efi"
 	}
 	return c
 }
@@ -425,6 +430,9 @@ func clientArch(req *dhcpv4.DHCPv4) iana.Arch {
 }
 
 func selectBootFile(req *dhcpv4.DHCPv4, arch iana.Arch, boot BootConfig, localBoot bool) string {
+	if localBoot && isUEFIArch(arch) {
+		return ""
+	}
 	if isIPXEClient(req) && strings.TrimSpace(boot.IPXEScript) != "" {
 		script := boot.IPXEScript
 		mac := strings.ToLower(strings.TrimSpace(req.ClientHWAddr.String()))
@@ -439,12 +447,24 @@ func selectBootFile(req *dhcpv4.DHCPv4, arch iana.Arch, boot BootConfig, localBo
 	}
 	switch arch {
 	case iana.EFI_BC, iana.EFI_X86_64:
-		if localBoot && strings.TrimSpace(boot.UEFILocalBootFile) != "" {
-			return boot.UEFILocalBootFile
-		}
 		return boot.UEFIBootFile
 	default:
 		return boot.BIOSBootFile
+	}
+}
+
+func isUEFIArch(arch iana.Arch) bool {
+	switch arch {
+	case iana.EFI_ITANIUM, iana.EFI_IA32, iana.EFI_X86_64, iana.EFI_XSCALE,
+		iana.EFI_BC, iana.EFI_ARM32, iana.EFI_ARM64, iana.EFI_X86_HTTP,
+		iana.EFI_X86_64_HTTP, iana.EFI_BC_HTTP, iana.EFI_ARM32_HTTP,
+		iana.EFI_ARM64_HTTP, iana.EFI_RISCV32, iana.EFI_RISCV32_HTTP,
+		iana.EFI_RISCV64, iana.EFI_RISCV64_HTTP, iana.EFI_RISCV128,
+		iana.EFI_RISCV128_HTTP, iana.EFI_MIPS32, iana.EFI_MIPS64,
+		iana.EFI_SUNWAY32, iana.EFI_SUNWAY64:
+		return true
+	default:
+		return false
 	}
 }
 
