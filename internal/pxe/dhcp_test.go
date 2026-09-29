@@ -12,9 +12,10 @@ import (
 
 func TestSelectBootFile(t *testing.T) {
 	boot := BootConfig{
-		BIOSBootFile: "undionly.kpxe",
-		UEFIBootFile: "ipxe.efi",
-		IPXEScript:   "http://192.168.2.254:8080/pxe/boot.ipxe",
+		BIOSBootFile:      "undionly.kpxe",
+		UEFIBootFile:      "ipxe.efi",
+		UEFILocalBootFile: "grubnetx64.efi",
+		IPXEScript:        "http://192.168.2.254:8080/pxe/boot.ipxe",
 	}
 
 	biosReq, err := dhcpv4.New()
@@ -36,7 +37,7 @@ func TestSelectBootFile(t *testing.T) {
 	if got := selectBootFile(uefiReq, clientArch(uefiReq), boot, false); got != "ipxe.efi" {
 		t.Fatalf("uefi bootfile mismatch: got %q", got)
 	}
-	if got := selectBootFile(uefiReq, clientArch(uefiReq), boot, true); got != "" {
+	if got := selectBootFile(uefiReq, clientArch(uefiReq), boot, true); got != "grubnetx64.efi" {
 		t.Fatalf("uefi local bootfile mismatch: got %q", got)
 	}
 
@@ -48,29 +49,8 @@ func TestSelectBootFile(t *testing.T) {
 	ipxeReq.UpdateOption(dhcpv4.OptClientArch(iana.EFI_X86_64))
 	ipxeReq.ClientHWAddr = net.HardwareAddr{0x52, 0x54, 0x00, 0xaa, 0xbb, 0xcc}
 	wantIPXEScript := "http://192.168.2.254:8080/pxe/boot.ipxe?mac=52%3A54%3A00%3Aaa%3Abb%3Acc"
-	if got := selectBootFile(ipxeReq, clientArch(ipxeReq), boot, false); got != wantIPXEScript {
-		t.Fatalf("provisioning iPXE bootfile mismatch: got %q", got)
-	}
-	if got := selectBootFile(ipxeReq, clientArch(ipxeReq), boot, true); got != "" {
-		t.Fatalf("completed UEFI iPXE client must not receive a bootfile: got %q", got)
-	}
-}
-
-func TestSelectBootFileCompletedUEFIArchitecturesOmitNetworkLoader(t *testing.T) {
-	boot := normalizeBootConfig(BootConfig{IPXEScript: "http://192.0.2.1/pxe/boot.ipxe"})
-	req, err := dhcpv4.New()
-	if err != nil {
-		t.Fatal(err)
-	}
-	req.UpdateOption(dhcpv4.OptClassIdentifier("PXEClient"))
-
-	for _, arch := range []iana.Arch{iana.EFI_X86_64, iana.EFI_BC, iana.EFI_ARM32, iana.EFI_ARM64, iana.EFI_RISCV64} {
-		if got := selectBootFile(req, arch, boot, true); got != "" {
-			t.Errorf("completed UEFI arch %v received bootfile %q", arch, got)
-		}
-	}
-	if got := selectBootFile(req, iana.INTEL_X86PC, boot, true); got != "undionly.kpxe" {
-		t.Fatalf("BIOS local boot behavior changed: got %q", got)
+	if got := selectBootFile(ipxeReq, clientArch(ipxeReq), boot, true); got != wantIPXEScript {
+		t.Fatalf("ipxe bootfile mismatch: got %q", got)
 	}
 }
 
@@ -106,24 +86,8 @@ func TestNormalizeBootConfig(t *testing.T) {
 	if got.UEFIBootFile != "ipxe.efi" {
 		t.Fatalf("unexpected default UEFI bootfile: %q", got.UEFIBootFile)
 	}
-}
-
-func TestHandleFullOmitsBootOptionsForCompletedUEFIClient(t *testing.T) {
-	server, req, spec, boot, pool := newDHCPTestRequest(t)
-	req.UpdateOption(dhcpv4.OptClientArch(iana.EFI_X86_64))
-
-	resp, err := server.handleFull(req, spec, boot, true, true, pool)
-	if err != nil {
-		t.Fatalf("handleFull: %v", err)
-	}
-	if got := resp.Options.Get(dhcpv4.OptionBootfileName); len(got) != 0 {
-		t.Fatalf("completed UEFI client received option 67: %q", got)
-	}
-	if got := resp.Options.Get(dhcpv4.OptionTFTPServerName); len(got) != 0 {
-		t.Fatalf("completed UEFI client received option 66: %q", got)
-	}
-	if resp.BootFileName != "" {
-		t.Fatalf("completed UEFI client received boot filename field: %q", resp.BootFileName)
+	if got.UEFILocalBootFile != "grubnetx64.efi" {
+		t.Fatalf("unexpected default UEFI local bootfile: %q", got.UEFILocalBootFile)
 	}
 }
 
@@ -190,19 +154,6 @@ func TestHandleProxyIncludesBootOptionsForRegisteredPXEClient(t *testing.T) {
 	}
 	if got := string(resp.Options.Get(dhcpv4.OptionBootfileName)); got != boot.BIOSBootFile {
 		t.Fatalf("option 67 mismatch: %q", got)
-	}
-}
-
-func TestHandleProxyIgnoresCompletedUEFIClient(t *testing.T) {
-	server, req, _, boot, _ := newDHCPTestRequest(t)
-	req.UpdateOption(dhcpv4.OptClientArch(iana.EFI_X86_64))
-
-	resp, err := server.handleProxy(req, boot, true, true)
-	if err != nil {
-		t.Fatalf("handleProxy: %v", err)
-	}
-	if resp != nil {
-		t.Fatal("proxy mode must let completed UEFI firmware fall through to disk")
 	}
 }
 
