@@ -3,6 +3,7 @@ package app
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/sugaf1204/gomi/internal/infra/config"
@@ -17,54 +18,55 @@ func TestUEFILocalBootGRUBConfigFallsBackToFirmwareBootOrder(t *testing.T) {
 	}
 }
 
-func TestEnsureUEFILocalBootGRUBAssetsInstallsPackagedAsset(t *testing.T) {
+func TestEnsureUEFILocalBootGRUBAssetsBuildsSelfContainedImage(t *testing.T) {
 	tftpRoot := t.TempDir()
-	srcDir := t.TempDir()
-	src := filepath.Join(srcDir, "grubnetx64.efi.signed")
 	want := []byte("fake-grubnet")
-	if err := os.WriteFile(src, want, 0o644); err != nil {
-		t.Fatal(err)
+	oldRunner := runGRUBMkstandalone
+	runGRUBMkstandalone = func(args ...string) ([]byte, error) {
+		if len(args) != 5 || args[0] != "-O" || args[1] != "x86_64-efi" || args[2] != "-o" {
+			t.Fatalf("grub-mkstandalone args = %q", args)
+		}
+		output := args[3]
+		const prefix = "boot/grub/grub.cfg="
+		if !strings.HasPrefix(args[4], prefix) {
+			t.Fatalf("grub-mkstandalone config mapping = %q", args[4])
+		}
+		config := strings.TrimPrefix(args[4], prefix)
+		gotConfig, err := os.ReadFile(config)
+		if err != nil {
+			return nil, err
+		}
+		if string(gotConfig) != uefiLocalBootGRUBConfig {
+			t.Fatalf("embedded config = %q, want %q", gotConfig, uefiLocalBootGRUBConfig)
+		}
+		return nil, os.WriteFile(output, want, 0o600)
 	}
-
-	oldCandidates := uefiLocalBootGRUBCandidates
-	uefiLocalBootGRUBCandidates = []string{filepath.Join(srcDir, "missing"), src}
-	t.Cleanup(func() { uefiLocalBootGRUBCandidates = oldCandidates })
+	t.Cleanup(func() { runGRUBMkstandalone = oldRunner })
 
 	if err := ensureUEFILocalBootGRUBAssets(tftpRoot); err != nil {
 		t.Fatalf("ensureUEFILocalBootGRUBAssets: %v", err)
 	}
-	gotGRUB, err := os.ReadFile(filepath.Join(tftpRoot, "grubnetx64.efi"))
+	gotGRUB, err := os.ReadFile(filepath.Join(tftpRoot, uefiLocalBootGRUBFile))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if string(gotGRUB) != string(want) {
 		t.Fatalf("installed GRUB asset = %q, want %q", gotGRUB, want)
 	}
-	gotConfig, err := os.ReadFile(filepath.Join(tftpRoot, "grub", "grub.cfg"))
-	if err != nil {
+	if info, err := os.Stat(filepath.Join(tftpRoot, uefiLocalBootGRUBFile)); err != nil {
 		t.Fatal(err)
-	}
-	if string(gotConfig) != uefiLocalBootGRUBConfig {
-		t.Fatalf("grub.cfg = %q, want %q", gotConfig, uefiLocalBootGRUBConfig)
-	}
-}
-
-func TestUEFILocalBootGRUBCandidatesPreferMonolithicImage(t *testing.T) {
-	if len(uefiLocalBootGRUBCandidates) == 0 {
-		t.Fatal("expected at least one UEFI local boot GRUB candidate")
-	}
-	if got, want := uefiLocalBootGRUBCandidates[0], "/usr/lib/grub/x86_64-efi/monolithic/grubnetx64.efi"; got != want {
-		t.Fatalf("first UEFI local boot GRUB candidate = %q, want %q", got, want)
+	} else if got, wantMode := info.Mode().Perm(), os.FileMode(0o644); got != wantMode {
+		t.Fatalf("installed GRUB mode = %o, want %o", got, wantMode)
 	}
 }
 
-func TestEnsureUEFILocalBootGRUBAssetsFailsWithoutPackagedAsset(t *testing.T) {
-	oldCandidates := uefiLocalBootGRUBCandidates
-	uefiLocalBootGRUBCandidates = []string{filepath.Join(t.TempDir(), "missing")}
-	t.Cleanup(func() { uefiLocalBootGRUBCandidates = oldCandidates })
+func TestEnsureUEFILocalBootGRUBAssetsFailsWhenBuilderFails(t *testing.T) {
+	oldRunner := runGRUBMkstandalone
+	runGRUBMkstandalone = func(...string) ([]byte, error) { return []byte("missing builder"), os.ErrNotExist }
+	t.Cleanup(func() { runGRUBMkstandalone = oldRunner })
 
 	if err := ensureUEFILocalBootGRUBAssets(t.TempDir()); err == nil {
-		t.Fatal("expected missing packaged GRUB asset to fail")
+		t.Fatal("expected GRUB builder failure")
 	}
 }
 

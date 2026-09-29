@@ -7,15 +7,28 @@ import (
 	"io/fs"
 	"log"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 )
 
 const uefiLocalBootGRUBConfig = "exit 1\n"
+const uefiLocalBootGRUBFile = "grub-localbootx64.efi"
 
-var uefiLocalBootGRUBCandidates = []string{
-	"/usr/lib/grub/x86_64-efi/monolithic/grubnetx64.efi",
-	"/usr/lib/grub/x86_64-efi-signed/grubnetx64.efi.signed",
+var runGRUBMkstandalone = func(args ...string) ([]byte, error) {
+	return exec.Command("/usr/bin/grub-mkstandalone", args...).CombinedOutput()
+}
+
+func buildUEFILocalBootGRUB(output, config string) error {
+	combined, err := runGRUBMkstandalone(
+		"-O", "x86_64-efi",
+		"-o", output,
+		"boot/grub/grub.cfg="+config,
+	)
+	if err != nil {
+		return fmt.Errorf("build UEFI local-boot GRUB image: %w: %s", err, strings.TrimSpace(string(combined)))
+	}
+	return nil
 }
 
 type tftpBootAsset struct {
@@ -49,25 +62,54 @@ func ensureUEFILocalBootGRUBAssets(tftpRoot string) error {
 	if root == "" {
 		return nil
 	}
-	if err := os.MkdirAll(filepath.Join(root, "grub"), 0o755); err != nil {
+	if err := os.MkdirAll(root, 0o755); err != nil {
 		return err
-	}
-	if err := os.WriteFile(filepath.Join(root, "grub", "grub.cfg"), []byte(uefiLocalBootGRUBConfig), 0o644); err != nil {
-		return err
-	}
-	dst := filepath.Join(root, "grubnetx64.efi")
-	for _, src := range uefiLocalBootGRUBCandidates {
-		if err := copyFileIfChanged(src, dst, 0o644); err != nil {
-			if errors.Is(err, os.ErrNotExist) {
-				continue
-			}
-			return err
-		}
-		log.Printf("tftp: installed UEFI local boot GRUB asset %s from %s", dst, src)
-		return nil
 	}
 
-	return fmt.Errorf("grubnetx64.efi not found; install grub-efi-amd64-signed or grub-efi-amd64-bin")
+	config, err := os.CreateTemp(root, ".grub-localboot-*.cfg")
+	if err != nil {
+		return err
+	}
+	configPath := config.Name()
+	defer os.Remove(configPath)
+	if _, err := config.WriteString(uefiLocalBootGRUBConfig); err != nil {
+		config.Close()
+		return err
+	}
+	if err := config.Close(); err != nil {
+		return err
+	}
+
+	output, err := os.CreateTemp(root, ".grub-localboot-*.efi")
+	if err != nil {
+		return err
+	}
+	outputPath := output.Name()
+	if err := output.Close(); err != nil {
+		os.Remove(outputPath)
+		return err
+	}
+	defer os.Remove(outputPath)
+
+	if err := buildUEFILocalBootGRUB(outputPath, configPath); err != nil {
+		return err
+	}
+	info, err := os.Stat(outputPath)
+	if err != nil {
+		return err
+	}
+	if info.Size() == 0 {
+		return fmt.Errorf("built UEFI local-boot GRUB image is empty")
+	}
+	if err := os.Chmod(outputPath, 0o644); err != nil {
+		return err
+	}
+	dst := filepath.Join(root, uefiLocalBootGRUBFile)
+	if err := os.Rename(outputPath, dst); err != nil {
+		return err
+	}
+	log.Printf("tftp: installed self-contained UEFI local boot GRUB asset %s", dst)
+	return nil
 }
 
 func ensureIPXEBootAssets(tftpRoot string) error {
