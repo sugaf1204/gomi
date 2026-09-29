@@ -15,7 +15,6 @@ description: |-
    power control, and lifecycle management.
 depends:
   - ca-certificates
-  - grub-efi-amd64-bin
   - ipxe
   - squashfs-tools
   - systemd

@@ -117,11 +117,7 @@ func (r *Runtime) reconcilePXE(ctx context.Context) {
 	boot := pxe.BootConfig{
 		BIOSBootFile: r.Config.PXEBootFileBIOS,
 		UEFIBootFile: r.Config.PXEBootFileUEFI,
-		// Load GRUB directly from firmware for completed x86_64 UEFI hosts.
-		// Returning from an HTTP script chainloaded by iPXE only returns to the
-		// parent iPXE image on some firmware and never advances to the disk.
-		UEFILocalBootFile: "grubnetx64.efi",
-		IPXEScript:        strings.TrimRight(pxeHTTPBaseURL, "/") + "/boot.ipxe",
+		IPXEScript:   strings.TrimRight(pxeHTTPBaseURL, "/") + "/boot.ipxe",
 	}
 
 	if srv, current := r.currentPXEState(); srv != nil && current == state {

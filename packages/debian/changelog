@@ -1,3 +1,10 @@
+gomi (0.0.46) unstable; urgency=medium
+
+  * Let completed UEFI hosts fall through from PXE directly to disk without
+    loading the unreliable network GRUB local-boot shim.
+
+ -- sugaf1204 <sugaf1204@example.invalid>  Tue, 29 Sep 2026 14:33:39 +0900
+
 gomi (0.0.45) unstable; urgency=medium
 
   * Publish CAPI bare-metal network facts through NoCloud metadata and assign

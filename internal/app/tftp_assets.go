@@ -11,13 +11,6 @@ import (
 	"strings"
 )
 
-const uefiLocalBootGRUBConfig = "exit 1\n"
-
-var uefiLocalBootGRUBCandidates = []string{
-	"/usr/lib/grub/x86_64-efi/monolithic/grubnetx64.efi",
-	"/usr/lib/grub/x86_64-efi-signed/grubnetx64.efi.signed",
-}
-
 type tftpBootAsset struct {
 	dst        string
 	candidates []string
@@ -38,36 +31,23 @@ var ipxeBootAssets = []tftpBootAsset{
 }
 
 func ensureTFTPBootAssets(tftpRoot string) error {
-	if err := ensureUEFILocalBootGRUBAssets(tftpRoot); err != nil {
+	if err := removeLegacyUEFILocalBootGRUBAssets(tftpRoot); err != nil {
 		return err
 	}
 	return ensureIPXEBootAssets(tftpRoot)
 }
 
-func ensureUEFILocalBootGRUBAssets(tftpRoot string) error {
+func removeLegacyUEFILocalBootGRUBAssets(tftpRoot string) error {
 	root := strings.TrimSpace(tftpRoot)
 	if root == "" {
 		return nil
 	}
-	if err := os.MkdirAll(filepath.Join(root, "grub"), 0o755); err != nil {
-		return err
-	}
-	if err := os.WriteFile(filepath.Join(root, "grub", "grub.cfg"), []byte(uefiLocalBootGRUBConfig), 0o644); err != nil {
-		return err
-	}
-	dst := filepath.Join(root, "grubnetx64.efi")
-	for _, src := range uefiLocalBootGRUBCandidates {
-		if err := copyFileIfChanged(src, dst, 0o644); err != nil {
-			if errors.Is(err, os.ErrNotExist) {
-				continue
-			}
-			return err
+	for _, path := range []string{filepath.Join(root, "grubnetx64.efi"), filepath.Join(root, "grub")} {
+		if err := os.RemoveAll(path); err != nil {
+			return fmt.Errorf("remove legacy UEFI local boot asset %s: %w", path, err)
 		}
-		log.Printf("tftp: installed UEFI local boot GRUB asset %s from %s", dst, src)
-		return nil
 	}
-
-	return fmt.Errorf("grubnetx64.efi not found; install grub-efi-amd64-signed or grub-efi-amd64-bin")
+	return nil
 }
 
 func ensureIPXEBootAssets(tftpRoot string) error {
