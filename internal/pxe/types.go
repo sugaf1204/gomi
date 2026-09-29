@@ -16,9 +16,10 @@ type DHCPLease struct {
 
 // BootConfig controls which bootfile is advertised to PXE clients.
 type BootConfig struct {
-	BIOSBootFile string
-	UEFIBootFile string
-	IPXEScript   string
+	BIOSBootFile      string
+	UEFIBootFile      string
+	UEFILocalBootFile string
+	IPXEScript        string
 }
 
 // LeaseStore persists DHCP lease information.

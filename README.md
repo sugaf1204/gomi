@@ -189,7 +189,7 @@ See [`.env.example`](.env.example) for a full example.
 **Optional** (needed for specific workflows)
 
 - KVM / libvirt
-- `ipxe`
+- `ipxe`, `grub-efi-amd64-bin`
 - Ansible, `uv`
 
 ### Initial setup

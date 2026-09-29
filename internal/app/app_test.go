@@ -11,24 +11,60 @@ import (
 	"github.com/sugaf1204/gomi/internal/vm"
 )
 
-func TestRemoveLegacyUEFILocalBootGRUBAssets(t *testing.T) {
+func TestUEFILocalBootGRUBConfigFallsBackToFirmwareBootOrder(t *testing.T) {
+	if got, want := uefiLocalBootGRUBConfig, "exit 1\n"; got != want {
+		t.Fatalf("UEFI local boot GRUB config = %q, want %q", got, want)
+	}
+}
+
+func TestEnsureUEFILocalBootGRUBAssetsInstallsPackagedAsset(t *testing.T) {
 	tftpRoot := t.TempDir()
-	if err := os.WriteFile(filepath.Join(tftpRoot, "grubnetx64.efi"), []byte("legacy"), 0o644); err != nil {
+	srcDir := t.TempDir()
+	src := filepath.Join(srcDir, "grubnetx64.efi.signed")
+	want := []byte("fake-grubnet")
+	if err := os.WriteFile(src, want, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.MkdirAll(filepath.Join(tftpRoot, "grub"), 0o755); err != nil {
+
+	oldCandidates := uefiLocalBootGRUBCandidates
+	uefiLocalBootGRUBCandidates = []string{filepath.Join(srcDir, "missing"), src}
+	t.Cleanup(func() { uefiLocalBootGRUBCandidates = oldCandidates })
+
+	if err := ensureUEFILocalBootGRUBAssets(tftpRoot); err != nil {
+		t.Fatalf("ensureUEFILocalBootGRUBAssets: %v", err)
+	}
+	gotGRUB, err := os.ReadFile(filepath.Join(tftpRoot, "grubnetx64.efi"))
+	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(tftpRoot, "grub", "grub.cfg"), []byte("exit 1\n"), 0o644); err != nil {
+	if string(gotGRUB) != string(want) {
+		t.Fatalf("installed GRUB asset = %q, want %q", gotGRUB, want)
+	}
+	gotConfig, err := os.ReadFile(filepath.Join(tftpRoot, "grub", "grub.cfg"))
+	if err != nil {
 		t.Fatal(err)
 	}
-	if err := removeLegacyUEFILocalBootGRUBAssets(tftpRoot); err != nil {
-		t.Fatalf("removeLegacyUEFILocalBootGRUBAssets: %v", err)
+	if string(gotConfig) != uefiLocalBootGRUBConfig {
+		t.Fatalf("grub.cfg = %q, want %q", gotConfig, uefiLocalBootGRUBConfig)
 	}
-	for _, path := range []string{filepath.Join(tftpRoot, "grubnetx64.efi"), filepath.Join(tftpRoot, "grub")} {
-		if _, err := os.Stat(path); !os.IsNotExist(err) {
-			t.Fatalf("legacy asset %s still exists: %v", path, err)
-		}
+}
+
+func TestUEFILocalBootGRUBCandidatesPreferMonolithicImage(t *testing.T) {
+	if len(uefiLocalBootGRUBCandidates) == 0 {
+		t.Fatal("expected at least one UEFI local boot GRUB candidate")
+	}
+	if got, want := uefiLocalBootGRUBCandidates[0], "/usr/lib/grub/x86_64-efi/monolithic/grubnetx64.efi"; got != want {
+		t.Fatalf("first UEFI local boot GRUB candidate = %q, want %q", got, want)
+	}
+}
+
+func TestEnsureUEFILocalBootGRUBAssetsFailsWithoutPackagedAsset(t *testing.T) {
+	oldCandidates := uefiLocalBootGRUBCandidates
+	uefiLocalBootGRUBCandidates = []string{filepath.Join(t.TempDir(), "missing")}
+	t.Cleanup(func() { uefiLocalBootGRUBCandidates = oldCandidates })
+
+	if err := ensureUEFILocalBootGRUBAssets(t.TempDir()); err == nil {
+		t.Fatal("expected missing packaged GRUB asset to fail")
 	}
 }
 

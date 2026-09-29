@@ -15,6 +15,7 @@ Package: gomi
 Architecture: any
 Depends:
  ca-certificates,
+ grub-efi-amd64-bin,
  ipxe,
  squashfs-tools,
  systemd,

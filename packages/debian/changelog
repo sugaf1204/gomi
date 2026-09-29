@@ -1,9 +1,9 @@
-gomi (0.0.46) unstable; urgency=medium
+gomi (0.0.47) unstable; urgency=high
 
-  * Let completed UEFI hosts fall through from PXE directly to disk without
-    loading the unreliable network GRUB local-boot shim.
+  * Revert the v0.0.46 UEFI DHCP fallback change and restore the previously
+    deployed network GRUB local-boot handoff.
 
- -- sugaf1204 <sugaf1204@example.invalid>  Tue, 29 Sep 2026 14:33:39 +0900
+ -- sugaf1204 <sugaf1204@example.invalid>  Tue, 29 Sep 2026 15:30:00 +0900
 
 gomi (0.0.45) unstable; urgency=medium
 
