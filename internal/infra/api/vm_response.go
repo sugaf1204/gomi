@@ -42,12 +42,15 @@ type VirtualMachineResponse struct {
 }
 
 type ProvisioningStatusResponse struct {
-	Active           bool       `json:"active,omitempty"`
-	StartedAt        *time.Time `json:"startedAt,omitempty"`
-	DeadlineAt       *time.Time `json:"deadlineAt,omitempty"`
-	CompletedAt      *time.Time `json:"completedAt,omitempty"`
-	CompletionSource string     `json:"completionSource,omitempty"`
-	LastSignalAt     *time.Time `json:"lastSignalAt,omitempty"`
+	WindowsInstallStarted bool       `json:"windowsInstallStarted,omitempty"`
+	AttemptID             string     `json:"attemptId,omitempty"`
+	ImageApplied          bool       `json:"imageApplied,omitempty"`
+	Active                bool       `json:"active,omitempty"`
+	StartedAt             *time.Time `json:"startedAt,omitempty"`
+	DeadlineAt            *time.Time `json:"deadlineAt,omitempty"`
+	CompletedAt           *time.Time `json:"completedAt,omitempty"`
+	CompletionSource      string     `json:"completionSource,omitempty"`
+	LastSignalAt          *time.Time `json:"lastSignalAt,omitempty"`
 }
 
 func virtualMachineResponses(items []vm.VirtualMachine) []VirtualMachineResponse {
@@ -93,12 +96,15 @@ func virtualMachineResponse(v vm.VirtualMachine) VirtualMachineResponse {
 
 func provisioningStatusResponse(status vm.ProvisioningStatus) ProvisioningStatusResponse {
 	return ProvisioningStatusResponse{
-		Active:           status.Active,
-		StartedAt:        status.StartedAt,
-		DeadlineAt:       status.DeadlineAt,
-		CompletedAt:      status.CompletedAt,
-		CompletionSource: status.CompletionSource,
-		LastSignalAt:     status.LastSignalAt,
+		Active:                status.Active,
+		AttemptID:             status.AttemptID,
+		ImageApplied:          status.ImageApplied,
+		WindowsInstallStarted: status.WindowsInstallStarted,
+		StartedAt:             status.StartedAt,
+		DeadlineAt:            status.DeadlineAt,
+		CompletedAt:           status.CompletedAt,
+		CompletionSource:      status.CompletionSource,
+		LastSignalAt:          status.LastSignalAt,
 	}
 }
 

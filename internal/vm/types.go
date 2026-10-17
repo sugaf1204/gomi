@@ -62,6 +62,7 @@ const (
 type InstallConfigType string
 
 const (
+	InstallConfigWindows InstallConfigType = "windows"
 	InstallConfigPreseed InstallConfigType = "preseed"
 	InstallConfigCurtin  InstallConfigType = "curtin"
 )
@@ -94,13 +95,16 @@ type LoginUserSpec struct {
 }
 
 type ProvisioningStatus struct {
-	Active           bool       `json:"active,omitempty"`
-	StartedAt        *time.Time `json:"startedAt,omitempty"`
-	DeadlineAt       *time.Time `json:"deadlineAt,omitempty"`
-	CompletedAt      *time.Time `json:"completedAt,omitempty"`
-	CompletionToken  string     `json:"completionToken,omitempty"`
-	CompletionSource string     `json:"completionSource,omitempty"`
-	LastSignalAt     *time.Time `json:"lastSignalAt,omitempty"`
+	WindowsInstallStarted bool       `json:"windowsInstallStarted,omitempty"`
+	AttemptID             string     `json:"attemptId,omitempty"`
+	ImageApplied          bool       `json:"imageApplied,omitempty"`
+	Active                bool       `json:"active,omitempty"`
+	StartedAt             *time.Time `json:"startedAt,omitempty"`
+	DeadlineAt            *time.Time `json:"deadlineAt,omitempty"`
+	CompletedAt           *time.Time `json:"completedAt,omitempty"`
+	CompletionToken       string     `json:"completionToken,omitempty"`
+	CompletionSource      string     `json:"completionSource,omitempty"`
+	LastSignalAt          *time.Time `json:"lastSignalAt,omitempty"`
 	// DomainObservedAt records when the deployer defined this provisioning
 	// window's libvirt domain. While nil, a missing domain is attributed to
 	// the create/redeploy define gap (a sighting of the pre-redeploy domain

@@ -34,6 +34,9 @@ func (m *Machine) AllMACs() []string {
 }
 
 func (m *Machine) PXEInstallType() resource.InstallType {
+	if strings.EqualFold(string(m.OSPreset.Family), "windows") {
+		return resource.InstallWindows
+	}
 	return resource.InstallCurtin
 }
 

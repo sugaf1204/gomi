@@ -1,7 +1,8 @@
-import { supportsDeploymentTarget } from '../../../lib/osImages'
+import { WindowsDeployNotice } from '../WindowsDeployNotice'
+import { isWindowsImage, windowsFormDefaults, supportsDeploymentTarget } from '../../../lib/osImages'
 import type { CloudInitTemplate, Hypervisor, OSImage, SSHKey, Subnet } from '../../../types'
 import { SSHAccessFieldset } from '../SSHAccessFieldset'
-import type { CloudInitInputMode, UpdateVMConfigForm, VMConfigForm } from './vmFormState'
+import { windowsVMFormDefaults, type CloudInitInputMode, type UpdateVMConfigForm, type VMConfigForm } from './vmFormState'
 
 type VMConfigFieldsProps = {
   formState: VMConfigForm
@@ -40,6 +41,7 @@ export function VMConfigFields({
   supportsTemplateNameHostname = false
 }: VMConfigFieldsProps) {
   const selectedOSImage = formState.osImageRef ? osImageByName.get(formState.osImageRef) : undefined
+  const windows = isWindowsImage(selectedOSImage)
   const hasUnsupportedSelectedOSImage = Boolean(selectedOSImage && !supportsDeploymentTarget(selectedOSImage, 'vm'))
 
   return (
@@ -60,20 +62,20 @@ export function VMConfigFields({
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-[0.45rem]">
         <label className="text-[0.84rem] min-w-0">
           CPU Cores
-          <input type="number" required min="1" value={formState.cpuCores} onChange={(e) => updateForm((current) => ({ ...current, cpuCores: e.target.value }))} />
+          <input type="number" required min={windows ? 2 : 1} value={formState.cpuCores} onChange={(e) => updateForm((current) => ({ ...current, cpuCores: e.target.value }))} />
         </label>
         <label className="text-[0.84rem] min-w-0">
           Memory (MB)
-          <input type="number" required min="256" value={formState.memoryMB} onChange={(e) => updateForm((current) => ({ ...current, memoryMB: e.target.value }))} />
+          <input type="number" required min={windows ? 4096 : 256} value={formState.memoryMB} onChange={(e) => updateForm((current) => ({ ...current, memoryMB: e.target.value }))} />
         </label>
         <label className="text-[0.84rem] min-w-0">
           Disk (GB)
-          <input type="number" required min="1" value={formState.diskGB} onChange={(e) => updateForm((current) => ({ ...current, diskGB: e.target.value }))} />
+          <input type="number" required min={windows ? 64 : 1} value={formState.diskGB} onChange={(e) => updateForm((current) => ({ ...current, diskGB: e.target.value }))} />
         </label>
       </div>
       <label className="text-[0.84rem]">
         OS Image
-        <select required value={formState.osImageRef} onChange={(e) => updateForm((current) => ({ ...current, osImageRef: e.target.value }))}>
+        <select required value={formState.osImageRef} onChange={(e) => updateForm((current) => ({ ...current, osImageRef: e.target.value, ...(isWindowsImage(osImageByName.get(e.target.value)) ? { ...windowsFormDefaults(), ...windowsVMFormDefaults(current) } : {}) }))}>
           <option value="">Select...</option>
           {hasUnsupportedSelectedOSImage && selectedOSImage && (
             <option value={selectedOSImage.name} disabled>
@@ -81,10 +83,11 @@ export function VMConfigFields({
             </option>
           )}
           {vmOSImages.map((img) => (
-            <option key={img.name} value={img.name}>{img.name} ({img.osFamily} {img.osVersion}{img.variant ? ` ${img.variant}` : ''})</option>
+            <option key={img.name} value={img.name} disabled={!img.ready}>{img.name} ({img.osFamily} {img.osVersion}{img.variant ? ` ${img.variant}` : ''})</option>
           ))}
         </select>
       </label>
+      {windows ? <WindowsDeployNotice /> : <>
       <label className="text-[0.84rem]">
         Cloud-Init
         <select value={formState.cloudInitMode} onChange={(e) => updateForm((current) => ({ ...current, cloudInitMode: e.target.value as CloudInitInputMode }))}>
@@ -139,6 +142,7 @@ export function VMConfigFields({
         onChange={(updater) => updateForm((current) => ({ ...current, ...updater(current) }))}
         onRefresh={onRefresh}
       />
+      </>}
       <fieldset className="border border-line rounded p-0 m-0">
         <legend className="text-[0.84rem] font-medium px-[0.4rem] ml-[0.3rem]">Network</legend>
         <div className="grid gap-[0.45rem] p-[0.7rem]">
@@ -166,7 +170,7 @@ export function VMConfigFields({
               DHCP
             </label>
             <label className="flex items-center gap-1 cursor-pointer">
-              <input type="radio" name={`${radioNamePrefix}-ip-assignment`} checked={formState.ipAssignment === 'static'} onChange={() => updateForm((current) => ({ ...current, ipAssignment: 'static' }))} />
+              <input type="radio" name={`${radioNamePrefix}-ip-assignment`} disabled={windows} checked={formState.ipAssignment === 'static'} onChange={() => updateForm((current) => ({ ...current, ipAssignment: 'static' }))} />
               Static
             </label>
           </div>
@@ -208,8 +212,8 @@ export function VMConfigFields({
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-[0.45rem]">
               <label className="text-[0.84rem] min-w-0">
                 Disk Driver
-                <select value={formState.diskDriver} onChange={(e) => updateForm((current) => ({ ...current, diskDriver: e.target.value }))}>
-                  <option value="">Default (virtio)</option>
+                <select disabled={windows} value={formState.diskDriver} onChange={(e) => updateForm((current) => ({ ...current, diskDriver: e.target.value }))}>
+                  <option value="">{windows ? 'Windows (SATA)' : 'Default (virtio)'}</option>
                   <option value="virtio">virtio</option>
                   <option value="scsi">scsi (virtio-scsi)</option>
                 </select>
@@ -225,11 +229,11 @@ export function VMConfigFields({
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-[0.45rem]">
               <label className="text-[0.84rem] min-w-0">
                 IO Threads
-                <input type="number" min="0" max="16" value={formState.ioThreads} onChange={(e) => updateForm((current) => ({ ...current, ioThreads: e.target.value }))} placeholder="0 (disabled)" />
+                <input type="number" disabled={windows} min="0" max="16" value={formState.ioThreads} onChange={(e) => updateForm((current) => ({ ...current, ioThreads: e.target.value }))} placeholder="0 (disabled)" />
               </label>
               <label className="text-[0.84rem] min-w-0">
                 Net Multiqueue
-                <input type="number" min="0" max="16" value={formState.netMultiqueue} onChange={(e) => updateForm((current) => ({ ...current, netMultiqueue: e.target.value }))} placeholder="0 (disabled)" />
+                <input type="number" disabled={windows} min="0" max="16" value={formState.netMultiqueue} onChange={(e) => updateForm((current) => ({ ...current, netMultiqueue: e.target.value }))} placeholder="0 (disabled)" />
               </label>
             </div>
             <label className="text-[0.84rem]">

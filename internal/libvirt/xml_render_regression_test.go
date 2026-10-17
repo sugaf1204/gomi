@@ -71,8 +71,8 @@ func TestGenerateDomainXML_BasicDomain(t *testing.T) {
 	if domain.OS.Type.Value != "hvm" {
 		t.Errorf("os type = %q, want %q", domain.OS.Type.Value, "hvm")
 	}
-	if domain.OS.Boot.Dev != "hd" {
-		t.Errorf("boot dev = %q, want %q", domain.OS.Boot.Dev, "hd")
+	if domain.OS.Boot[0].Dev != "hd" {
+		t.Errorf("boot dev = %q, want %q", domain.OS.Boot[0].Dev, "hd")
 	}
 
 	// Verify disk.

@@ -270,6 +270,11 @@ func (s *Server) resolveOSPreset(ctx context.Context, m *machine.Machine) error 
 	}
 	m.OSPreset.Family = machine.OSType(img.OSFamily)
 	m.OSPreset.Version = img.OSVersion
+	if strings.EqualFold(img.OSFamily, "windows") {
+		if err := validateWindowsMachineImage(*m, img); err != nil {
+			return err
+		}
+	}
 	if !osimage.SupportsDeploymentTarget(img, osimage.DeploymentTargetBareMetal) {
 		return fmt.Errorf("referenced os image %s does not support bare-metal deployment", ref)
 	}

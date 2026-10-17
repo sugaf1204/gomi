@@ -57,6 +57,9 @@ func (h *Handler) PXEInstallComplete(c echo.Context) error {
 		return c.JSON(gohttp.StatusInternalServerError, jsonErrorErr(err))
 	}
 	if targetVM != nil {
+		if targetVM.PXEInstallType() == "windows" {
+			return c.JSON(gohttp.StatusConflict, jsonError("Windows requires the attempt-scoped Windows state callback"))
+		}
 		if strings.TrimSpace(targetVM.Provisioning.CompletionToken) != token {
 			return c.JSON(gohttp.StatusNotFound, jsonError("provisioning token not found"))
 		}
@@ -106,6 +109,9 @@ func (h *Handler) PXEInstallComplete(c echo.Context) error {
 	}
 	if targetMachine == nil {
 		return c.JSON(gohttp.StatusNotFound, jsonError("provisioning token not found"))
+	}
+	if targetMachine.PXEInstallType() == "windows" {
+		return c.JSON(gohttp.StatusConflict, jsonError("Windows requires the attempt-scoped Windows state callback"))
 	}
 	if targetMachine.Provision == nil || strings.TrimSpace(targetMachine.Provision.CompletionToken) != token {
 		return c.JSON(gohttp.StatusNotFound, jsonError("provisioning token not found"))

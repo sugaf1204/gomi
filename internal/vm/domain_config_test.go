@@ -96,3 +96,26 @@ func TestSkipHostStorageCleanup(t *testing.T) {
 		})
 	}
 }
+
+func TestBuildWindowsDomainConfig(t *testing.T) {
+	v := VirtualMachine{Name: "windows", Resources: ResourceSpec{CPUCores: 2, MemoryMB: 4096, DiskGB: 64}, InstallCfg: &InstallConfig{Type: InstallConfigWindows}}
+	cfg := BuildDomainConfig(v, v.Name, "network", "http://gomi/pxe", func(string, InstallConfigType, string) string { return "linux-only" })
+	if cfg.BootFallback != "hd" || cfg.Firmware != "uefi" || !cfg.TPM || cfg.DiskBus != "sata" || cfg.NICModel != "e1000e" || cfg.SMBIOSSerial != "" {
+		t.Fatalf("invalid Windows config: %+v", cfg)
+	}
+}
+
+func TestWindowsDiskFallbackDoesNotChangeLinuxBootOrder(t *testing.T) {
+	for _, kind := range []InstallConfigType{InstallConfigPreseed, InstallConfigCurtin} {
+		v := VirtualMachine{Name: "linux", InstallCfg: &InstallConfig{Type: kind}}
+		cfg := BuildDomainConfig(v, v.Name, "network", "", nil)
+		if cfg.BootDev != "network" || cfg.BootFallback != "" {
+			t.Fatalf("Linux boot order changed: %+v", cfg)
+		}
+	}
+	v := VirtualMachine{Name: "windows", InstallCfg: &InstallConfig{Type: InstallConfigWindows}}
+	cfg := BuildDomainConfig(v, v.Name, "hd", "", nil)
+	if cfg.BootFallback != "" {
+		t.Fatal("disk boot unexpectedly has a duplicate fallback")
+	}
+}

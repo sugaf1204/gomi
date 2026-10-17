@@ -85,6 +85,10 @@ func (r *Runtime) syncProvisioningStates(ctx context.Context) {
 	}
 
 	for _, m := range machines {
+		if strings.EqualFold(strings.TrimSpace(string(m.OSPreset.Family)), "windows") {
+			r.syncWindowsProvisioningState(ctx, m, time.Now().UTC())
+			continue
+		}
 		// Provisioning timeout check
 		if m.Provision != nil && m.Provision.Active && m.Provision.DeadlineAt != nil {
 			if time.Now().UTC().After(*m.Provision.DeadlineAt) {

@@ -23,6 +23,9 @@ func (h *Handler) resolvePXETarget(ctx context.Context, rawMAC string) (pxeTarge
 		return pxeTarget{installType: vm.InstallConfigPreseed}, false, vmErr
 	}
 	if targetVM != nil && targetVM.IsProvisioningActive() {
+		if targetVM.PXEInstallType() == resource.InstallWindows && (targetVM.Provisioning.ImageApplied || targetVM.Provisioning.WindowsInstallStarted) {
+			return pxeTarget{node: targetVM, installType: vm.InstallConfigWindows}, false, nil
+		}
 		return pxeTarget{
 			node:        targetVM,
 			installType: vm.InstallConfigType(targetVM.PXEInstallType()),
@@ -36,6 +39,9 @@ func (h *Handler) resolvePXETarget(ctx context.Context, rawMAC string) (pxeTarge
 		return pxeTarget{installType: vm.InstallConfigPreseed}, false, machineErr
 	}
 	if targetMachine != nil && targetMachine.IsProvisioningActive() {
+		if targetMachine.PXEInstallType() == resource.InstallWindows && (machineImageApplied(targetMachine) || targetMachine.Provision.Artifacts["windowsInstallStarted"] == "true") {
+			return pxeTarget{node: targetMachine, installType: vm.InstallConfigWindows}, false, nil
+		}
 		completedRootFS := h.machineUsesCompletedRootFS(ctx, targetMachine)
 		diskImageDeploy := h.machineUsesDiskImage(ctx, targetMachine)
 		if machineImageApplied(targetMachine) {

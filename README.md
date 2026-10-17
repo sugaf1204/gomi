@@ -114,6 +114,12 @@ go tool pprof fgprof.pprof
 3. Trigger redeploy or reinstall.
 4. The target boots through PXE and completes the install flow automatically.
 
+Windows deployment has a separate, experimental amd64 UEFI path using an
+operator-built WinPE and installation WIM. Finish Windows initial setup in the
+console, then enter a product key manually in Windows if needed. GOMI does not
+accept product keys in this initial implementation. See
+[`windows/README.md`](windows/README.md) for artifacts and supported boundaries.
+
 ### Virtual machine provisioning
 
 1. Register a Hypervisor.
@@ -295,6 +301,9 @@ uv run molecule test -s gomi-kvm-lab
 ```
 
 See [`tests/lab/ansible/README.md`](tests/lab/ansible/README.md) for the full lab flow.
+The Windows procedure is documented separately in
+[`tests/lab/ansible/WINDOWS.md`](tests/lab/ansible/WINDOWS.md); it requires Windows
+media and is not covered by the Ubuntu lab matrix.
 
 ---
 

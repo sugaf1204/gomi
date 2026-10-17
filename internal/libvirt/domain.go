@@ -3,6 +3,7 @@ package libvirt
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	golibvirt "github.com/digitalocean/go-libvirt"
 )
@@ -58,7 +59,23 @@ func (e *rpcExecutor) UndefineDomain(_ context.Context, name string) error {
 	if err != nil {
 		return fmt.Errorf("lookup domain %s: %w", name, err)
 	}
-	if err := e.l.DomainUndefineFlags(domain, golibvirt.DomainUndefineManagedSave|golibvirt.DomainUndefineSnapshotsMetadata); err != nil {
+	// UEFI/TPM state belongs to this domain and must be removed on delete or redeploy.
+	raw, err := e.l.DomainGetXMLDesc(domain, 0)
+	if err != nil {
+		return fmt.Errorf("inspect domain %s before undefine: %w", name, err)
+	}
+	var version uint64
+	if strings.Contains(raw, "<tpm") {
+		version, err = e.l.ConnectGetLibVersion()
+		if err != nil {
+			return fmt.Errorf("get libvirt version before TPM cleanup: %w", err)
+		}
+	}
+	flags, err := domainUndefineFlags(raw, version)
+	if err != nil {
+		return err
+	}
+	if err := e.l.DomainUndefineFlags(domain, flags); err != nil {
 		return fmt.Errorf("undefine domain %s: %w", name, err)
 	}
 	return nil

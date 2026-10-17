@@ -359,7 +359,20 @@ func (s *RuntimeSyncer) persistSyncedVM(ctx context.Context, before, updated Vir
 	updated.UpdatedAt = time.Now().UTC()
 	// The sync worked from a snapshot; writing through an existence-checked
 	// update keeps a concurrent delete from being resurrected by this write.
-	written, err := writeExisting(ctx, s.VMs.Store(), updated)
+	var written bool
+	var err error
+	if before.InstallCfg != nil && before.InstallCfg.Type == InstallConfigWindows {
+		updater, ok := s.VMs.Store().(ProvisioningAttemptUpdater)
+		if !ok {
+			return before, fmt.Errorf("store does not support atomic Windows provisioning updates")
+		}
+		written, err = updater.UpdateProvisioningAttempt(ctx, before, updated)
+		if err == nil && !written {
+			return s.VMs.Get(ctx, before.Name)
+		}
+	} else {
+		written, err = writeExisting(ctx, s.VMs.Store(), updated)
+	}
 	if err != nil {
 		return before, fmt.Errorf("persist synced vm status: %w", err)
 	}

@@ -150,6 +150,11 @@ func artifactPathAllowed(manifest *osimage.Manifest, rel string) bool {
 	if err != nil {
 		return false
 	}
+	for _, candidate := range manifest.WindowsArtifacts() {
+		if clean == candidate {
+			return true
+		}
+	}
 	if clean == strings.TrimSpace(manifest.Root.Path) {
 		return true
 	}

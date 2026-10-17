@@ -59,8 +59,13 @@ func (s *Server) CreateVirtualMachine(c echo.Context) error {
 	if err != nil {
 		return c.JSON(gohttp.StatusInternalServerError, jsonError("failed to issue provisioning token"))
 	}
+	attemptID, err := resource.GenerateProvisioningAttemptID()
+	if err != nil {
+		return c.JSON(gohttp.StatusInternalServerError, jsonError("failed to issue provisioning attempt"))
+	}
 	now := time.Now().UTC()
 	v.Provisioning = vm.ProvisioningStatus{
+		AttemptID:       attemptID,
 		Active:          true,
 		StartedAt:       httputil.TimePtr(now),
 		DeadlineAt:      httputil.TimePtr(now.Add(s.provisionTimeout)),

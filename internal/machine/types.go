@@ -18,8 +18,9 @@ const (
 type OSType string
 
 const (
-	OSTypeUbuntu OSType = "ubuntu"
-	OSTypeDebian OSType = "debian"
+	OSTypeWindows OSType = "windows"
+	OSTypeUbuntu  OSType = "ubuntu"
+	OSTypeDebian  OSType = "debian"
 )
 
 type Phase string

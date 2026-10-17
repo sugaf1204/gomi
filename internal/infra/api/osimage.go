@@ -28,6 +28,10 @@ func (s *Server) CreateOSImage(c echo.Context) error {
 		return c.JSON(gohttp.StatusBadRequest, jsonError("invalid body"))
 	}
 	img.Name = resourceID("osImages", img.Name)
+	// Status and server paths are owned by upload/status workflows, never create input.
+	img.Ready = false
+	img.LocalPath = ""
+	img.Error = ""
 	created, err := s.osimages.Create(c.Request().Context(), img)
 	if err != nil {
 		return c.JSON(gohttp.StatusBadRequest, jsonErrorErr(err))
@@ -119,7 +123,7 @@ func (s *Server) UploadOSImage(c echo.Context) error {
 		return c.JSON(gohttp.StatusInternalServerError, jsonError("failed to publish image file"))
 	}
 
-	updated, err := s.osimages.UpdateStatus(c.Request().Context(), name, true, localPath, "")
+	updated, err := s.osimages.UpdateStatus(c.Request().Context(), name, windowsImageReady(img, localPath), localPath, "")
 	if err != nil {
 		return c.JSON(gohttp.StatusInternalServerError, jsonErrorErr(err))
 	}
@@ -138,7 +142,7 @@ func (s *Server) downloadURLImage(c echo.Context, img osimage.OSImage) osimage.O
 		img.Error = err.Error()
 		return img
 	}
-	updated, err := s.osimages.UpdateStatus(c.Request().Context(), img.Name, true, localPath, "")
+	updated, err := s.osimages.UpdateStatus(c.Request().Context(), img.Name, windowsImageReady(img, localPath), localPath, "")
 	if err != nil {
 		img.Ready = false
 		img.Error = err.Error()
@@ -333,6 +337,11 @@ func (s *Server) UpdateOSImageStatus(c echo.Context) error {
 		localPath = body.LocalPath
 	}
 
+	if ready && img.Manifest != nil && img.Manifest.Windows != nil {
+		if err := osimage.WindowsArtifactsReady(img, localPath); err != nil {
+			return c.JSON(gohttp.StatusBadRequest, jsonErrorErr(err))
+		}
+	}
 	updated, err := s.osimages.UpdateStatus(c.Request().Context(), name, ready, localPath, body.Error)
 	if err != nil {
 		return c.JSON(gohttp.StatusInternalServerError, jsonErrorErr(err))

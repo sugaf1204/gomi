@@ -263,3 +263,12 @@ func parseCloudConfig(t *testing.T, raw string) map[string]any {
 	}
 	return cfg
 }
+
+func TestBuildArtifactsRejectsWindows(t *testing.T) {
+	for _, family := range []machine.OSType{machine.OSTypeWindows, "Windows"} {
+		artifacts, cfg, err := provision.BuildArtifacts(machine.Machine{OSPreset: machine.OSPreset{Family: family}}, "http://gomi/pxe", nil)
+		if err == nil || artifacts != nil || cfg != "" || !strings.Contains(err.Error(), "WinPE") {
+			t.Fatalf("Windows received Linux artifacts: %v %s %v", artifacts, cfg, err)
+		}
+	}
+}

@@ -582,6 +582,27 @@ class ApiClient {
     })
   }
 
+  uploadOSImageArtifact(name: string, path: string, file: File) {
+    const form = new FormData()
+    form.append('file', file)
+    form.append('path', path)
+    const headers: Record<string, string> = {}
+    if (this.token) {
+      headers.Authorization = `Bearer ${this.token}`
+    }
+    return fetch(`${API_BASE}/os-images/${encodeURIComponent(name)}/upload-artifact`, {
+      method: 'POST',
+      headers,
+      body: form
+    }).then(async (res) => {
+      if (!res.ok) {
+        const payload = await res.json().catch(() => ({ error: `HTTP ${res.status}` }))
+        throw new Error(payload.error ?? `HTTP ${res.status}`)
+      }
+      return (res.json() as Promise<NamedApi<OSImage, 'osImageId'>>).then(fromApiOSImage)
+    })
+  }
+
   deleteOSImage(name: string) {
     return this.request<void>(`/os-images/${encodeURIComponent(name)}`, {
       method: 'DELETE'

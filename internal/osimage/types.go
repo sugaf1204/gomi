@@ -7,6 +7,7 @@ import (
 type ImageFormat string
 
 const (
+	FormatWIM      ImageFormat = "wim"
 	FormatQCOW2    ImageFormat = "qcow2"
 	FormatISO      ImageFormat = "iso"
 	FormatSquashFS ImageFormat = "squashfs"
@@ -61,6 +62,7 @@ type OSImage struct {
 }
 
 type Manifest struct {
+	Windows      *WindowsImage `json:"windows,omitempty"`
 	Name         string        `json:"name,omitempty"`
 	OSFamily     string        `json:"osFamily,omitempty"`
 	OSVersion    string        `json:"osVersion,omitempty"`

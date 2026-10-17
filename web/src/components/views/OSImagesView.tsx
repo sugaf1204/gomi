@@ -17,13 +17,14 @@ type OSImageForm = {
   osFamily: string
   osVersion: string
   arch: string
-  format: 'qcow2'
+  format: OSImage['format']
   variant: '' | NonNullable<OSImage['variant']>
   source: 'upload' | 'url'
   url: string
   checksum: string
   manifestText: string
   file: File | null
+  windowsFiles: Partial<Record<keyof NonNullable<OSImageManifest['windows']>['winPE'], File>>
 }
 
 const initialImageForm: OSImageForm = {
@@ -37,8 +38,11 @@ const initialImageForm: OSImageForm = {
   url: '',
   checksum: '',
   manifestText: '',
-  file: null
+  file: null,
+  windowsFiles: {}
 }
+
+type ImageUploadProgress = { name: string; rootUploaded: boolean; completedArtifacts: string[] }
 
 const OS_IMAGE_SELECTION_STORAGE_KEY = 'gomi.os-images.selected'
 
@@ -48,8 +52,11 @@ export function OSImagesView({ osImages, onRefresh }: OSImagesViewProps) {
   const [imageForm, setImageForm] = useState(initialImageForm)
   const [creatingImage, setCreatingImage] = useState(false)
   const [uploadingImage, setUploadingImage] = useState(false)
+  const [uploadProgress, setUploadProgress] = useState<ImageUploadProgress | null>(null)
   const [deleteConfirm, setDeleteConfirm] = useState<{ open: boolean; name: string }>({ open: false, name: '' })
 
+  const fileUploadBusy = creatingImage || uploadingImage
+  const metadataLocked = Boolean(uploadProgress) || fileUploadBusy
   const selectedImageData = osImages.find((img) => img.name === selectedImage) ?? null
 
   useEffect(() => {
@@ -72,45 +79,63 @@ export function OSImagesView({ osImages, onRefresh }: OSImagesViewProps) {
     setCreatingImage(true)
     try {
       const manifest = parseManifestText(imageForm.manifestText)
-      const created = await api.createOSImage({
-        name: imageForm.name,
-        osFamily: imageForm.osFamily,
-        osVersion: imageForm.osVersion,
-        arch: imageForm.arch,
-        format: imageForm.format,
-        source: imageForm.source,
-        variant: imageForm.variant || undefined,
-        manifest,
-        url: imageForm.source === 'url' ? imageForm.url : undefined,
-        checksum: imageForm.checksum || undefined
-      })
+      let progress = uploadProgress
+      if (!progress) {
+        const created = await api.createOSImage({
+          name: imageForm.name,
+          osFamily: imageForm.osFamily,
+          osVersion: imageForm.osVersion,
+          arch: imageForm.arch,
+          format: imageForm.format,
+          source: imageForm.source,
+          variant: imageForm.variant || undefined,
+          manifest,
+          url: imageForm.source === 'url' ? imageForm.url : undefined,
+          checksum: imageForm.checksum || undefined
+        })
+        progress = { name: created.name, rootUploaded: false, completedArtifacts: [] }
+        setUploadProgress(progress)
+      }
       setCreatingImage(false)
-
       if (imageForm.source === 'upload' && imageForm.file) {
         setUploadingImage(true)
-        try {
-          await api.uploadOSImageFile(created.name, imageForm.file)
-        } catch (err) {
-          notifyError(err instanceof Error ? err.message : 'Image registered but file upload failed')
-          setUploadingImage(false)
-          void onRefresh()
-          return
+        if (!progress.rootUploaded) {
+          await api.uploadOSImageFile(progress.name, imageForm.file)
+          progress = { ...progress, rootUploaded: true }
+          setUploadProgress(progress)
         }
-        setUploadingImage(false)
+        if (manifest?.windows) {
+          for (const key of ['wimboot', 'bcd', 'bootSDI', 'bootWIM'] as const) {
+            const path = manifest.windows.winPE[key]
+            if (progress.completedArtifacts.includes(key)) continue
+            const file = imageForm.windowsFiles[key]
+            if (!file) throw new Error(`Missing Windows boot asset: ${key}`)
+            await api.uploadOSImageArtifact(progress.name, path, file)
+            progress = { ...progress, completedArtifacts: [...progress.completedArtifacts, key] }
+            setUploadProgress(progress)
+          }
+        }
       }
-
+      setUploadProgress(null)
       setImageForm(initialImageForm)
       setImageFormOpen(false)
       void onRefresh()
     } catch (err) {
       notifyError(err instanceof Error ? err.message : 'Failed to create OS image')
+      void onRefresh()
+    } finally {
       setCreatingImage(false)
+      setUploadingImage(false)
     }
   }
 
   async function handleDeleteImage(name: string) {
     try {
       await api.deleteOSImage(name)
+      if (uploadProgress?.name === name) {
+        setUploadProgress(null)
+        setImageForm(initialImageForm)
+      }
       if (selectedImage === name) setSelectedImage('')
       void onRefresh()
     } catch (err) {
@@ -136,22 +161,23 @@ export function OSImagesView({ osImages, onRefresh }: OSImagesViewProps) {
               >×</button>
             </div>
             <form className="grid gap-[0.55rem]" onSubmit={(e) => void handleCreateImage(e)}>
+              {uploadProgress && <p className="m-0 text-[0.8rem] text-ink-soft">Image {uploadProgress.name} is registered. Retry resumes remaining uploads. Image metadata and completed files stay locked; pending files can be replaced; closing this dialog keeps progress for this session.</p>}
               <label className="text-[0.84rem]">
                 Name
-                <input required value={imageForm.name} onChange={(e) => setImageForm((f) => ({ ...f, name: e.target.value }))} placeholder="e.g. debian-13-amd64-baremetal" />
+                <input required disabled={metadataLocked} value={imageForm.name} onChange={(e) => setImageForm((f) => ({ ...f, name: e.target.value }))} placeholder="e.g. debian-13-amd64-baremetal" />
               </label>
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-[0.45rem]">
                 <label className="text-[0.84rem]">
                   OS Family
-                  <input required value={imageForm.osFamily} onChange={(e) => setImageForm((f) => ({ ...f, osFamily: e.target.value }))} placeholder="debian" />
+                  <input required disabled={metadataLocked} value={imageForm.osFamily} onChange={(e) => setImageForm((f) => ({ ...f, osFamily: e.target.value, ...(e.target.value.trim().toLowerCase() === 'windows' ? { source: 'upload' as const } : {}) }))} placeholder="debian" />
                 </label>
                 <label className="text-[0.84rem]">
                   Version
-                  <input required value={imageForm.osVersion} onChange={(e) => setImageForm((f) => ({ ...f, osVersion: e.target.value }))} placeholder="24.04" />
+                  <input required disabled={metadataLocked} value={imageForm.osVersion} onChange={(e) => setImageForm((f) => ({ ...f, osVersion: e.target.value }))} placeholder="24.04" />
                 </label>
                 <label className="text-[0.84rem]">
                   Arch
-                  <select value={imageForm.arch} onChange={(e) => setImageForm((f) => ({ ...f, arch: e.target.value }))}>
+                  <select disabled={metadataLocked} value={imageForm.arch} onChange={(e) => setImageForm((f) => ({ ...f, arch: e.target.value }))}>
                     <option value="amd64">amd64</option>
                     <option value="arm64">arm64</option>
                   </select>
@@ -160,11 +186,15 @@ export function OSImagesView({ osImages, onRefresh }: OSImagesViewProps) {
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-[0.45rem]">
                 <label className="text-[0.84rem]">
                   Format
-                  <input value="qcow2" disabled readOnly />
+                  <select disabled={metadataLocked} value={imageForm.format} onChange={(e) => setImageForm((f) => ({ ...f, format: e.target.value as OSImage['format'], ...(e.target.value === 'wim' ? { source: 'upload' as const, osFamily: 'windows', arch: 'amd64' } : {}) }))}>
+                    <option value="qcow2">qcow2</option>
+                    <option value="squashfs">SquashFS</option>
+                    <option value="wim">Windows WIM</option>
+                  </select>
                 </label>
                 <label className="text-[0.84rem]">
                   Variant
-                  <select value={imageForm.variant} onChange={(e) => setImageForm((f) => ({ ...f, variant: e.target.value as OSImageForm['variant'] }))}>
+                  <select disabled={metadataLocked} value={imageForm.variant} onChange={(e) => setImageForm((f) => ({ ...f, variant: e.target.value as OSImageForm['variant'] }))}>
                     <option value="">Default</option>
                     <option value="cloud">Cloud VM</option>
                     <option value="baremetal">Bare Metal</option>
@@ -176,7 +206,7 @@ export function OSImagesView({ osImages, onRefresh }: OSImagesViewProps) {
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-[0.45rem]">
                 <label className="text-[0.84rem]">
                   Source
-                  <select value={imageForm.source} onChange={(e) => setImageForm((f) => ({ ...f, source: e.target.value as 'upload' | 'url' }))}>
+                  <select disabled={metadataLocked || imageForm.format === 'wim' || imageForm.osFamily.trim().toLowerCase() === 'windows'} value={imageForm.source} onChange={(e) => setImageForm((f) => ({ ...f, source: e.target.value as 'upload' | 'url' }))}>
                     <option value="url">URL</option>
                     <option value="upload">Upload</option>
                   </select>
@@ -186,7 +216,7 @@ export function OSImagesView({ osImages, onRefresh }: OSImagesViewProps) {
               {imageForm.source === 'url' && (
                 <label className="text-[0.84rem]">
                   URL
-                  <input required value={imageForm.url} onChange={(e) => setImageForm((f) => ({ ...f, url: e.target.value }))} placeholder="https://example.com/os-image.qcow2" />
+                  <input required disabled={metadataLocked} value={imageForm.url} onChange={(e) => setImageForm((f) => ({ ...f, url: e.target.value }))} placeholder="https://example.com/os-image.qcow2" />
                 </label>
               )}
 
@@ -195,35 +225,43 @@ export function OSImagesView({ osImages, onRefresh }: OSImagesViewProps) {
                   File
                   <input
                     type="file"
-                    required
-                    accept=".qcow2,.img"
+                    disabled={fileUploadBusy || Boolean(uploadProgress?.rootUploaded)}
+                    required={!imageForm.file}
+                    accept=".qcow2,.img,.squashfs,.wim"
                     onChange={(e) => setImageForm((f) => ({ ...f, file: e.target.files?.[0] ?? null }))}
                     className="block mt-[0.3rem] text-[0.84rem]"
                   />
                 </label>
               )}
 
+              {imageForm.source === 'upload' && imageForm.format === 'wim' && (['wimboot', 'bcd', 'bootSDI', 'bootWIM'] as const).map((key) => (
+                <label key={key} className="text-[0.84rem]">WinPE {key}
+                  <input type="file" disabled={fileUploadBusy || Boolean(uploadProgress?.completedArtifacts.includes(key))} required={!imageForm.windowsFiles[key]} onChange={(e) => setImageForm((f) => ({ ...f, windowsFiles: { ...f.windowsFiles, [key]: e.target.files?.[0] } }))} />
+                </label>
+              ))}
+
               {imageForm.source !== 'upload' && (
                 <label className="text-[0.84rem]">
                   Checksum (SHA-256) <span className="text-ink-soft">(optional)</span>
-                  <input value={imageForm.checksum} onChange={(e) => setImageForm((f) => ({ ...f, checksum: e.target.value }))} placeholder="sha256:..." />
+                  <input disabled={metadataLocked} value={imageForm.checksum} onChange={(e) => setImageForm((f) => ({ ...f, checksum: e.target.value }))} placeholder="sha256:..." />
                 </label>
               )}
 
+              {imageForm.format === 'wim' && <p className="m-0 text-[0.8rem] text-ink-soft">Use OS family windows, architecture amd64 and UEFI. Upload install.wim and all four WinPE boot assets. Set windows.imageIndex and windows.winPE paths in the manifest. Product keys are entered on Windows after deployment.</p>}
               <label className="text-[0.84rem]">
-                Manifest JSON <span className="text-ink-soft">(optional, required for bare-metal qcow2 artifacts)</span>
+                Manifest JSON <span className="text-ink-soft">(required for Windows WIM and bare-metal qcow2 artifacts)</span>
                 <textarea
-                  value={imageForm.manifestText}
+                  disabled={metadataLocked} value={imageForm.manifestText}
                   onChange={(e) => setImageForm((f) => ({ ...f, manifestText: e.target.value }))}
                   rows={7}
-                  placeholder={'{"capabilities":{"deployTargets":["baremetal"]},"root":{"format":"qcow2","path":"root.qcow2","rootPartition":{"number":1},"efiPartition":{"number":15}}}'}
+                  placeholder={imageForm.format === 'wim' ? JSON.stringify({bootModes: ['uefi'], capabilities: {deployTargets: ['vm', 'baremetal']}, root: {format: 'wim', path: 'install.wim'}, windows: {imageIndex: 1, winPE: {wimboot: 'wimboot', bcd: 'BCD', bootSDI: 'boot.sdi', bootWIM: 'boot.wim'}}}) : '{"capabilities":{"deployTargets":["baremetal"]},"root":{"format":"qcow2","path":"root.qcow2","rootPartition":{"number":1},"efiPartition":{"number":15}}}'}
                 />
               </label>
 
               <div className="flex justify-end gap-[0.45rem] pt-[0.2rem]">
                 <button type="button" onClick={() => { setImageFormOpen(false) }}>Cancel</button>
                 <button type="submit" disabled={creatingImage || uploadingImage} className="bg-brand border-brand-strong text-white">
-                  {uploadingImage ? 'Uploading...' : creatingImage ? 'Creating...' : imageForm.source === 'upload' ? 'Create & Upload' : 'Create'}
+                  {uploadingImage ? 'Uploading...' : creatingImage ? 'Creating...' : uploadProgress ? 'Retry uploads' : imageForm.source === 'upload' ? 'Create & Upload' : 'Create'}
                 </button>
               </div>
             </form>

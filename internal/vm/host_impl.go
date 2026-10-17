@@ -60,6 +60,8 @@ func (v *VirtualMachine) PXEInstallType() resource.InstallType {
 		return resource.InstallPreseed
 	}
 	switch v.InstallCfg.Type {
+	case InstallConfigWindows:
+		return resource.InstallWindows
 	case InstallConfigCurtin:
 		return resource.InstallCurtin
 	case InstallConfigPreseed:

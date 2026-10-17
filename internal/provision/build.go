@@ -13,6 +13,9 @@ import (
 // BuildArtifacts generates provision artifacts for a machine.
 // This is a pure function with no side effects.
 func BuildArtifacts(m machine.Machine, bootBaseURL string, sshKeys []sshkey.SSHKey) (artifacts map[string]string, installCfg string, err error) {
+	if strings.EqualFold(strings.TrimSpace(string(m.OSPreset.Family)), "windows") {
+		return nil, "", fmt.Errorf("Windows deployment uses the dedicated WinPE path; Linux provisioning artifacts are unsupported")
+	}
 	baseURL := strings.TrimRight(bootBaseURL, "/")
 	prefix := fmt.Sprintf("%s/assets/%s", baseURL, m.Name)
 	artifacts = map[string]string{}

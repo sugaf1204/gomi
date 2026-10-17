@@ -50,6 +50,9 @@ func (h *Handler) PXEDeployEvents(c echo.Context) error {
 		}
 		return c.JSON(status, jsonErrorErr(err))
 	}
+	if target.PXEInstallType() == resource.InstallWindows {
+		return c.JSON(gohttp.StatusConflict, jsonError("Windows requires the Windows state callback"))
+	}
 	var req deployEventRequest
 	if strings.HasPrefix(c.Request().Header.Get("Content-Type"), "application/x-www-form-urlencoded") {
 		req.Type = c.FormValue("type")

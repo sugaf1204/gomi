@@ -53,3 +53,10 @@ type IPAddressUpdater interface {
 type ChangeNotifier interface {
 	Subscribe(fn func())
 }
+
+// ProvisioningAttemptUpdater conditionally commits a callback only while the
+// complete snapshot read by its caller remains current. False means retry the
+// request against fresh state; stale callbacks must never restore old attempts.
+type ProvisioningAttemptUpdater interface {
+	UpdateProvisioningAttempt(ctx context.Context, before, after Machine) (bool, error)
+}

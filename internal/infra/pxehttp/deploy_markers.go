@@ -18,6 +18,9 @@ func (h *Handler) appendMachineTimingOnce(ctx context.Context, m *machine.Machin
 	if m == nil || m.Provision == nil || !m.Provision.Active {
 		return
 	}
+	if m.PXEInstallType() == "windows" {
+		return
+	}
 	if hasProvisionTiming(m.Provision.Timings, timing.Name) {
 		return
 	}

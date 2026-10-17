@@ -68,6 +68,20 @@ func BuildDomainConfig(v VirtualMachine, domainName, bootDev, pxeBaseURL string,
 		}
 	}
 
+	if v.InstallCfg != nil && v.InstallCfg.Type == InstallConfigWindows {
+		// The installer reboots the same live QEMU process. Its firmware must
+		// already allow disk fallback; changing persistent XML alone cannot
+		// change the live network-only strict boot order after installation.
+		if bootDev == "network" {
+			cfg.BootFallback = "hd"
+		}
+		cfg.Firmware = "uefi"
+		cfg.TPM = true
+		cfg.NICModel = "e1000e"
+		cfg.DiskBus = "sata"
+		cfg.CPUMode = "host-passthrough"
+		cfg.SMBIOSSerial = ""
+	}
 	return cfg
 }
 

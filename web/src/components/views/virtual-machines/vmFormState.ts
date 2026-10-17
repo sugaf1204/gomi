@@ -274,3 +274,16 @@ export function buildVMLoginUserPayload(
     ...(password ? { password } : {})
   }
 }
+
+export function windowsVMFormDefaults(form: VMConfigForm) {
+  const minimum = (value: string, limit: number) => {
+    const parsed = Number(value)
+    return String(Math.max(Number.isFinite(parsed) ? parsed : 0, limit))
+  }
+  return {
+    cpuCores: minimum(form.cpuCores, 2),
+    memoryMB: minimum(form.memoryMB, 4096),
+    diskGB: minimum(form.diskGB, 64),
+    diskDriver: '', ioThreads: '', netMultiqueue: '',
+  }
+}

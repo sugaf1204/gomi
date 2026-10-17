@@ -185,6 +185,9 @@ func (s *Service) Reinstall(ctx context.Context, name, actor string, opts *Reins
 // PrepareReinstall validates and constructs an attempt without side effects.
 // Claim workflows persist it atomically with their ownership fence.
 func PrepareReinstall(m Machine, actor string, opts *ReinstallOptions, timeout time.Duration) (Machine, error) {
+	if opts != nil && opts.OSPreset != nil && strings.EqualFold(string(opts.OSPreset.Family), "windows") && !strings.EqualFold(string(m.OSPreset.Family), "windows") {
+		resetLinuxDeploymentForWindows(&m)
+	}
 	if opts != nil {
 		if opts.Hostname != nil {
 			m.Hostname = strings.TrimSpace(*opts.Hostname)

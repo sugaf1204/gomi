@@ -1,4 +1,5 @@
-import { supportsDeploymentTarget } from '../../../lib/osImages'
+import { WindowsDeployNotice } from '../WindowsDeployNotice'
+import { isWindowsImage, windowsFormDefaults, supportsDeploymentTarget } from '../../../lib/osImages'
 import type { CloudInitTemplate, OSImage, PowerType, SSHKey, Subnet } from '../../../types'
 import { SSHAccessFieldset } from '../SSHAccessFieldset'
 import type { CloudInitInputMode, MachineFormState, UpdateMachineForm } from './machineFormState'
@@ -15,6 +16,7 @@ type MachineSpecFieldsProps = {
 }
 
 export function MachineSpecFields({ formState, updateForm, radioName, osImages, cloudInits, sshKeys, subnets, onRefresh }: MachineSpecFieldsProps) {
+  const windows = isWindowsImage(osImages.find((image) => image.name === formState.imageRef))
   return (
     <>
       <label className="text-[0.84rem]">
@@ -54,14 +56,14 @@ export function MachineSpecFields({ formState, updateForm, radioName, osImages, 
         </label>
         <label className="text-[0.84rem]">
           Firmware
-          <select value={formState.firmware} onChange={(e) => updateForm((current) => ({ ...current, firmware: e.target.value as 'uefi' | 'bios' }))}>
+          <select disabled={windows} value={formState.firmware} onChange={(e) => updateForm((current) => ({ ...current, firmware: e.target.value as 'uefi' | 'bios' }))}>
             <option value="uefi">UEFI</option>
             <option value="bios">BIOS</option>
           </select>
         </label>
       </div>
       <label className="text-[0.84rem] flex items-center gap-2 cursor-pointer select-none">
-        <input type="checkbox" checked={formState.isHypervisor} onChange={(e) => updateForm((current) => ({ ...current, isHypervisor: e.target.checked }))} />
+        <input type="checkbox" disabled={windows} checked={formState.isHypervisor} onChange={(e) => updateForm((current) => ({ ...current, isHypervisor: e.target.checked }))} />
         Register as Hypervisor
       </label>
       {formState.isHypervisor && (
@@ -74,21 +76,23 @@ export function MachineSpecFields({ formState, updateForm, radioName, osImages, 
         OS Image
         <select value={formState.imageRef} onChange={(e) => {
           const selected = osImages.find((img) => img.name === e.target.value)
-          updateForm((current) => ({ ...current, imageRef: e.target.value, osFamily: selected?.osFamily || '', osVersion: selected?.osVersion || '' }))
+          updateForm((current) => ({ ...current, imageRef: e.target.value, osFamily: selected?.osFamily || '', osVersion: selected?.osVersion || '', ...(isWindowsImage(selected) ? { ...windowsFormDefaults(), firmware: 'uefi' as const, isHypervisor: false, targetDisk: '' } : {}) }))
         }}>
           <option value="">None</option>
           {osImages.filter((img) => supportsDeploymentTarget(img, 'baremetal')).map((img) => (
-            <option key={img.name} value={img.name}>{img.name} ({img.osFamily} {img.osVersion}{img.variant ? ` ${img.variant}` : ''})</option>
+            <option key={img.name} value={img.name} disabled={!img.ready}>{img.name} ({img.osFamily} {img.osVersion}{img.variant ? ` ${img.variant}` : ''})</option>
           ))}
         </select>
       </label>
-      <label className="text-[0.84rem]">
+      {!windows && <label className="text-[0.84rem]">
         Target Disk <span className="text-ink-soft">(optional)</span>
         <input value={formState.targetDisk} onChange={(e) => updateForm((current) => ({ ...current, targetDisk: e.target.value }))} placeholder="/dev/disk/by-id/..." />
-      </label>
+      </label>}
+      {windows ? <WindowsDeployNotice /> : <>
       <CloudInitFields formState={formState} updateForm={updateForm} cloudInits={cloudInits} />
       <SSHAccessFieldset sshKeys={sshKeys} value={formState} onChange={(updater) => updateForm((current) => ({ ...current, ...updater(current) }))} onRefresh={onRefresh} />
-      <NetworkFields formState={formState} updateForm={updateForm} radioName={radioName} subnets={subnets} />
+      </>}
+      <NetworkFields windows={windows} formState={formState} updateForm={updateForm} radioName={radioName} subnets={subnets} />
     </>
   )
 }
@@ -150,7 +154,7 @@ function CloudInitFields({ formState, updateForm, cloudInits }: { formState: Mac
   )
 }
 
-function NetworkFields({ formState, updateForm, radioName, subnets }: { formState: MachineFormState; updateForm: UpdateMachineForm; radioName: string; subnets: Subnet[] }) {
+function NetworkFields({ formState, updateForm, radioName, subnets, windows }: { windows: boolean; formState: MachineFormState; updateForm: UpdateMachineForm; radioName: string; subnets: Subnet[] }) {
   return (
     <>
       <label className="text-[0.84rem]">
@@ -169,7 +173,7 @@ function NetworkFields({ formState, updateForm, radioName, subnets }: { formStat
           <div className="flex items-center gap-[0.8rem] text-[0.84rem]">
             <span>IP Assignment:</span>
             <label className="flex items-center gap-1 cursor-pointer"><input type="radio" name={`${radioName}-ip-assignment`} checked={formState.ipAssignment === 'dhcp'} onChange={() => updateForm((current) => ({ ...current, ipAssignment: 'dhcp' }))} />DHCP</label>
-            <label className="flex items-center gap-1 cursor-pointer"><input type="radio" name={`${radioName}-ip-assignment`} checked={formState.ipAssignment === 'static'} onChange={() => updateForm((current) => ({ ...current, ipAssignment: 'static' }))} />Static</label>
+            <label className="flex items-center gap-1 cursor-pointer"><input type="radio" name={`${radioName}-ip-assignment`} disabled={windows} checked={formState.ipAssignment === 'static'} onChange={() => updateForm((current) => ({ ...current, ipAssignment: 'static' }))} />Static</label>
           </div>
           {formState.ipAssignment === 'static' && <label className="text-[0.84rem]">Static IP<input value={formState.staticIP} onChange={(e) => updateForm((current) => ({ ...current, staticIP: e.target.value }))} placeholder="e.g. 10.0.0.50" /></label>}
           <label className="text-[0.84rem]">Domain<input value={formState.domain} onChange={(e) => updateForm((current) => ({ ...current, domain: e.target.value }))} placeholder="e.g. example.local" /></label>

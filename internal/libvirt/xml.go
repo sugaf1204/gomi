@@ -46,9 +46,11 @@ type xmlMemory struct {
 }
 
 type xmlOS struct {
-	Type   xmlOSType  `xml:"type"`
-	Boot   xmlBoot    `xml:"boot"`
-	SMBIOS *xmlSMBIOS `xml:"smbios,omitempty"`
+	FirmwareConfig *xmlFirmware `xml:"firmware,omitempty"`
+	Firmware       string       `xml:"firmware,attr,omitempty"`
+	Type           xmlOSType    `xml:"type"`
+	Boot           []xmlBoot    `xml:"boot"`
+	SMBIOS         *xmlSMBIOS   `xml:"smbios,omitempty"`
 }
 
 type xmlOSType struct {
@@ -80,6 +82,7 @@ type xmlSysInfoEntry struct {
 }
 
 type xmlDevices struct {
+	TPM         *xmlTPM         `xml:"tpm,omitempty"`
 	Controllers []xmlController `xml:"controller,omitempty"`
 	Disks       []xmlDisk       `xml:"disk"`
 	Interfaces  []xmlInterface  `xml:"interface"`
@@ -197,15 +200,26 @@ func GenerateDomainXML(cfg DomainConfig) (string, error) {
 				Machine: "pc",
 				Value:   "hvm",
 			},
-			Boot: xmlBoot{Dev: func() string {
+			Boot: []xmlBoot{{Dev: func() string {
 				if cfg.BootDev != "" {
 					return cfg.BootDev
 				}
 				return "hd"
-			}()},
+			}()}},
 		},
 	}
 
+	if cfg.BootFallback != "" {
+		domain.OS.Boot = append(domain.OS.Boot, xmlBoot{Dev: cfg.BootFallback})
+	}
+	if cfg.Firmware == "uefi" {
+		domain.OS.Firmware = "efi"
+		domain.OS.FirmwareConfig = &xmlFirmware{Features: []xmlFirmwareFeature{{Enabled: "no", Name: "secure-boot"}}}
+		domain.OS.Type.Machine = "q35"
+	}
+	if cfg.TPM {
+		domain.Devices.TPM = &xmlTPM{Model: "tpm-crb", Backend: xmlTPMBackend{Type: "emulator", Version: "2.0"}}
+	}
 	if cfg.SMBIOSSerial != "" {
 		domain.OS.SMBIOS = &xmlSMBIOS{Mode: "sysinfo"}
 		domain.SysInfo = &xmlSysInfo{
@@ -285,6 +299,9 @@ func GenerateDomainXML(cfg DomainConfig) (string, error) {
 			Type:   "bridge",
 			Source: xmlIfSource{Bridge: net.Bridge},
 			Model:  xmlModel{Type: "virtio"},
+		}
+		if cfg.NICModel != "" {
+			iface.Model.Type = cfg.NICModel
 		}
 		if net.MAC != "" {
 			iface.MAC = &xmlMAC{Address: net.MAC}
