@@ -45,6 +45,11 @@ func ValidateMachine(m Machine) error {
 	if err := resource.ValidateIPAssignment(m.IPAssignment, m.IP); err != nil {
 		return err
 	}
+	if strings.EqualFold(string(m.OSPreset.Family), "windows") {
+		if err := validateWindowsTarget(m); err != nil {
+			return err
+		}
+	}
 	if err := ValidateLoginUser(m.LoginUser); err != nil {
 		return err
 	}

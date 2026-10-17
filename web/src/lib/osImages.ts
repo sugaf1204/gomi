@@ -12,6 +12,8 @@ export function supportsDeploymentTarget(image: OSImage, target: DeploymentTarge
     return targets.includes(target)
   }
   const format = effectiveImageFormat(image)
+  if (format === 'wim') return isWindowsImage(image) && Boolean(image.manifest?.windows)
+  if (isWindowsImage(image)) return false
   if (target === 'vm') {
     return format === 'qcow2' && (!image.variant || image.variant === 'cloud')
   }
@@ -23,4 +25,17 @@ export function supportsDeploymentTarget(image: OSImage, target: DeploymentTarge
     return Boolean(image.manifest?.root?.path)
   }
   return false
+}
+
+export function isWindowsImage(image?: OSImage): boolean {
+  return image?.osFamily.toLowerCase() === 'windows'
+}
+
+// Clear Linux-only settings when switching an existing form to Windows.
+export function windowsFormDefaults() {
+  return {
+    cloudInitMode: 'none' as const, cloudInitExistingRef: '', cloudInitTemplateName: '', cloudInitUserData: '',
+    sshKeyRefs: [], loginUserUsername: '', loginUserPassword: '', loginUserPasswordTouched: true,
+    ipAssignment: 'dhcp' as const, staticIP: '',
+  }
 }

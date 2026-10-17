@@ -289,7 +289,7 @@ export type OSImage = {
   osFamily: string
   osVersion: string
   arch: string
-  format: 'qcow2' | 'squashfs'
+  format: 'qcow2' | 'squashfs' | 'wim'
   variant?: 'cloud' | 'baremetal' | 'server' | 'desktop'
   source: 'upload' | 'url'
   url?: string
@@ -313,13 +313,17 @@ export type OSImageManifest = {
   capabilities?: {
     deployTargets?: ('vm' | 'baremetal')[]
   }
+  windows?: {
+    imageIndex: number
+    winPE: { wimboot: string; bcd: string; bootSDI: string; bootWIM: string }
+  }
   cloudInit?: {
     datasource?: string
     seedTransport?: string
     defaultUser?: string
   }
   root?: {
-    format?: 'qcow2' | 'squashfs'
+    format?: 'qcow2' | 'squashfs' | 'wim'
     path?: string
     compression?: string
     sha256?: string

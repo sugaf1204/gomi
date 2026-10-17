@@ -23,11 +23,11 @@ func ValidateOSImage(img OSImage) error {
 	if strings.TrimSpace(img.OSVersion) == "" {
 		return ErrInvalidOSVersion
 	}
-	if img.Format != "" && img.Format != FormatQCOW2 && img.Format != FormatSquashFS {
+	if img.Format != "" && img.Format != FormatQCOW2 && img.Format != FormatSquashFS && img.Format != FormatWIM {
 		return fmt.Errorf("unsupported format: %s", img.Format)
 	}
 	format := EffectiveImageFormat(img)
-	if format != "" && format != FormatQCOW2 && format != FormatSquashFS {
+	if format != "" && format != FormatQCOW2 && format != FormatSquashFS && format != FormatWIM {
 		return fmt.Errorf("unsupported format: %s", format)
 	}
 	if img.Manifest != nil {
@@ -39,7 +39,7 @@ func ValidateOSImage(img OSImage) error {
 			}
 		}
 	}
-	if format != FormatQCOW2 && manifestDeclaresDeploymentTarget(img.Manifest, DeploymentTargetVM) {
+	if format != FormatQCOW2 && format != FormatWIM && manifestDeclaresDeploymentTarget(img.Manifest, DeploymentTargetVM) {
 		return fmt.Errorf("deployment target %s requires qcow2 image, got %s", DeploymentTargetVM, format)
 	}
 	if img.Source != "" && img.Source != SourceUpload && img.Source != SourceURL {
@@ -69,7 +69,7 @@ func ValidateOSImage(img OSImage) error {
 			return errors.New("manifest.root.path is required for bare-metal squashfs images")
 		}
 	}
-	return nil
+	return validateWindowsImage(img)
 }
 
 func validateBareMetalQCOW2ModuleMetadata(img OSImage) error {

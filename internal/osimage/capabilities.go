@@ -16,6 +16,9 @@ func SupportsDeploymentTarget(img OSImage, target DeploymentTarget) bool {
 	}
 
 	format := EffectiveImageFormat(img)
+	if format == FormatWIM {
+		return strings.EqualFold(img.OSFamily, "windows") && img.Manifest != nil && img.Manifest.Windows != nil && (target == DeploymentTargetVM || target == DeploymentTargetBareMetal)
+	}
 	switch target {
 	case DeploymentTargetVM:
 		return format == FormatQCOW2 && (img.Variant == "" || img.Variant == VariantCloud)

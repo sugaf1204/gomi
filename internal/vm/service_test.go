@@ -676,3 +676,23 @@ func TestMarkMissingSkipsDeployInFlight(t *testing.T) {
 		t.Fatalf("expected in-flight deploy window to survive stale not-found, got phase=%s provisioning=%+v", after.Phase, after.Provisioning)
 	}
 }
+
+func TestWindowsDeployStatusPreservesInstallClaims(t *testing.T) {
+	ctx := context.Background()
+	backend := memory.New()
+	svc := vm.NewService(backend.VMs())
+	armed := vm.ProvisioningStatus{Active: true, CompletionToken: "token", AttemptID: "attempt"}
+	current := vm.VirtualMachine{Name: "win-test", InstallCfg: &vm.InstallConfig{Type: vm.InstallConfigWindows}, Provisioning: armed}
+	current.Provisioning.WindowsInstallStarted = true
+	current.Provisioning.ImageApplied = true
+	if err := svc.Store().Upsert(ctx, current); err != nil {
+		t.Fatal(err)
+	}
+	updated, err := svc.UpdateDeployStatus(ctx, current.Name, vm.PhaseProvisioning, "create+pxe", armed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !updated.Provisioning.WindowsInstallStarted || !updated.Provisioning.ImageApplied {
+		t.Fatal("deploy unwind erased install guard")
+	}
+}

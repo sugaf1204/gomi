@@ -5,6 +5,9 @@ import "fmt"
 // DomainConfig holds all parameters needed to define a libvirt domain.
 type DomainConfig struct {
 	Name         string
+	Firmware     string // uefi selects libvirt firmware auto-selection
+	TPM          bool   // software TPM 2.0 for Windows
+	NICModel     string // virtio default, e1000e for inbox Windows driver
 	VCPU         int
 	MemoryMB     int
 	DiskPath     string // path to the OS image on the hypervisor
@@ -13,6 +16,7 @@ type DomainConfig struct {
 	Networks     []NetworkConfig
 	CloudInit    string         // path to cloud-init ISO on the hypervisor (optional)
 	BootDev      string         // "hd" (default) or "network" (PXE)
+	BootFallback string         // optional secondary boot device, e.g. Windows disk after PXE
 	SMBIOSSerial string         // optional NoCloud line config (e.g. ds=nocloud;s=http://...)
 	CPUPinning   map[int]string // vCPU→pCPU mapping (e.g. 0:"0", 1:"2")
 	CPUMode      string         // libvirt CPU mode: host-passthrough, host-model, maximum
@@ -85,6 +89,27 @@ func (c DomainConfig) Validate() error {
 	}
 	if c.DiskFormat != "qcow2" {
 		return fmt.Errorf("unsupported disk format: %s (must be qcow2)", c.DiskFormat)
+	}
+	if c.Firmware != "" && c.Firmware != "uefi" {
+		return fmt.Errorf("unsupported firmware: %s", c.Firmware)
+	}
+	if c.TPM && c.Firmware != "uefi" {
+		return fmt.Errorf("TPM requires UEFI")
+	}
+	if c.NICModel != "" && c.NICModel != "virtio" && c.NICModel != "e1000e" {
+		return fmt.Errorf("unsupported NIC model: %s", c.NICModel)
+	}
+	if c.BootFallback != "" {
+		if c.BootFallback != "hd" && c.BootFallback != "network" {
+			return fmt.Errorf("unsupported boot fallback: %s", c.BootFallback)
+		}
+		primary := c.BootDev
+		if primary == "" {
+			primary = "hd"
+		}
+		if c.BootFallback == primary {
+			return fmt.Errorf("boot fallback must differ from primary boot device")
+		}
 	}
 	switch c.CPUMode {
 	case "", "host-passthrough", "host-model", "maximum":

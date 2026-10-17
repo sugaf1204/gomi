@@ -50,7 +50,7 @@ func ValidateVirtualMachine(v VirtualMachine) error {
 		cfgType := strings.TrimSpace(string(v.InstallCfg.Type))
 		if cfgType != "" {
 			switch InstallConfigType(cfgType) {
-			case InstallConfigPreseed, InstallConfigCurtin:
+			case InstallConfigPreseed, InstallConfigCurtin, InstallConfigWindows:
 			default:
 				return fmt.Errorf("unsupported installConfig.type: %s", cfgType)
 			}

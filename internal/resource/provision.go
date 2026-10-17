@@ -9,6 +9,7 @@ import (
 type InstallType string
 
 const (
+	InstallWindows InstallType = "windows"
 	InstallPreseed InstallType = "preseed"
 	InstallCurtin  InstallType = "curtin"
 )

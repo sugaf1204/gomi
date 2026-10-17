@@ -72,7 +72,7 @@ func parseDomainGraphicsFromXML(raw string) (*GraphicsInfo, error) {
 
 var (
 	bootTagPattern = regexp.MustCompile(`<boot\s+dev=['"][^'"]+['"]\s*(?:/>|></boot>)`)
-	osTagPattern   = regexp.MustCompile(`(?s)<os>.*?</os>`)
+	osTagPattern   = regexp.MustCompile(`(?s)<os(?:\s[^>]*)?>.*?</os>`)
 )
 
 func rewriteDomainBootDeviceXML(rawXML string, bootDev string) (string, error) {
@@ -89,8 +89,11 @@ func rewriteDomainBootDeviceXML(rawXML string, bootDev string) (string, error) {
 	osSection := rawXML[osLoc[0]:osLoc[1]]
 	newBootTag := fmt.Sprintf("<boot dev='%s'/>", bootDev)
 
-	if bootTagPattern.MatchString(osSection) {
-		updatedOS := bootTagPattern.ReplaceAllString(osSection, newBootTag)
+	if first := bootTagPattern.FindStringIndex(osSection); first != nil {
+		// A domain can initially allow PXE followed by disk boot. Replacing
+		// every tag would leave duplicate devices, which libvirt rejects.
+		updatedOS := bootTagPattern.ReplaceAllString(osSection, "")
+		updatedOS = updatedOS[:first[0]] + newBootTag + updatedOS[first[0]:]
 		return rawXML[:osLoc[0]] + updatedOS + rawXML[osLoc[1]:], nil
 	}
 

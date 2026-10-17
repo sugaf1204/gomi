@@ -208,3 +208,26 @@ Keep the architecture open so the GOMI server itself can run on macOS in the
 future, not only on Linux. This goal is limited to server runtime support; OS
 image build and other Linux-specific artifact build workflows do not need to
 run on macOS.
+
+## 27. Windows PXE deployment
+
+Initial implementation: amd64 UEFI, typed WIM/WinPE artifacts, separate DISM
+deployment path for VM and Machine, interactive OOBE and manual activation.
+Product-key injection and activation management are not implemented. A single
+fixed target disk and DHCP are required. Install-started and image-applied
+markers prevent automatic destructive replay after interrupted deployment;
+retry requires an explicit new deployment attempt.
+
+Code/API/UI tests cover the new contracts and existing Linux regression paths.
+The isolated node1 KVM lab has a verified official evaluation ISO and an
+ADK-built PowerShell WinPE. Artifact checksums and actual Windows PowerShell
+syntax validation passed. Final Machine and VM attempts completed normal PXE,
+interactive OOBE, real callbacks without an extra restart, and two post-completion
+boots/logins each. The Windows manual-key entry dialog was also verified.
+The VM checks include clean Windows shutdown followed by normal GOMI API start.
+Clock correction during OOBE is handled by event-based completion retries.
+All Go tests, 266 frontend tests, the frontend build, and native Windows task/XML
+and callback cleanup tests passed. Live coverage is Windows 11 Enterprise
+Evaluation build 26300 on KVM; permanent activation with a product key remains
+unverified. Evidence and lab access are in `tests/lab/ansible/WINDOWS_NODE1.md`.
+See `windows/README.md` and `tests/lab/ansible/WINDOWS.md` for the procedure.

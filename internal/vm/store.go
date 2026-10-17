@@ -70,3 +70,9 @@ type PageLister interface {
 type ChangeNotifier interface {
 	Subscribe(fn func())
 }
+
+// ProvisioningAttemptUpdater atomically rejects callbacks from a stale attempt
+// or stale installation stage, including records deleted and recreated.
+type ProvisioningAttemptUpdater interface {
+	UpdateProvisioningAttempt(ctx context.Context, before, after VirtualMachine) (bool, error)
+}

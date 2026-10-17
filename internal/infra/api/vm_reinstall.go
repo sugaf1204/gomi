@@ -67,6 +67,11 @@ func (s *Server) ReinstallVM(c echo.Context) error {
 			}
 		}
 	}
+	if req.OSImageRef != "" && req.OSImageRef != current.OSImageRef {
+		if img, err := s.osimages.Get(ctx, req.OSImageRef); err == nil && strings.EqualFold(img.OSFamily, "windows") {
+			resetLinuxVMForWindows(&current)
+		}
+	}
 	applyReinstallSpec(&current, &req)
 	ensureVMNetwork(&current)
 	resolveVMBridgeFromHypervisor(ctx, &current, s.hypervisors)
@@ -91,12 +96,17 @@ func (s *Server) ReinstallVM(c echo.Context) error {
 	if err != nil {
 		return c.JSON(gohttp.StatusInternalServerError, jsonError("failed to issue provisioning token"))
 	}
+	attemptID, err := resource.GenerateProvisioningAttemptID()
+	if err != nil {
+		return c.JSON(gohttp.StatusInternalServerError, jsonError("failed to issue provisioning attempt"))
+	}
 	now := time.Now().UTC()
 	current.Phase = vm.PhaseProvisioning
 	current.LastPowerAction = "redeploy"
 	current.LastError = ""
 	current.MissingSince = nil
 	current.Provisioning = vm.ProvisioningStatus{
+		AttemptID:       attemptID,
 		Active:          true,
 		StartedAt:       httputil.TimePtr(now),
 		DeadlineAt:      httputil.TimePtr(now.Add(s.provisionTimeout)),
@@ -319,6 +329,9 @@ func (s *Server) applyInstallConfigByOSImage(ctx context.Context, v *vm.VirtualM
 			return fmt.Errorf("referenced osImageRef not found: %s", ref)
 		}
 		return err
+	}
+	if strings.EqualFold(img.OSFamily, "windows") {
+		return applyWindowsVMImage(v, img)
 	}
 	if format := effectiveVMCloudImageFormat(img); format != osimage.FormatQCOW2 {
 		return fmt.Errorf("cloudimage deployment requires qcow2 OS image, got %s", format)

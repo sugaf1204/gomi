@@ -3,6 +3,7 @@ package vm
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/sugaf1204/gomi/internal/resource"
@@ -122,6 +123,7 @@ func (s *Service) UpdateDeployStatus(ctx context.Context, name string, phase Pha
 	if err != nil {
 		return VirtualMachine{}, err
 	}
+	before := v
 	// A different stored completion token means a newer deploy has armed its
 	// own provisioning window since this deploy started; the stale snapshot
 	// must not clobber it.
@@ -160,12 +162,27 @@ func (s *Service) UpdateDeployStatus(ctx context.Context, name string, phase Pha
 	if v.Provisioning.DeadlineAt != nil && (provisioning.DeadlineAt == nil || v.Provisioning.DeadlineAt.After(*provisioning.DeadlineAt)) {
 		provisioning.DeadlineAt = v.Provisioning.DeadlineAt
 	}
+	// Installation claims and applied-image markers are monotonic within an attempt.
+	provisioning.WindowsInstallStarted = provisioning.WindowsInstallStarted || v.Provisioning.WindowsInstallStarted
+	provisioning.ImageApplied = provisioning.ImageApplied || v.Provisioning.ImageApplied
 	v.Phase = phase
 	v.LastPowerAction = lastAction
 	v.LastError = ""
 	v.Provisioning = provisioning
 	v.UpdatedAt = time.Now().UTC()
-	written, err := writeExisting(ctx, s.store, v)
+	var written bool
+	if v.InstallCfg != nil && v.InstallCfg.Type == InstallConfigWindows {
+		updater, ok := s.store.(ProvisioningAttemptUpdater)
+		if !ok {
+			return VirtualMachine{}, fmt.Errorf("store does not support atomic Windows provisioning updates")
+		}
+		written, err = updater.UpdateProvisioningAttempt(ctx, before, v)
+		if err == nil && !written {
+			return s.store.Get(ctx, name)
+		}
+	} else {
+		written, err = writeExisting(ctx, s.store, v)
+	}
 	if err != nil {
 		return VirtualMachine{}, err
 	}

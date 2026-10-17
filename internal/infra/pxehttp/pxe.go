@@ -37,6 +37,15 @@ func (h *Handler) PXEBootScript(c echo.Context) error {
 	}
 
 	mac := normalizeMAC(rawMAC)
+	if target.installType == vm.InstallConfigWindows {
+		script, err := h.renderWindowsBoot(ctx, base, target)
+		if err != nil {
+			return err
+		}
+		h.recordPXEBootScriptMarker(ctx, target, true)
+		c.Response().Header().Set("Cache-Control", "no-store")
+		return c.Blob(gohttp.StatusOK, "text/plain; charset=utf-8", []byte(script))
+	}
 	token := pxeTargetToken(target)
 	completeURL := buildPXEInstallCompleteURL(base, token, target.installType)
 	script := renderPXEInstallScriptWithVariant(base, target.installType, mac, completeURL, target.variant, target.node)
@@ -49,6 +58,9 @@ func (h *Handler) PXEPreseed(c echo.Context) error {
 	target, _, err := h.resolvePXETarget(c.Request().Context(), rawMAC)
 	if err != nil {
 		return c.JSON(gohttp.StatusInternalServerError, jsonErrorErr(err))
+	}
+	if target.installType == vm.InstallConfigWindows {
+		return c.JSON(gohttp.StatusBadRequest, jsonError("Windows deployment does not support preseed"))
 	}
 
 	base := h.resolvePXEBaseURL(c)
@@ -80,6 +92,9 @@ func (h *Handler) renderNoCloudUserData(ctx context.Context, rawMAC, base string
 	target, _, err := h.resolvePXETarget(ctx, rawMAC)
 	if err != nil {
 		return "", err
+	}
+	if target.installType == vm.InstallConfigWindows {
+		return "", fmt.Errorf("Windows deployment does not support cloud-init")
 	}
 
 	token := pxeTargetToken(target)

@@ -33,6 +33,9 @@ func (h *Handler) requireProvisioningMachine(ctx context.Context, token string) 
 	if !target.Provision.Active {
 		return nil, resource.ErrNotFound
 	}
+	if target.PXEInstallType() == resource.InstallWindows {
+		return nil, resource.ErrNotFound
+	}
 	return target, nil
 }
 
