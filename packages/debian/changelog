@@ -1,3 +1,14 @@
+gomi (0.0.49) unstable; urgency=medium
+
+  * Add Windows amd64 UEFI PXE deployment using uploaded WIM and WinPE assets,
+    interactive initial setup, and manual product-key entry after deployment.
+  * Fence destructive installation attempts and report completion only after
+    Windows OOBE, with event-based retries that tolerate clock correction.
+  * Support Windows VM UEFI/TPM/SATA devices and recoverable media uploads.
+  * Preserve Linux deployment paths and handle older libvirt TPM/NVRAM cleanup.
+
+ -- sugaf1204 <sugaf1204@example.invalid>  Sun, 18 Oct 2026 02:30:00 +0900
+
 gomi (0.0.48) unstable; urgency=high
 
   * Build the UEFI local-boot GRUB image with its normal configuration
