@@ -1,3 +1,4 @@
+import { ResourceWorkspace } from '../../ui/ResourceWorkspace'
 import type { Dispatch, RefObject, SetStateAction } from 'react'
 import clsx from 'clsx'
 import type { GroupBy, GuardedAction, MachineTab } from '../../../app-types'
@@ -50,10 +51,9 @@ type MachinesWorkspaceProps = {
 
 export function MachinesWorkspace(props: MachinesWorkspaceProps) {
   return (
-    <section className="h-full min-h-0 grid grid-cols-1 md:grid-cols-[352px_minmax(0,1fr)]">
-      <MachineListColumn {...props} />
+    <ResourceWorkspace index={<MachineListColumn {...props} />}>
       <MachineDetailPane {...props} />
-    </section>
+    </ResourceWorkspace>
   )
 }
 

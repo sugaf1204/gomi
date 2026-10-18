@@ -1,3 +1,4 @@
+import { clusterAPIHandlers } from './clusterAPI'
 import { http, HttpResponse } from 'msw'
 import { auditEvents, dnsRecords, hypervisors, machines, subnets, virtualMachines } from './fixtures'
 
@@ -14,6 +15,7 @@ function customMethodName(url: string, method: string) {
 }
 
 export const handlers = [
+  ...clusterAPIHandlers,
   http.post(`${API_BASE}/auth/login`, () => {
     return HttpResponse.json({ token: 'mock-token-abc123' })
   }),

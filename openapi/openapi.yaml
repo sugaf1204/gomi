@@ -22,6 +22,7 @@ tags:
   - name: users
   - name: service-accounts
   - name: bare-metal
+  - name: cluster-api
 
 paths:
   /capabilities:
@@ -153,6 +154,85 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
+
+  /cluster-api:
+    get:
+      summary: Observe Cluster API management resources
+      description: Returns a credential-free projection. Configured is false when the integration is disabled.
+      tags: [cluster-api]
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Current resource observation
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ClusterAPISnapshot'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '502':
+          description: Management-cluster request failed
+
+  /cluster-api/{namespace}/{resource}/{name}:
+    patch:
+      summary: Change worker count or pause cluster reconciliation
+      description: >-
+        Requires operator or admin. Exactly one of replicas or paused is required.
+        Replicas applies only to standalone, unpaused MachineDeployments without
+        autoscaler ownership. Paused applies only to Clusters. UID and resourceVersion
+        must match the observed resource. Updates are asynchronous desired-state changes.
+      tags: [cluster-api]
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: namespace
+          required: true
+          schema:
+            type: string
+        - in: path
+          name: resource
+          required: true
+          schema:
+            type: string
+            enum: [clusters, machinedeployments]
+        - in: path
+          name: name
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ClusterAPIChange'
+      responses:
+        '200':
+          description: Updated desired state; reconciliation may still be pending
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ClusterAPIResource'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Resource changed; refresh and review before retrying
+        '502':
+          description: Management-cluster request failed
+        '503':
+          description: Cluster API integration is not configured
 
   /system-info:
     get:
@@ -1585,6 +1665,113 @@ components:
             $ref: '#/components/schemas/ErrorResponse'
 
   schemas:
+    ClusterAPISnapshot:
+      type: object
+      required: [configured, observedAt, resources]
+      properties:
+        configured:
+          type: boolean
+        context:
+          type: string
+        namespace:
+          type: string
+          description: Omitted when all namespaces are in scope.
+        observedAt:
+          type: string
+          format: date-time
+        resources:
+          type: array
+          items:
+            $ref: '#/components/schemas/ClusterAPIResource'
+
+    ClusterAPIChange:
+      type: object
+      additionalProperties: false
+      required: [apiVersion, uid, resourceVersion]
+      oneOf:
+        - required: [replicas]
+        - required: [paused]
+      properties:
+        apiVersion:
+          type: string
+          enum: [cluster.x-k8s.io/v1beta1, cluster.x-k8s.io/v1beta2]
+        uid:
+          type: string
+          minLength: 1
+        resourceVersion:
+          type: string
+          minLength: 1
+        replicas:
+          type: integer
+          format: int32
+          minimum: 0
+        paused:
+          type: boolean
+
+    ClusterAPIResource:
+      type: object
+      required: [generation, resource, apiVersion, namespace, name, uid, resourceVersion, paused, deleting, topology, autoscaled, conditions]
+      properties:
+        generation:
+          type: integer
+          format: int64
+        resource:
+          type: string
+          enum: [clusters, machinedeployments, machines, kubeadmcontrolplanes]
+        apiVersion:
+          type: string
+        namespace:
+          type: string
+        name:
+          type: string
+        uid:
+          type: string
+        resourceVersion:
+          type: string
+        clusterName:
+          type: string
+        phase:
+          type: string
+        version:
+          type: string
+        replicas:
+          type: integer
+          format: int64
+        readyReplicas:
+          type: integer
+          format: int64
+        paused:
+          type: boolean
+        deleting:
+          type: boolean
+        topology:
+          type: boolean
+        autoscaled:
+          type: boolean
+        nodeName:
+          type: string
+        providerID:
+          type: string
+        infrastructureName:
+          type: string
+        conditions:
+          type: array
+          items:
+            type: object
+            required: [type, status]
+            properties:
+              type:
+                type: string
+              status:
+                type: string
+              reason:
+                type: string
+              message:
+                type: string
+              observedGeneration:
+                type: integer
+                format: int64
+
     ErrorResponse:
       type: object
       required: [error]

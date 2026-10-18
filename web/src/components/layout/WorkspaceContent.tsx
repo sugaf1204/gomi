@@ -1,3 +1,4 @@
+import { ClusterAPIView, type ClusterAPIViewProps } from '../views/ClusterAPIView'
 import clsx from 'clsx'
 import type { View } from '../../app-types'
 import { ActivityView, type ActivityViewProps } from '../views/ActivityView'
@@ -14,6 +15,7 @@ import { WorkspaceHeader, type WorkspaceHeaderProps } from './WorkspaceHeader'
 
 export type WorkspaceContentProps = {
   view: View
+  clusterAPI: ClusterAPIViewProps
   header: WorkspaceHeaderProps
   machines: MachinesViewProps
   hypervisors: HypervisorsViewProps
@@ -29,6 +31,7 @@ export type WorkspaceContentProps = {
 
 export function WorkspaceContent({
   view,
+  clusterAPI,
   header,
   machines,
   hypervisors,
@@ -43,13 +46,14 @@ export function WorkspaceContent({
 }: WorkspaceContentProps) {
   // Split views own their full height and scroll each column independently, so
   // the shell must not add padding or a scroll container around them.
-  const selfLayout = view === 'machines' || view === 'virtual-machines'
+  const selfLayout = view === 'machines' || view === 'virtual-machines' || view === 'cluster-api'
 
   return (
     <section className="workspace-shell h-screen grid grid-rows-[auto_minmax(0,1fr)] max-sm:h-auto">
       <WorkspaceHeader {...header} />
 
       <div className={clsx('min-h-0', selfLayout ? 'overflow-hidden' : 'overflow-y-auto p-[20px_22px] max-sm:p-[0.8rem]')}>
+        {view === 'cluster-api' && <ClusterAPIView {...clusterAPI} />}
         {view === 'machines' && <MachinesView {...machines} />}
         {view === 'hypervisors' && <HypervisorsView {...hypervisors} />}
         {view === 'virtual-machines' && <VirtualMachinesView {...virtualMachines} />}

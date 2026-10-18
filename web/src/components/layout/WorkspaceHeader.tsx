@@ -19,6 +19,7 @@ export type WorkspaceHeaderProps = {
 }
 
 const VIEW_COPY: Record<View, { title: string; description: string }> = {
+  'cluster-api': { title: 'Cluster API', description: 'Inspect clusters and manage desired state' },
   machines: { title: 'Bare-metal machines', description: 'Deploy, inspect, and control physical hosts' },
   hypervisors: { title: 'Hypervisors', description: 'Capacity and placement hosts for virtual machines' },
   'virtual-machines': { title: 'Virtual machines', description: 'Create and operate guest workloads' },

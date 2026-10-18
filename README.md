@@ -142,6 +142,8 @@ cluster prerequisites, supported scope, installation and tests.
 
 ---
 
+See [Cluster API workspace](docs/CLUSTER_API_UI.md) for the management UI and connection settings.
+
 ## Configuration
 
 The main config file is `/etc/gomi/gomi.yaml`. An annotated example is at [`packages/debian/gomi.yaml`](packages/debian/gomi.yaml).

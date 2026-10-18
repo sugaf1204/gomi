@@ -233,6 +233,9 @@ func TestLoadYAMLRejectsUnknownFields(t *testing.T) {
 func clearConfigEnv(t *testing.T) {
 	t.Helper()
 	for _, key := range []string{
+		"GOMI_CLUSTER_API_KUBECONFIG",
+		"GOMI_CLUSTER_API_CONTEXT",
+		"GOMI_CLUSTER_API_NAMESPACE",
 		"GOMI_DB_DRIVER",
 		"GOMI_DB_DSN",
 		"GOMI_LISTEN_ADDR",

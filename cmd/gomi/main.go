@@ -72,9 +72,16 @@ func runServer() {
 	bootenvSourceURL := flag.String("bootenv-source-url", envCfg.BootenvSourceURL, "Boot environment source URL or local artifact directory")
 	vmProvisionTimeout := flag.Duration("vm-provision-timeout", envCfg.ProvisionTimeout, "VM provisioning completion timeout")
 
+	clusterAPIKubeconfig := flag.String("cluster-api-kubeconfig", envCfg.ClusterAPIKubeconfig, "explicit management-cluster kubeconfig; empty disables Cluster API")
+	clusterAPIContext := flag.String("cluster-api-context", envCfg.ClusterAPIContext, "management-cluster kubeconfig context")
+	clusterAPINamespace := flag.String("cluster-api-namespace", envCfg.ClusterAPINamespace, "restrict Cluster API to this namespace; empty lists all namespaces")
+
 	flag.Parse()
 
 	cfg := config.Config{
+		ClusterAPIKubeconfig: *clusterAPIKubeconfig,
+		ClusterAPIContext:    *clusterAPIContext,
+		ClusterAPINamespace:  *clusterAPINamespace,
 		DBDriver:             *dbDriver,
 		DBDsn:                *dbDsn,
 		ListenAddr:           *listen,

@@ -1,5 +1,5 @@
-import clsx from 'clsx'
 import type { MachineTab } from '../../../app-types'
+import { ResourceSections } from '../../ui/ResourceSections'
 
 const tabs: { key: MachineTab; label: string }[] = [
   { key: 'overview', label: 'Overview' },
@@ -7,28 +7,8 @@ const tabs: { key: MachineTab; label: string }[] = [
   { key: 'config', label: 'Config' },
 ]
 
-type Props = {
-  activeTab: MachineTab
-  onTabChange: (tab: MachineTab) => void
-}
+type Props = { activeTab: MachineTab; onTabChange: (tab: MachineTab) => void }
 
 export function MachineTabBar({ activeTab, onTabChange }: Props) {
-  return (
-    <nav aria-label="Machine sections" className="flex flex-wrap gap-x-[0.2rem] gap-y-[0.15rem] border-b border-line">
-      {tabs.map(({ key, label }) => (
-        <button
-          key={key}
-          className={clsx(
-            'shrink-0 border-0 border-b-2 bg-transparent shadow-none py-2 px-[13px] text-[12px] font-medium hover:transform-none! hover:shadow-none! hover:text-ink max-sm:px-[0.55rem]',
-            activeTab === key
-              ? 'border-b-brand text-brand'
-              : 'border-b-transparent text-ink-soft hover:border-b-line-strong'
-          )}
-          onClick={() => onTabChange(key)}
-        >
-          {label}
-        </button>
-      ))}
-    </nav>
-  )
+  return <ResourceSections label="Machine sections" active={activeTab} items={tabs} onChange={onTabChange} />
 }

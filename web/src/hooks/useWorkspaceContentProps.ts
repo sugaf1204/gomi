@@ -151,10 +151,11 @@ export function useWorkspaceContentProps({
   const syncedAgo = useRelativeTime(lastSyncedAt)
 
   return {
+    clusterAPI: { canWrite: me?.role === 'admin' || me?.role === 'operator' },
     header: {
       view,
       selectedObject: headerSelectedObject(view, selectedMachine, selectedVirtualMachineRoute, selectedSubnet),
-      syncedLabel: syncedAgo ? `synced ${syncedAgo}` : undefined,
+      syncedLabel: view !== 'cluster-api' && syncedAgo ? `synced ${syncedAgo}` : undefined,
       appearance,
       onAppearanceChange: setAppearance
     },

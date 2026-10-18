@@ -1,3 +1,4 @@
+import type { ClusterAPISnapshot, ClusterAPIResource, ClusterAPIChange } from './components/views/cluster-api/types'
 import type { AuditEvent, BootEnvironmentStatus, CloudInitTemplate, DHCPLease, DNSRecord, HardwareInfo, Hypervisor, Machine, Me, OSImage, PowerConfig, ServiceAccount, SSHKey, Subnet, SystemInfo, VirtualMachine } from './types'
 
 const API_BASE = import.meta.env.VITE_API_BASE ?? `${window.location.origin}/api/v1`
@@ -184,6 +185,15 @@ function fromApiOSImage(input: NamedApi<OSImage, 'osImageId'>): OSImage {
 
 class ApiClient {
   private token: string | null = null
+
+  clusterAPI() {
+    return this.request<ClusterAPISnapshot>('/cluster-api')
+  }
+
+  changeClusterAPI(resource: ClusterAPIResource, change: ClusterAPIChange) {
+    const path = [resource.namespace, resource.resource, resource.name].map(encodeURIComponent).join('/')
+    return this.request<ClusterAPIResource>(`/cluster-api/${path}`, { method: 'PATCH', body: JSON.stringify(change) })
+  }
 
   setToken(token: string | null) {
     this.token = token

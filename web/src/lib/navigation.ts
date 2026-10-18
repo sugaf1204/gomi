@@ -18,6 +18,7 @@ export const NAV_GROUPS: NavGroup[] = [
       { view: 'machines', label: 'Machines' },
       { view: 'virtual-machines', label: 'Virtual Machines' },
       { view: 'hypervisors', label: 'Hypervisors' },
+      { view: 'cluster-api', label: 'Cluster API' },
     ],
   },
   {
