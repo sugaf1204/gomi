@@ -206,9 +206,9 @@ func Load(path string) (Config, error) {
 }
 
 func ApplyEnv(cfg *Config) {
-	cfg.ClusterAPIKubeconfig = readString("GOMI_CLUSTER_API_KUBECONFIG", cfg.ClusterAPIKubeconfig)
-	cfg.ClusterAPIContext = readString("GOMI_CLUSTER_API_CONTEXT", cfg.ClusterAPIContext)
-	cfg.ClusterAPINamespace = readString("GOMI_CLUSTER_API_NAMESPACE", cfg.ClusterAPINamespace)
+	cfg.ClusterAPIKubeconfig = readPresentString("GOMI_CLUSTER_API_KUBECONFIG", cfg.ClusterAPIKubeconfig)
+	cfg.ClusterAPIContext = readPresentString("GOMI_CLUSTER_API_CONTEXT", cfg.ClusterAPIContext)
+	cfg.ClusterAPINamespace = readPresentString("GOMI_CLUSTER_API_NAMESPACE", cfg.ClusterAPINamespace)
 	cfg.DBDriver = readString("GOMI_DB_DRIVER", cfg.DBDriver)
 	cfg.DBDsn = readString("GOMI_DB_DSN", cfg.DBDsn)
 	cfg.ListenAddr = readString("GOMI_LISTEN_ADDR", cfg.ListenAddr)
@@ -317,6 +317,16 @@ func applyDuration(dst *time.Duration, src *string, field string) error {
 	}
 	*dst = d
 	return nil
+}
+
+// readPresentString preserves explicit empty values for settings where empty
+// means disabled, current context, or all namespaces rather than "use default".
+func readPresentString(key, def string) string {
+	value, present := os.LookupEnv(key)
+	if !present {
+		return def
+	}
+	return strings.TrimSpace(value)
 }
 
 func readString(key, def string) string {

@@ -29,6 +29,9 @@ Environment overrides:
 
 Equivalent flags are `--cluster-api-kubeconfig`, `--cluster-api-context`, and
 `--cluster-api-namespace`. Precedence is YAML, environment, then flags.
+For these three environment variables, a set-but-empty value overrides YAML:
+an empty kubeconfig disables the integration, an empty context selects the
+file's current context, and an empty namespace selects all accessible namespaces.
 The kubeconfig is trusted server configuration and can use client-go credential
 plugins; install any required authentication plugin on the server. Use a
 dedicated identity and a restricted kubeconfig rather than an administrator's
