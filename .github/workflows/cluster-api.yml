@@ -5,6 +5,7 @@ on:
       - 'providers/cluster-api/**'
       - 'internal/**'
       - 'cmd/gomi/**'
+      - 'web/**'
       - 'bootenv/**'
       - 'go.mod'
       - 'go.sum'
@@ -14,6 +15,7 @@ on:
       - 'providers/cluster-api/**'
       - 'internal/**'
       - 'cmd/gomi/**'
+      - 'web/**'
       - 'bootenv/**'
       - 'go.mod'
       - 'go.sum'
@@ -39,7 +41,7 @@ jobs:
           cache-dependency-path: web/package-lock.json
       - name: Build embedded UI required by the CLI tests
         working-directory: web
-        run: npm ci && npm run build
+        run: npm ci && npm run test:unit && npm run build
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
@@ -58,7 +60,7 @@ jobs:
         working-directory: providers/cluster-api
         run: make test build manifests
       - name: GOMI protected seed and deployment regressions
-        run: go test -race ./cmd/gomi ./internal/baremetal ./internal/machine ./internal/cloudinit ./internal/infra/api ./internal/infra/pxehttp ./internal/infra/sql ./internal/infra/memory ./internal/vm
+        run: go test -race ./cmd/gomi ./internal/baremetal ./internal/machine ./internal/cloudinit ./internal/infra/api ./internal/infra/clusterapi ./internal/infra/config ./internal/infra/pxehttp ./internal/infra/sql ./internal/infra/memory ./internal/vm
       - name: Real Kubernetes and GOMI API integration
         working-directory: providers/cluster-api
         run: make integration

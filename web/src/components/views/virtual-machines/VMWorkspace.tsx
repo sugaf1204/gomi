@@ -1,3 +1,4 @@
+import { ResourceWorkspace } from '../../ui/ResourceWorkspace'
 import type { Dispatch, ReactNode, RefObject, SetStateAction } from 'react'
 import clsx from 'clsx'
 import { formatDate, phaseClass } from '../../../lib/formatters'
@@ -34,10 +35,9 @@ type VMWorkspaceProps = {
 
 export function VMWorkspace(props: VMWorkspaceProps) {
   return (
-    <section className="h-full min-h-0 grid grid-cols-1 md:grid-cols-[352px_minmax(0,1fr)]">
-      <VMListColumn {...props} />
+    <ResourceWorkspace index={<VMListColumn {...props} />}>
       <VMDetailPane {...props} />
-    </section>
+    </ResourceWorkspace>
   )
 }
 

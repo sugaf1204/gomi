@@ -29,6 +29,7 @@ import (
 )
 
 type Server struct {
+	clusterAPI       ClusterAPIManager
 	bareMetal        baremetal.Store
 	echo             *echo.Echo
 	machines         *machine.Service
@@ -84,6 +85,7 @@ func NewAuthService(store auth.Store, sessionTTL time.Duration) *AuthService {
 }
 
 type ServerConfig struct {
+	ClusterAPI       ClusterAPIManager
 	BareMetal        baremetal.Store
 	Machines         *machine.Service
 	PowerExecutor    PowerExecutor
@@ -126,6 +128,7 @@ func NewServer(cfg ServerConfig) *Server {
 	e.Use(middleware.CORS())
 
 	s := &Server{
+		clusterAPI:       cfg.ClusterAPI,
 		bareMetal:        cfg.BareMetal,
 		echo:             e,
 		machines:         cfg.Machines,
@@ -230,6 +233,9 @@ func NewServer(cfg ServerConfig) *Server {
 
 	// Writer group: requires admin or operator role.
 	writer := v1.Group("", s.AuthMiddleware(), RequireWriter())
+
+	authed.GET("/cluster-api", s.ListClusterAPI)
+	writer.PATCH("/cluster-api/:namespace/:resource/:name", s.ChangeClusterAPI)
 
 	// Admin group: requires admin role.
 	admin := v1.Group("", s.AuthMiddleware(), RequireAdmin())

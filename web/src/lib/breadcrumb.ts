@@ -11,6 +11,7 @@ export type Crumb = {
 // current object's location remains consistent across navigation surfaces.
 const VIEW_PATHS: Record<View, string[]> = {
   machines: ['compute', 'machines'],
+  'cluster-api': ['compute', 'cluster api'],
   'virtual-machines': ['compute', 'virtual machines'],
   hypervisors: ['compute', 'hypervisors'],
   'os-images': ['image', 'os images'],

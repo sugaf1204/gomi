@@ -12,6 +12,7 @@ import (
 	"github.com/sugaf1204/gomi/internal/hwinfo"
 	"github.com/sugaf1204/gomi/internal/hypervisor"
 	infraapi "github.com/sugaf1204/gomi/internal/infra/api"
+	"github.com/sugaf1204/gomi/internal/infra/clusterapi"
 	"github.com/sugaf1204/gomi/internal/infra/config"
 	"github.com/sugaf1204/gomi/internal/infra/dns"
 	infrasql "github.com/sugaf1204/gomi/internal/infra/sql"
@@ -178,7 +179,17 @@ func (r *Runtime) StartServer(ctx context.Context) error {
 		dnsRecords = embedded
 	}
 
+	var clusterAPI infraapi.ClusterAPIManager
+	if r.Config.ClusterAPIKubeconfig != "" {
+		client, err := clusterapi.New(r.Config.ClusterAPIKubeconfig, r.Config.ClusterAPIContext, r.Config.ClusterAPINamespace)
+		if err != nil {
+			return err
+		}
+		clusterAPI = client
+	}
+
 	srv := infraapi.NewServer(infraapi.ServerConfig{
+		ClusterAPI:       clusterAPI,
 		BareMetal:        r.bareMetalStore,
 		Machines:         r.machineSvc,
 		PowerExecutor:    r.executor,

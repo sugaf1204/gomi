@@ -13,6 +13,9 @@ import (
 )
 
 type Config struct {
+	ClusterAPIKubeconfig string
+	ClusterAPIContext    string
+	ClusterAPINamespace  string
 	DBDriver             string
 	DBDsn                string
 	ListenAddr           string
@@ -52,19 +55,26 @@ const (
 	defaultBootenvSourceURL = "https://github.com/sugaf1204/gomi/releases/latest/download"
 )
 
+type clusterAPIConfig struct {
+	Kubeconfig *string `yaml:"kubeconfig"`
+	Context    *string `yaml:"context"`
+	Namespace  *string `yaml:"namespace"`
+}
+
 type fileConfig struct {
-	ListenAddr      *string        `yaml:"listen_addr"`
-	DataDir         *string        `yaml:"data_dir"`
-	SessionTTL      *string        `yaml:"session_ttl"`
-	Admin           adminConfig    `yaml:"admin"`
-	Database        databaseConfig `yaml:"database"`
-	DNS             dnsConfig      `yaml:"dns"`
-	BootHTTPBaseURL *string        `yaml:"boot_http_base_url"`
-	DHCP            dhcpConfig     `yaml:"dhcp"`
-	TFTP            tftpConfig     `yaml:"tftp"`
-	PXE             pxeConfig      `yaml:"pxe"`
-	Bootenv         bootenvConfig  `yaml:"bootenv"`
-	VM              vmConfig       `yaml:"vm"`
+	ClusterAPI      clusterAPIConfig `yaml:"cluster_api"`
+	ListenAddr      *string          `yaml:"listen_addr"`
+	DataDir         *string          `yaml:"data_dir"`
+	SessionTTL      *string          `yaml:"session_ttl"`
+	Admin           adminConfig      `yaml:"admin"`
+	Database        databaseConfig   `yaml:"database"`
+	DNS             dnsConfig        `yaml:"dns"`
+	BootHTTPBaseURL *string          `yaml:"boot_http_base_url"`
+	DHCP            dhcpConfig       `yaml:"dhcp"`
+	TFTP            tftpConfig       `yaml:"tftp"`
+	PXE             pxeConfig        `yaml:"pxe"`
+	Bootenv         bootenvConfig    `yaml:"bootenv"`
+	VM              vmConfig         `yaml:"vm"`
 }
 
 type adminConfig struct {
@@ -196,6 +206,9 @@ func Load(path string) (Config, error) {
 }
 
 func ApplyEnv(cfg *Config) {
+	cfg.ClusterAPIKubeconfig = readPresentString("GOMI_CLUSTER_API_KUBECONFIG", cfg.ClusterAPIKubeconfig)
+	cfg.ClusterAPIContext = readPresentString("GOMI_CLUSTER_API_CONTEXT", cfg.ClusterAPIContext)
+	cfg.ClusterAPINamespace = readPresentString("GOMI_CLUSTER_API_NAMESPACE", cfg.ClusterAPINamespace)
 	cfg.DBDriver = readString("GOMI_DB_DRIVER", cfg.DBDriver)
 	cfg.DBDsn = readString("GOMI_DB_DSN", cfg.DBDsn)
 	cfg.ListenAddr = readString("GOMI_LISTEN_ADDR", cfg.ListenAddr)
@@ -246,6 +259,9 @@ func ApplyYAML(cfg *Config, data []byte) error {
 }
 
 func (fc fileConfig) apply(cfg *Config) error {
+	applyString(&cfg.ClusterAPIKubeconfig, fc.ClusterAPI.Kubeconfig)
+	applyString(&cfg.ClusterAPIContext, fc.ClusterAPI.Context)
+	applyString(&cfg.ClusterAPINamespace, fc.ClusterAPI.Namespace)
 	applyString(&cfg.ListenAddr, fc.ListenAddr)
 	applyString(&cfg.DataDir, fc.DataDir)
 	if err := applyDuration(&cfg.SessionTTL, fc.SessionTTL, "session_ttl"); err != nil {
@@ -301,6 +317,16 @@ func applyDuration(dst *time.Duration, src *string, field string) error {
 	}
 	*dst = d
 	return nil
+}
+
+// readPresentString preserves explicit empty values for settings where empty
+// means disabled, current context, or all namespaces rather than "use default".
+func readPresentString(key, def string) string {
+	value, present := os.LookupEnv(key)
+	if !present {
+		return def
+	}
+	return strings.TrimSpace(value)
 }
 
 func readString(key, def string) string {
