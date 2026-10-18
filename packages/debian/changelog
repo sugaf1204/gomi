@@ -1,3 +1,16 @@
+gomi (0.0.51) unstable; urgency=medium
+
+  * Add a Cluster API management workspace with cluster, control-plane, worker
+    and Machine status, guarded worker scaling, and cluster pause/resume.
+  * Align compute layouts, navigation, readiness indicators and detail sections
+    across Cluster API, physical machines and virtual machines.
+  * Keep management credentials server-side and enforce namespace, role,
+    resource-version and autoscaler/topology ownership boundaries.
+  * Preserve explicit empty management connection environment overrides and
+    document the API, connection configuration and Kubernetes RBAC.
+
+ -- sugaf1204 <sugaf1204@example.invalid>  Mon, 19 Oct 2026 00:40:01 +0900
+
 gomi (0.0.50) unstable; urgency=medium
 
   * Allow administrators to unenroll Available, unallocated bare-metal hosts
