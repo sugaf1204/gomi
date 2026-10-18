@@ -224,6 +224,16 @@ old flash blocks. A failed physical deployment retains its claim for recovery;
 there is no automatic endless reinstall loop. Failed cleanup requires explicit
 administrator recovery rather than repeatedly resetting the disk.
 
+After cleanup finishes and the host is unowned in `Available` state, an
+administrator can remove its allocation enrollment with
+`DELETE /api/v1/bare-metal-hosts/<name>` and JSON `{"revision":<current revision>}`.
+Read the revision with `GET /api/v1/bare-metal-hosts/<name>` first. A stale revision,
+allocated host or active provisioning returns 409. This preserves the ordinary
+Machine inventory and clears the completed sealed-bootstrap configuration in the
+same transaction; it does not reset the OS again. The ordinary machine redeploy
+API can then change its role, for example to `hypervisor`. Pause the retiring CAPI
+Cluster before repurposing the host so it cannot acquire another host.
+
 After fixing the cause, an administrator can explicitly retry a **Failed** claim
 with `POST /api/v1/bare-metal-claims/<owner>/retry` and JSON
 `{"attemptID":"<failed attempt ID>"}`. The installer must no longer be active, and its authenticated `image_applied`

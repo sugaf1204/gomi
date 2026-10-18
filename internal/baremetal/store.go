@@ -47,6 +47,7 @@ type Host struct {
 type Store interface {
 	Register(context.Context, string, string, string, string) (Host, error)
 	UpdatePool(context.Context, string, string, int64) (Host, error)
+	Unregister(context.Context, string, int64) error
 	Get(context.Context, string) (Host, error)
 	FindOwner(context.Context, string) (Host, error)
 	Acquire(context.Context, string, string) (Host, error)

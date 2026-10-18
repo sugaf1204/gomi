@@ -1302,6 +1302,25 @@ paths:
         '400': {description: Invalid pool or revision}
         '403': {description: Administrator role required}
         '409': {description: Host is allocated or the revision is stale}
+    delete:
+      tags: [bare-metal]
+      summary: Remove enrollment of an unallocated physical host (admin only)
+      description: Requires Available state, no owner and the current revision. Preserves machine inventory and clears completed sealed bootstrap state, allowing ordinary role-changing redeploys. Refuses active provisioning and concurrent claims.
+      security: [{bearerAuth: []}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [revision]
+              properties:
+                revision: {type: integer, format: int64, minimum: 1}
+      responses:
+        '204': {description: Enrollment removed or already absent; machine preserved}
+        '400': {description: Invalid revision}
+        '403': {description: Administrator role required}
+        '409': {description: Allocated host, active provisioning or stale revision}
     get:
       tags: [bare-metal]
       summary: Read physical host allocation state

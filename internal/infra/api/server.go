@@ -265,6 +265,7 @@ func NewServer(cfg ServerConfig) *Server {
 	// Bare-metal inventory enrollment is an explicit administrator action.
 	admin.PUT("/bare-metal-hosts/:name", s.RegisterBareMetalHost)
 	admin.PATCH("/bare-metal-hosts/:name", s.UpdateBareMetalHostPool)
+	admin.DELETE("/bare-metal-hosts/:name", s.UnregisterBareMetalHost)
 	authed.GET("/bare-metal-hosts/:name", s.GetBareMetalHost)
 	writer.POST("/bare-metal-claims", s.AcquireBareMetalHost)
 	authed.GET("/bare-metal-claims/:owner", s.GetBareMetalClaim)

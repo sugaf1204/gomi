@@ -95,20 +95,33 @@ func (s *Server) startRedeployPowerCycle(before, after machine.Machine, fallback
 		powerOnMachine = before
 	}
 	powerOnInfo := machinePowerInfo(powerOnMachine, fallbackIP)
+	windowsWoL := after.PXEInstallType() == resource.InstallWindows && powerOnInfo.Power.Type == power.PowerTypeWoL
+	record := func(action power.Action, lastError *string) {
+		if windowsWoL {
+			s.recordWindowsRedeployPowerAction(after, action, lastError)
+			return
+		}
+		s.recordMachinePowerAction(after.Name, action, lastError)
+	}
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), redeployPowerCycleTimeout)
 		defer cancel()
 
+		if windowsWoL {
+			if ready, err := s.windowsWakeObserved(ctx, after); err != nil || ready {
+				return
+			}
+		}
 		if err := s.powerExecutor.Execute(ctx, powerOffInfo, power.ActionPowerOff); err != nil {
-			s.recordMachinePowerAction(after.Name, power.ActionPowerOff, stringPtr(err.Error()))
+			record(power.ActionPowerOff, stringPtr(err.Error()))
 			log.Printf("redeploy power-cycle: machine=%s power-off failed: %v", after.Name, err)
 			return
 		}
-		s.recordMachinePowerAction(after.Name, power.ActionPowerOff, nil)
+		record(power.ActionPowerOff, nil)
 
 		if before.Power.Type == power.PowerTypeWoL {
 			if err := sleepContext(ctx, redeployWoLPowerOffMinimumSettle); err != nil {
-				s.recordMachinePowerAction(after.Name, power.ActionPowerOff, stringPtr(err.Error()))
+				record(power.ActionPowerOff, stringPtr(err.Error()))
 				log.Printf("redeploy power-cycle: machine=%s interrupted while waiting after WoL power-off: %v", after.Name, err)
 				return
 			}
@@ -116,17 +129,23 @@ func (s *Server) startRedeployPowerCycle(before, after machine.Machine, fallback
 
 		if !s.waitForMachinePowerState(ctx, powerOffInfo, power.PowerStateStopped, redeployPowerOffSettleTimeout) {
 			err := fmt.Errorf("machine did not report stopped within %s after power-off", redeployPowerOffSettleTimeout)
-			s.recordMachinePowerAction(after.Name, power.ActionPowerOff, stringPtr(err.Error()))
+			record(power.ActionPowerOff, stringPtr(err.Error()))
 			log.Printf("redeploy power-cycle: machine=%s %v", after.Name, err)
 			return
 		}
 
-		if err := s.powerOnRedeployMachine(ctx, powerOnInfo); err != nil {
-			s.recordMachinePowerAction(after.Name, power.ActionPowerOn, stringPtr(err.Error()))
+		powerOn := s.powerOnRedeployMachine
+		if windowsWoL {
+			powerOn = func(ctx context.Context, info power.MachineInfo) error {
+				return s.powerOnWindowsRedeployMachine(ctx, info, after)
+			}
+		}
+		if err := powerOn(ctx, powerOnInfo); err != nil {
+			record(power.ActionPowerOn, stringPtr(err.Error()))
 			log.Printf("redeploy power-cycle: machine=%s power-on failed: %v", after.Name, err)
 			return
 		}
-		s.recordMachinePowerAction(after.Name, power.ActionPowerOn, nil)
+		record(power.ActionPowerOn, nil)
 	}()
 }
 

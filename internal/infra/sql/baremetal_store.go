@@ -3,6 +3,7 @@ package sql
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 
 	"github.com/sugaf1204/gomi/internal/baremetal"
@@ -62,6 +63,62 @@ func (s *BareMetalStore) UpdatePool(ctx context.Context, name, pool string, revi
 		err = baremetal.ErrConflict
 	}
 	return updated, err
+}
+
+// Unregister removes enrollment only after cleanup has released ownership.
+// The revision fence prevents deleting a host that was acquired concurrently.
+func (s *BareMetalStore) Unregister(ctx context.Context, name string, revision int64) error {
+	if name == "" || revision <= 0 {
+		return baremetal.ErrConflict
+	}
+	tx, err := s.b.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var deleted string
+	err = tx.QueryRowContext(ctx, s.b.dialect.Rebind(`DELETE FROM bare_metal_hosts
+ WHERE name=? AND revision=? AND owner IS NULL AND state='Available' RETURNING name`), name, revision).Scan(&deleted)
+	if errors.Is(err, sql.ErrNoRows) {
+		return baremetal.ErrConflict
+	}
+	if err != nil {
+		return err
+	}
+	var originalSpec, originalStatus string
+	if err = tx.QueryRowContext(ctx, s.b.dialect.Rebind("SELECT spec,status FROM machines WHERE name=?"), name).Scan(&originalSpec, &originalStatus); err != nil {
+		return err
+	}
+	var spec machineSpecJSON
+	var status machineStatusJSON
+	if err = json.Unmarshal([]byte(originalSpec), &spec); err != nil {
+		return err
+	}
+	if err = json.Unmarshal([]byte(originalStatus), &status); err != nil {
+		return err
+	}
+	if status.Provision != nil && status.Provision.Active {
+		return baremetal.ErrConflict
+	}
+	// A completed cleanup no longer belongs to a CAPI owner. Do not carry the
+	// sealed cleanup configuration into the next ordinary OS deployment.
+	spec.SealedBootstrap = nil
+	updatedSpec, err := marshalJSON(spec)
+	if err != nil {
+		return err
+	}
+	result, err := tx.ExecContext(ctx, s.b.dialect.Rebind("UPDATE machines SET spec=? WHERE name=? AND spec=? AND status=?"), updatedSpec, name, originalSpec, originalStatus)
+	if err != nil {
+		return err
+	}
+	n, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n != 1 {
+		return baremetal.ErrConflict
+	}
+	return tx.Commit()
 }
 func (s *BareMetalStore) Acquire(ctx context.Context, pool, owner string) (baremetal.Host, error) {
 	if err := baremetal.ValidateAcquire(pool, owner); err != nil {
